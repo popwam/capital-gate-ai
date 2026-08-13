@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import helmet from "helmet";
-import cookieParser from "cookie-parser";
+import cookieParser = require("cookie-parser");
 import { json, urlencoded } from "express";
 import { randomUUID } from "node:crypto";
 import { AppModule } from "./app.module";
