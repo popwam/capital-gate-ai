@@ -16,7 +16,8 @@
     "db:generate": "npm run generate -w @maqar/database",
     "db:push": "npm run push -w @maqar/database",
     "db:migrate:deploy": "npm run migrate:deploy -w @maqar/database",
-    "smoke:api": "node scripts/smoke-api.mjs"
+    "smoke:api": "node scripts/smoke-api.mjs",
+    "smoke:production": "node scripts/production-live-smoke.mjs"
   },
   "dependencies": {
     "@nestjs/platform-express": "11.1.29",
