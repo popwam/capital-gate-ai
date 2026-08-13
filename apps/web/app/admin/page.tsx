@@ -33,6 +33,9 @@ type Issue = {
   message: string;
   severity: "INFO" | "WARNING" | "ERROR" | "BLOCKING";
   resolvedAt?: string | null;
+  inputType?: string | null;
+  options?: any;
+  required?: boolean;
 };
 type ImportData = {
   id: string;
@@ -53,6 +56,7 @@ type Location = {
   type: string;
   parent?: { name: string } | null;
 };
+type SelectorItem = { id: string; name: string; slug?: string; developerId?: string; locationId?: string; developer?: { name: string }; location?: { name: string }; parent?: { name: string }; type?: string };
 const nav = [
   [LayoutDashboard, "لوحة التحكم", "/admin"],
   [Map, "المناطق", "/admin/locations"],
@@ -68,6 +72,7 @@ export default function AdminPage() {
   const [drawer, setDrawer] = useState(false);
   const [item, setItem] = useState<ImportData | null>(null);
   const [locations, setLocations] = useState<Location[]>([]);
+  const [selectorOptions, setSelectorOptions] = useState<Record<string, SelectorItem[]>>({ projects: [], developers: [], locations: [] });
   const [leadSummary, setLeadSummary] = useState({
     newLeads: 0,
     highIntent: 0,
@@ -89,6 +94,8 @@ export default function AdminPage() {
       .get<typeof leadSummary>("/leads/summary")
       .then(setLeadSummary)
       .catch(() => undefined);
+    for (const type of ["projects", "developers", "locations"])
+      adminApi.get<{ items: SelectorItem[] }>(`/imports/options/selectors?type=${type}&pageSize=50`).then((result) => setSelectorOptions((current) => ({ ...current, [type]: result.items }))).catch(() => undefined);
   }, []);
   const issue = useMemo(
     () =>
@@ -118,8 +125,8 @@ export default function AdminPage() {
       setLoading(false);
     }
   }
-  async function resolve(value = answer) {
-    if (!item || !issue || !String(value).trim()) return;
+  async function resolve(value: any = answer) {
+    if (!item || !issue || value == null || (typeof value === "string" && !value.trim())) return;
     setLoading(true);
     try {
       setItem(
@@ -288,7 +295,7 @@ export default function AdminPage() {
                   <div className="flex-1 p-5 sm:p-7">
                     <div className="mx-auto max-w-[680px] space-y-5">
                       <Assistant
-                        text={`I found ${item.rowsDetected} rows in “${item.analysis?.sheetName || "the workbook"}”. I mapped ${Object.keys(item.analysis?.mappings || {}).length} columns using approved memory, known rules and reviewed AI suggestions.`}
+                        text={`وجدت ${item.rowsDetected} صفاً في «${item.analysis?.sheetName || "الملف"}». تم التعرف على ${Object.keys(item.analysis?.mappings || {}).length} أعمدة، وسأطلب منك فقط القرارات التي تحتاج مراجعة.`}
                       />
                       {issue ? (
                         <>
@@ -298,6 +305,7 @@ export default function AdminPage() {
                             value={answer}
                             setValue={setAnswer}
                             locations={locations}
+                            selectorOptions={selectorOptions}
                             submit={resolve}
                             loading={loading}
                           />
@@ -308,13 +316,13 @@ export default function AdminPage() {
                         />
                       ) : (
                         <>
-                          <Assistant text="All blocking questions are resolved. Generate the database preview before confirmation." />
+                          <Assistant text="تم حل كل الأسئلة المطلوبة. أنشئ المعاينة النهائية قبل تأكيد الاستيراد." />
                           <button
                             onClick={preview}
                             disabled={loading}
                             className="ml-11 rounded-xl bg-forest px-5 py-3 text-[9px] font-bold text-white"
                           >
-                            Generate preview
+                            إنشاء المعاينة
                           </button>
                         </>
                       )}
@@ -322,13 +330,14 @@ export default function AdminPage() {
                   </div>
                   {item.preview?.canConfirm && item.status !== "COMPLETED" && (
                     <div className="border-t bg-[#fbfaf7] p-4">
+                      <div className="mx-auto mb-3 grid max-w-[680px] gap-2 rounded-2xl border bg-white p-4 text-[14px] sm:grid-cols-2" dir="rtl"><p><b>{item.preview.valid}</b> وحدة جاهزة للاستيراد</p><p>المشروع: <b>{item.preview.project || item.project?.name || "—"}</b></p><p>المطور: <b>{item.preview.developer || "—"}</b></p><p>العملة: <b>{item.preview.currency || "—"}</b></p><p>وحدات جديدة: <b>{item.preview.newUnits}</b></p><p>خطط سداد: <b>{item.preview.paymentPlanCount || 0}</b>{item.preview.paymentPlanDurations?.length ? ` — ${item.preview.paymentPlanDurations.join("، ")} شهر` : ""}</p><p>أخطاء: <b>{item.preview.invalidRows || 0}</b></p></div>
                       {item.preview.removedUnits > 0 && <div className="mx-auto mb-3 max-w-[680px] rounded-xl border bg-white p-3 text-[13px]"><p className="font-bold">{item.preview.removedUnits} وحدة غير موجودة في الملف الجديد. اختر السياسة قبل التأكيد:</p><div className="mt-2 flex flex-wrap gap-2">{[["LEAVE_UNCHANGED","اتركها بدون تغيير"],["MARK_UNAVAILABLE","علّمها غير متاحة"],["ARCHIVE","أرشفها"]].map(([value,label])=><button key={value} onClick={()=>missingPolicy(value)} className={`rounded-lg border px-3 py-2 ${item.preview.missingUnitPolicy===value?"bg-forest text-white":""}`}>{label}</button>)}</div></div>}
                       <button
                         onClick={confirm}
                         disabled={loading}
                         className="mx-auto flex h-11 w-full max-w-[680px] items-center justify-center gap-2 rounded-xl bg-coral text-[10px] font-bold text-white"
                       >
-                        <CheckCircle2 size={15} /> Confirm transactional import
+                        <CheckCircle2 size={15} /> تأكيد الاستيراد
                       </button>
                     </div>
                   )}
@@ -422,6 +431,7 @@ function Answer({
   value,
   setValue,
   locations,
+  selectorOptions,
   submit,
   loading,
 }: {
@@ -429,48 +439,84 @@ function Answer({
   value: string;
   setValue: (v: string) => void;
   locations: Location[];
-  submit: (v?: string) => void;
+  selectorOptions: Record<string, SelectorItem[]>;
+  submit: (v?: any) => void;
   loading: boolean;
 }) {
-  if (issue.field === "locationId")
-    return (
-      <div className="ml-11 grid gap-2 sm:grid-cols-2">
-        {locations
-          .filter((x) => ["AREA", "SUBAREA", "CITY"].includes(x.type))
-          .map((x) => (
-            <button
-              key={x.id}
-              onClick={() => submit(x.id)}
-              className="rounded-xl border p-3 text-left text-[9px] font-bold hover:border-forest"
-            >
-              {x.name}
-              <span className="mt-1 block text-[8px] font-normal text-[#87918d]">
-                {x.parent?.name || x.type}
-              </span>
-            </button>
-          ))}
-        <a
-          href="/admin/locations"
-          className="flex items-center gap-2 rounded-xl border border-dashed p-3 text-[9px] font-bold"
-        >
-          <Plus size={14} /> Add a missing location
-        </a>
-      </div>
-    );
+  const [creating, setCreating] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createDeveloperId, setCreateDeveloperId] = useState("");
+  const [createLocationId, setCreateLocationId] = useState("");
+  const [entitySearch, setEntitySearch] = useState("");
+  const [entityItems, setEntityItems] = useState<SelectorItem[]>([]);
+  const inputType = issue.inputType || (issue.field === "locationId" ? "LOCATION_SELECT" : "TEXT");
+  const entityType = inputType === "PROJECT_SELECT" ? "projects" : inputType === "DEVELOPER_SELECT" ? "developers" : inputType === "LOCATION_SELECT" ? "locations" : "";
+  useEffect(() => {
+    if (!entityType) {
+      setEntityItems([]);
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(() => {
+      adminApi
+        .get<{ items: SelectorItem[] }>(`/imports/options/selectors?type=${entityType}&search=${encodeURIComponent(entitySearch)}&page=1&pageSize=20`)
+        .then((result) => active && setEntityItems(result.items))
+        .catch(() => active && setEntityItems(selectorOptions[entityType] || []));
+    }, 200);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [entitySearch, entityType, selectorOptions]);
+  async function createEntity() {
+    const slug = `${createName.trim().toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g, "-")}-${Date.now().toString(36)}`;
+    let created: { id: string };
+    if (inputType === "DEVELOPER_SELECT") created = await adminApi.post<{ id: string }>("/catalog/developers", { name: createName.trim(), slug });
+    else if (inputType === "LOCATION_SELECT") created = await adminApi.post<{ id: string }>("/locations", { name: createName.trim(), slug, type: "AREA" });
+    else created = await adminApi.post<{ id: string }>("/catalog/projects", { name: createName.trim(), slug, developerId: createDeveloperId, locationId: createLocationId || undefined });
+    setCreating(false);
+    submit(created.id);
+  }
+  if (["PROJECT_SELECT", "DEVELOPER_SELECT", "LOCATION_SELECT"].includes(inputType)) {
+    const items = entitySearch
+      ? entityItems
+      : entityItems.length
+        ? entityItems
+        : selectorOptions[entityType] || (inputType === "LOCATION_SELECT" ? locations : []);
+    return <div className="ms-0 space-y-3 sm:ms-11" dir="rtl">
+      <input type="search" value={entitySearch} onChange={(event) => setEntitySearch(event.target.value)} placeholder="ابحث بالاسم أو الاسم البديل" className="h-12 w-full rounded-xl border bg-white px-3 text-[16px] outline-none focus:border-forest" />
+      <select value={value} onChange={(event) => { setValue(event.target.value); if (event.target.value) submit(event.target.value); }} className="h-12 w-full rounded-xl border bg-white px-3 text-[16px] outline-none focus:border-forest">
+        <option value="">{inputType === "PROJECT_SELECT" ? "اختر المشروع" : inputType === "DEVELOPER_SELECT" ? "اختر المطور" : "اختر المنطقة"}</option>
+        {items.map((option) => <option key={option.id} value={option.id}>{option.name}{option.developer?.name ? ` — ${option.developer.name}` : ""}{option.location?.name ? ` — ${option.location.name}` : option.parent?.name ? ` — ${option.parent.name}` : ""}</option>)}
+      </select>
+      <button onClick={() => setCreating(!creating)} className="flex items-center gap-2 rounded-xl border border-dashed px-4 py-3 text-[14px] font-bold"><Plus size={16}/> {inputType === "PROJECT_SELECT" ? "إضافة مشروع جديد" : inputType === "DEVELOPER_SELECT" ? "إضافة مطور جديد" : "إضافة منطقة جديدة"}</button>
+      {creating && <div className="space-y-2 rounded-2xl border bg-white p-4">
+        <input value={createName} onChange={(event) => setCreateName(event.target.value)} placeholder="الاسم" className="h-12 w-full rounded-xl border px-3 text-[16px]" />
+        {inputType === "PROJECT_SELECT" && <><select value={createDeveloperId} onChange={(event) => setCreateDeveloperId(event.target.value)} className="h-12 w-full rounded-xl border px-3 text-[16px]"><option value="">اختر المطور</option>{selectorOptions.developers.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select><select value={createLocationId} onChange={(event) => setCreateLocationId(event.target.value)} className="h-12 w-full rounded-xl border px-3 text-[16px]"><option value="">اختر المنطقة</option>{selectorOptions.locations.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}</select></>}
+        <button disabled={!createName.trim() || (inputType === "PROJECT_SELECT" && !createDeveloperId)} onClick={createEntity} className="rounded-xl bg-forest px-4 py-3 text-[14px] font-bold text-white disabled:opacity-40">حفظ ومتابعة الاستيراد</button>
+      </div>}
+    </div>;
+  }
+  if (inputType === "CURRENCY_SELECT") return <TypedSelect value={value} setValue={setValue} submit={submit} placeholder="اختر العملة" options={[['EGP','EGP — جنيه مصري'],['USD','USD — دولار أمريكي'],['EUR','EUR — يورو'],['AED','AED — درهم إماراتي'],['SAR','SAR — ريال سعودي'],['GBP','GBP — جنيه إسترليني']]} />;
+  if (inputType === "CANONICAL_FIELD_SELECT") {
+    const sourceHeaders = issue.options?.sourceHeaders as string[] | undefined;
+    const fields = issue.options?.fields as Array<{ value: string; group: string; labelAr: string; labelEn: string }> | undefined;
+    if (sourceHeaders) return <TypedSelect value={value} setValue={setValue} submit={submit} placeholder="اختر عمود كود الوحدة" options={sourceHeaders.map((header) => [header, header])} />;
+    return <div className="ms-0 sm:ms-11"><select value={value} onChange={(event) => { setValue(event.target.value); if (event.target.value) submit(event.target.value); }} className="h-12 w-full rounded-xl border bg-white px-3 text-[16px]"><option value="">اختر معنى العمود</option>{[...new Set((fields || []).map((field) => field.group))].map((group) => <optgroup key={group} label={group}>{(fields || []).filter((field) => field.group === group).map((field) => <option key={field.value} value={field.value}>{field.labelAr} — {field.labelEn}</option>)}</optgroup>)}<optgroup label="معلومات إضافية"><option value="METADATA">الاحتفاظ كمعلومة إضافية</option><option value="IGNORE">تجاهل هذا العمود</option></optgroup></select></div>;
+  }
+  if (inputType === "PAYMENT_PLAN_MAPPING") return <PaymentPlanAnswer issue={issue} submit={submit} />;
+  if (inputType === "ENUM_SELECT") return <TypedSelect value={value} setValue={setValue} submit={submit} placeholder="اختر القيمة" options={(issue.options?.values || []).map((option: string) => [option, option])} />;
   return (
-    <div className="ml-11">
+    <div className="ms-0 sm:ms-11">
       <div className="flex gap-2 rounded-xl border bg-white p-2">
         <input
+          type={inputType === "DATE" ? "date" : inputType === "NUMBER" ? "number" : "text"}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
-          className="min-w-0 flex-1 px-2 text-[10px] outline-none"
+          className="min-w-0 flex-1 px-2 text-[16px] outline-none"
           placeholder={
-            issue.field?.startsWith("column:")
-              ? "Canonical field, METADATA or IGNORE"
-              : issue.field?.startsWith("value:")
-                ? "Canonical value or IGNORE"
-                : "Enter a default value"
+            inputType === "DATE" ? "اختر تاريخ التسليم" : "أدخل القيمة"
           }
         />
         <button
@@ -481,14 +527,6 @@ function Answer({
           <ArrowRight size={14} />
         </button>
       </div>
-      {issue.field === "currency" && (
-        <button
-          onClick={() => submit("EGP")}
-          className="mt-2 rounded-full border px-3 py-1.5 text-[8px] font-bold"
-        >
-          All prices are EGP
-        </button>
-      )}
       {issue.severity !== "BLOCKING" &&
         !issue.field?.startsWith("column:") &&
         !issue.field?.startsWith("value:") && (
@@ -515,6 +553,21 @@ function Answer({
         )}
     </div>
   );
+}
+function TypedSelect({ value, setValue, submit, placeholder, options }: { value: string; setValue: (value: string) => void; submit: (value?: any) => void; placeholder: string; options: Array<[string, string]> }) {
+  return <div className="ms-0 sm:ms-11" dir="rtl"><select value={value} onChange={(event) => { setValue(event.target.value); if (event.target.value) submit(event.target.value); }} className="h-12 w-full rounded-xl border bg-white px-3 text-[16px]"><option value="">{placeholder}</option>{options.map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></div>;
+}
+function PaymentPlanAnswer({ issue, submit }: { issue: Issue; submit: (value?: any) => void }) {
+  const [durationMonths, setDurationMonths] = useState(issue.options?.suggestedDurationMonths ? String(issue.options.suggestedDurationMonths) : "");
+  const [valueType, setValueType] = useState(issue.options?.suggestedValueType || "TOTAL_PRICE");
+  const [currency, setCurrency] = useState("EGP");
+  return <div className="ms-0 space-y-3 rounded-2xl border bg-white p-4 sm:ms-11" dir="rtl">
+    <p className="text-[14px] text-[#64706b]">العمود: <b dir="auto">{issue.options?.sourceColumn}</b></p>
+    <label className="block text-[14px] font-bold">مدة السداد بالشهور (إن وُجدت)<input type="number" min={18} max={180} step={1} value={durationMonths} onChange={(event) => setDurationMonths(event.target.value)} placeholder="مثال: 96" className="mt-1 h-12 w-full rounded-xl border px-3 text-[16px]"/></label>
+    <label className="block text-[14px] font-bold">نوع القيمة<select value={valueType} onChange={(event) => setValueType(event.target.value)} className="mt-1 h-12 w-full rounded-xl border px-3 text-[16px]"><option value="TOTAL_PRICE">إجمالي سعر الوحدة</option><option value="INSTALLMENT_AMOUNT">قيمة القسط</option><option value="DOWN_PAYMENT_AMOUNT">مبلغ المقدم</option><option value="DOWN_PAYMENT_PERCENT">نسبة المقدم</option><option value="MAINTENANCE_AMOUNT">مبلغ الصيانة</option><option value="MAINTENANCE_PERCENT">نسبة الصيانة</option></select></label>
+    <label className="block text-[14px] font-bold">العملة<select value={currency} onChange={(event) => setCurrency(event.target.value)} className="mt-1 h-12 w-full rounded-xl border px-3 text-[16px]"><option value="EGP">EGP — جنيه مصري</option><option value="USD">USD — دولار أمريكي</option><option value="EUR">EUR — يورو</option><option value="AED">AED — درهم إماراتي</option><option value="SAR">SAR — ريال سعودي</option><option value="GBP">GBP — جنيه إسترليني</option></select></label>
+    <button onClick={() => submit({ durationMonths: durationMonths ? Number(durationMonths) : undefined, valueType, currency })} className="rounded-xl bg-forest px-4 py-3 text-[14px] font-bold text-white">اعتماد خطة السداد</button>
+  </div>;
 }
 function StepBar({ status }: { status: string }) {
   const active = status === "COMPLETED" ? 4 : status === "READY" ? 3 : 2;

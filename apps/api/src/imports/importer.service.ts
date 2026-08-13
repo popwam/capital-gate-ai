@@ -25,38 +25,24 @@ import { AIProvider } from "../providers/ai-provider";
 import { readImportWorkbook } from "./workbook-reader";
 import { ImportHttpException, importErrorDetails } from "./import-errors";
 import { rollbackConflict } from "./rollback-safety";
+import {
+  AVAILABILITY_TYPES,
+  CANONICAL_FIELDS,
+  CANONICAL_VALUES,
+  FINISHING_TYPES,
+  parseImportDate,
+  parsePaymentPlanComponentHeader,
+  SUPPORTED_CURRENCIES,
+  UNIT_TYPES,
+  normalizeFinishing,
+  normalizeUnitType,
+  PaymentPlanValueType,
+} from "./import-contract";
 
-const CANONICAL = [
-  "externalUnitId",
-  "phase",
-  "cluster",
-  "building",
-  "floor",
-  "unitType",
-  "unitSubType",
-  "bedrooms",
-  "bathrooms",
-  "builtUpArea",
-  "landArea",
-  "gardenArea",
-  "roofArea",
-  "terraceArea",
-  "price",
-  "currency",
-  "status",
-  "deliveryDate",
-  "deliveryYears",
-  "finishingType",
-  "downPayment",
-  "installmentYears",
-  "installmentAmount",
-  "maintenance",
-  "clubFees",
-  "discount",
-  "offerText",
-];
+const CANONICAL: string[] = [...CANONICAL_VALUES];
 const KNOWN: Record<string, string> = {
   "unit no": "externalUnitId",
+  "properties unit no.": "externalUnitId",
   "unit number": "externalUnitId",
   "unit code": "externalUnitId",
   "unit id": "externalUnitId",
@@ -79,6 +65,7 @@ const KNOWN: Record<string, string> = {
   الحمامات: "bathrooms",
   bua: "builtUpArea",
   "built up area": "builtUpArea",
+  "properties total gross area": "builtUpArea",
   "unit area": "builtUpArea",
   area: "builtUpArea",
   "land area": "landArea",
@@ -91,13 +78,17 @@ const KNOWN: Record<string, string> = {
   حديقة: "gardenArea",
   روف: "roofArea",
   price: "price",
+  "standard price": "price",
+  "properties standard unit price": "price",
   "total price": "price",
   currency: "currency",
   status: "status",
   availability: "status",
   delivery: "deliveryDate",
   "delivery date": "deliveryDate",
+  "properties delivery date": "deliveryDate",
   finishing: "finishingType",
+  "properties finishing": "finishingType",
   السعر: "price",
   "السعر الإجمالي": "price",
   العملة: "currency",
@@ -105,12 +96,9 @@ const KNOWN: Record<string, string> = {
   الإتاحة: "status",
   الاستلام: "deliveryDate",
   التشطيب: "finishingType",
-  dp: "downPayment",
-  "down payment": "downPayment",
   years: "installmentYears",
   "installment years": "installmentYears",
   installment: "installmentAmount",
-  maintenance: "maintenance",
   "club fees": "clubFees",
   discount: "discount",
   offer: "offerText",
@@ -118,10 +106,8 @@ const KNOWN: Record<string, string> = {
   cluster: "cluster",
   building: "building",
   floor: "floor",
-  المقدم: "downPayment",
   "سنوات التقسيط": "installmentYears",
   القسط: "installmentAmount",
-  الصيانة: "maintenance",
   الخصم: "discount",
   العرض: "offerText",
   المرحلة: "phase",
@@ -134,6 +120,7 @@ type Analysis = {
   headers: string[];
   rows: Record<string, unknown>[];
   mappings: Record<string, string>;
+  paymentPlanMappings: Record<string, { durationMonths?: number; valueType: "TOTAL_PRICE" | "INSTALLMENT_AMOUNT" | "DOWN_PAYMENT_AMOUNT" | "DOWN_PAYMENT_PERCENT" | "MAINTENANCE_AMOUNT" | "MAINTENANCE_PERCENT"; currency?: string; sourceDurationText: string; approved: boolean }>;
   mappingSources: Record<string, string>;
   valueMappings: Record<string, Record<string, string>>;
   rowPolicies: Record<string, string>;
@@ -235,7 +222,25 @@ export class ImporterService {
       );
     const headers = Object.keys(rows[0]);
     const mappings: Record<string, string> = {};
+    const paymentPlanMappings: Analysis["paymentPlanMappings"] = {};
     const mappingSources: Record<string, string> = {};
+    if (metadata.parentImportId && !metadata.projectId) {
+      const parent = await this.prisma.dataImport.findUnique({ where: { id: metadata.parentImportId }, select: { projectId: true, developerId: true, project: { select: { locationId: true, developer: { select: { slug: true } } } } } });
+      if (parent) {
+        metadata.projectId ||= parent.projectId ?? "";
+        metadata.developerId ||= parent.developerId ?? "";
+        metadata.locationId ||= parent.project?.locationId ?? "";
+        metadata.developerSlug ||= parent.project?.developer.slug ?? "";
+      }
+    }
+    if (metadata.projectId) {
+      const selected = await this.prisma.project.findUnique({ where: { id: metadata.projectId }, select: { developerId: true, locationId: true, developer: { select: { slug: true } } } });
+      if (selected) {
+        metadata.developerId ||= selected.developerId;
+        metadata.locationId ||= selected.locationId ?? "";
+        metadata.developerSlug ||= selected.developer.slug;
+      }
+    }
     const developerSlug = metadata.developerSlug || "__global__";
     const remembered = await this.prisma.importMapping.findMany({
       where: {
@@ -247,12 +252,18 @@ export class ImporterService {
       const normalized = this.normalize(header);
       const prior = remembered.find((m) => m.normalizedColumn === normalized);
       const field = prior?.canonicalField ?? KNOWN[normalized];
-      if (field) {
+      if (field?.startsWith("paymentPlan:")) {
+        const [, duration, valueType = "TOTAL_PRICE"] = field.split(":");
+        paymentPlanMappings[header] = { durationMonths: Number(duration) || undefined, valueType: valueType as PaymentPlanValueType, sourceDurationText: header, approved: true };
+      } else if (field) {
         mappings[header] = field;
         mappingSources[header] = prior ? "APPROVED_MEMORY" : "KNOWN_RULE";
+      } else {
+        const detectedPlan = parsePaymentPlanComponentHeader(header);
+        if (detectedPlan) paymentPlanMappings[header] = { ...detectedPlan, approved: false };
       }
     }
-    const unknown = headers.filter((h) => !mappings[h]);
+    const unknown = headers.filter((h) => !mappings[h] && !paymentPlanMappings[h]);
     const valueMappings: Record<string, Record<string, string>> = {};
     const priorValues = await this.prisma.importValueMapping.findMany({
       where: {
@@ -270,6 +281,7 @@ export class ImporterService {
       headers,
       rows: this.json(rows),
       mappings,
+      paymentPlanMappings,
       mappingSources,
       valueMappings,
       rowPolicies: {},
@@ -298,6 +310,21 @@ export class ImporterService {
         metadata.developerId ||= parent.developerId ?? "";
         metadata.projectId ||= parent.projectId ?? "";
         metadata.locationId ||= parent.project?.locationId ?? "";
+      }
+      if (metadata.projectId) {
+        const selectedProject = await this.prisma.project.findUnique({
+          where: { id: metadata.projectId },
+          select: { developerId: true, locationId: true },
+        });
+        if (!selectedProject)
+          throw new ImportHttpException(
+            HttpStatus.UNPROCESSABLE_ENTITY,
+            "IMPORT_PROJECT_INVALID",
+            "اختر مشروعاً موجوداً.",
+            "validation",
+          );
+        metadata.developerId ||= selectedProject.developerId;
+        metadata.locationId ||= selectedProject.locationId ?? "";
       }
       dataImport = await this.prisma.dataImport.create({
         data: {
@@ -462,44 +489,71 @@ export class ImporterService {
         importId,
         severity: IssueSeverity.BLOCKING,
         field: "mapping:externalUnitId",
-        message:
-          "I could not identify the unit number/code. Enter the exact source column header that uniquely identifies each unit.",
+        message: "لم أتمكن من تحديد كود الوحدة. اختر العمود الذي يميز كل وحدة.",
+        inputType: "CANONICAL_FIELD_SELECT",
+        options: this.json({ canonicalField: "externalUnitId", sourceHeaders: analysis.headers }),
+        required: true,
       });
     if (!mapped.has("currency"))
       issues.push({
         importId,
         severity: IssueSeverity.BLOCKING,
         field: "currency",
-        message:
-          "The workbook does not contain currency. What currency applies to all prices?",
+        message: "الأسعار الموجودة في الملف بأي عملة؟",
+        inputType: "CURRENCY_SELECT",
+        options: this.json(SUPPORTED_CURRENCIES),
+        required: true,
       });
-    if (!analysis.metadata.projectId && !analysis.metadata.projectName)
+    if (!analysis.metadata.projectId)
+      issues.unshift({
+        importId,
+        severity: IssueSeverity.BLOCKING,
+        field: "projectId",
+        message: "الملف ده تابع لأي مشروع؟",
+        inputType: "PROJECT_SELECT",
+        options: this.json({ allowCreate: true }),
+        required: true,
+      });
+    if (!analysis.metadata.developerId)
       issues.push({
         importId,
         severity: IssueSeverity.BLOCKING,
-        field: "projectName",
-        message: "What project does this file belong to?",
-      });
-    if (!analysis.metadata.developerId && !analysis.metadata.developerName)
-      issues.push({
-        importId,
-        severity: IssueSeverity.BLOCKING,
-        field: "developerName",
-        message: "Which developer supplied this inventory?",
+        field: "developerId",
+        message: "المشروع تابع لأي مطور؟",
+        inputType: "DEVELOPER_SELECT",
+        options: this.json({ allowCreate: true }),
+        required: true,
       });
     if (!analysis.metadata.locationId)
       issues.push({
         importId,
         severity: IssueSeverity.BLOCKING,
         field: "locationId",
-        message: "Which existing area or subarea contains this project?",
+        message: "المشروع موجود في أي منطقة؟",
+        inputType: "LOCATION_SELECT",
+        options: this.json({ allowCreate: true }),
+        required: true,
       });
+    for (const [column, plan] of Object.entries(analysis.paymentPlanMappings))
+      if (!plan.approved)
+        issues.push({
+          importId,
+          severity: IssueSeverity.BLOCKING,
+          field: `paymentPlan:${column}`,
+          message: `راجع خطة السداد المستخرجة من العمود «${column}».`,
+          inputType: "PAYMENT_PLAN_MAPPING",
+          options: this.json({ sourceColumn: column, suggestedDurationMonths: plan.durationMonths, suggestedValueType: plan.valueType, currencies: SUPPORTED_CURRENCIES }),
+          required: true,
+        });
     for (const column of analysis.unknownColumns)
       issues.push({
         importId,
-        severity: IssueSeverity.WARNING,
+        severity: IssueSeverity.BLOCKING,
         field: `column:${column}`,
-        message: `The column “${column}” is not mapped. Choose a canonical field, METADATA to preserve it with provenance, or IGNORE.`,
+        message: `العمود «${column}» غير معروف. اختر معناه أو احتفظ به كمعلومة إضافية أو تجاهله.`,
+        inputType: "CANONICAL_FIELD_SELECT",
+        options: this.json({ sourceColumn: column, fields: CANONICAL_FIELDS, actions: ["METADATA", "IGNORE"] }),
+        required: true,
       });
     const typeHeader = Object.entries(analysis.mappings).find(
       ([, field]) => field === "unitType",
@@ -518,9 +572,12 @@ export class ImporterService {
         )
           issues.push({
             importId,
-            severity: IssueSeverity.WARNING,
+            severity: IssueSeverity.BLOCKING,
             field: `value:unitType:${raw}`,
-            message: `What does the unit type abbreviation “${raw}” mean? Enter its canonical value or IGNORE.`,
+            message: `ما معنى اختصار نوع الوحدة «${raw}»؟`,
+            inputType: "ENUM_SELECT",
+            options: this.json({ values: UNIT_TYPES, allowIgnore: true }),
+            required: true,
           });
     for (const [header, canonical] of Object.entries(analysis.mappings)) {
       const missing = analysis.rows.filter(
@@ -535,6 +592,9 @@ export class ImporterService {
               : IssueSeverity.WARNING,
           field: canonical,
           message: `${missing} rows are missing ${canonical}.`,
+          inputType: "ENUM_SELECT",
+          options: this.json({ values: ["LEAVE_EMPTY", "EXCLUDE_ROWS", "CONTACT_SALES"], missingRows: missing }),
+          required: canonical === "externalUnitId",
           resolution: { missingRows: missing },
         });
     }
@@ -545,6 +605,9 @@ export class ImporterService {
         field: "aiMapping",
         message:
           "AI-assisted column mapping is temporarily unavailable. Review unknown columns manually; the uploaded workbook is safe.",
+        inputType: "CONFIRMATION",
+        options: this.json({ values: ["ACKNOWLEDGED"] }),
+        required: false,
       });
     if (issues.length) await prisma.importIssue.createMany({ data: issues });
   }
@@ -591,9 +654,35 @@ export class ImporterService {
     return { items, page: safePage, pageSize: take, total };
   }
 
+  async options(type: string, search = "", page = 1, pageSize = 20) {
+    const take = Math.min(50, Math.max(1, pageSize));
+    const skip = (Math.max(1, page) - 1) * take;
+    const contains = search.trim() || undefined;
+    if (type === "projects") {
+      const where: Prisma.ProjectWhereInput = contains ? { OR: [{ name: { contains, mode: "insensitive" } }, { developer: { name: { contains, mode: "insensitive" } } }, { location: { name: { contains, mode: "insensitive" } } }] } : {};
+      const [items, total] = await this.prisma.$transaction([this.prisma.project.findMany({ where, skip, take, orderBy: { name: "asc" }, select: { id: true, name: true, developerId: true, locationId: true, developer: { select: { name: true } }, location: { select: { name: true } } } }), this.prisma.project.count({ where })]);
+      return { items, total, page: Math.max(1, page), pageSize: take };
+    }
+    if (type === "developers") {
+      const where: Prisma.DeveloperWhereInput = contains ? { name: { contains, mode: "insensitive" } } : {};
+      const [items, total] = await this.prisma.$transaction([this.prisma.developer.findMany({ where, skip, take, orderBy: { name: "asc" }, select: { id: true, name: true, slug: true } }), this.prisma.developer.count({ where })]);
+      return { items, total, page: Math.max(1, page), pageSize: take };
+    }
+    if (type === "locations") {
+      const where: Prisma.LocationWhereInput = contains ? { OR: [{ name: { contains, mode: "insensitive" } }, { aliases: { some: { value: { contains, mode: "insensitive" } } } }] } : {};
+      const [items, total] = await this.prisma.$transaction([this.prisma.location.findMany({ where, skip, take, orderBy: { name: "asc" }, select: { id: true, name: true, type: true, parent: { select: { name: true } }, aliases: { select: { value: true }, take: 3 } } }), this.prisma.location.count({ where })]);
+      return { items, total, page: Math.max(1, page), pageSize: take };
+    }
+    const staticOptions: Record<string, unknown> = { currencies: SUPPORTED_CURRENCIES, unitTypes: UNIT_TYPES, finishingTypes: FINISHING_TYPES, availability: AVAILABILITY_TYPES, canonicalFields: CANONICAL_FIELDS };
+    if (type in staticOptions) return { items: staticOptions[type], total: (staticOptions[type] as readonly unknown[]).length, page: 1, pageSize: 100 };
+    throw new BadRequestException("نوع الخيارات غير مدعوم.");
+  }
+
   async resolve(id: string, field: string, value: unknown) {
     const item = await this.get(id);
     const analysis = item.analysis as unknown as Analysis;
+    analysis.paymentPlanMappings ??= {};
+    const resolvedFields = [field];
     if (field.startsWith("column:")) {
       const header = field.slice(7);
       if (value === "IGNORE") {
@@ -623,18 +712,76 @@ export class ImporterService {
       analysis.unknownColumns = analysis.unknownColumns.filter(
         (x) => x !== header,
       );
+    } else if (field.startsWith("paymentPlan:")) {
+      const header = field.slice("paymentPlan:".length);
+      const input = value as Record<string, unknown>;
+      const durationMonths = input?.durationMonths == null || input.durationMonths === "" ? undefined : Number(input.durationMonths);
+      const valueType = String(input?.valueType ?? "TOTAL_PRICE");
+      const currency = input?.currency ? String(input.currency).toUpperCase() : undefined;
+      if (!analysis.headers.includes(header) || (durationMonths != null && (!Number.isInteger(durationMonths) || durationMonths < 18 || durationMonths > 180)))
+        throw new BadRequestException("اختر مدة سداد صحيحة بين 18 و180 شهراً.");
+      if (!["TOTAL_PRICE", "INSTALLMENT_AMOUNT", "DOWN_PAYMENT_AMOUNT", "DOWN_PAYMENT_PERCENT", "MAINTENANCE_AMOUNT", "MAINTENANCE_PERCENT"].includes(valueType))
+        throw new BadRequestException("اختر نوع قيمة خطة السداد.");
+      if (currency && !SUPPORTED_CURRENCIES.includes(currency as any))
+        throw new BadRequestException("اختر عملة مدعومة.");
+      analysis.paymentPlanMappings[header] = {
+        durationMonths,
+        valueType: valueType as PaymentPlanValueType,
+        currency,
+        sourceDurationText: analysis.paymentPlanMappings[header]?.sourceDurationText ?? header,
+        approved: true,
+      };
     } else if (field.startsWith("value:")) {
       const [, canonical, raw] = field.split(":");
       if (value !== "IGNORE")
         (analysis.valueMappings[canonical] ??= {})[this.normalize(raw)] =
           String(value);
+    } else if (field === "projectId") {
+      const project = await this.prisma.project.findUnique({
+        where: { id: String(value) },
+        select: { id: true, developerId: true, locationId: true, developer: { select: { slug: true } } },
+      });
+      if (!project) throw new BadRequestException("اختر مشروعاً موجوداً.");
+      analysis.metadata.projectId = project.id;
+      analysis.metadata.developerId = project.developerId;
+      analysis.metadata.developerSlug = project.developer.slug;
+      if (project.locationId) analysis.metadata.locationId = project.locationId;
+      const remembered = await this.prisma.importMapping.findMany({ where: { approved: true, developerSlug: { in: [project.developer.slug, "__global__"] } } });
+      for (const header of [...analysis.unknownColumns]) {
+        const prior = remembered.find((mapping) => mapping.normalizedColumn === this.normalize(header));
+        if (!prior) continue;
+        if (prior.canonicalField.startsWith("paymentPlan:")) {
+          const [, duration, valueType = "TOTAL_PRICE"] = prior.canonicalField.split(":");
+          analysis.paymentPlanMappings[header] = { durationMonths: Number(duration) || undefined, valueType: valueType as PaymentPlanValueType, sourceDurationText: header, approved: true };
+          resolvedFields.push(`paymentPlan:${header}`);
+        } else if (CANONICAL.includes(prior.canonicalField)) {
+          analysis.mappings[header] = prior.canonicalField;
+          analysis.mappingSources[header] = "APPROVED_MEMORY";
+        }
+        analysis.unknownColumns = analysis.unknownColumns.filter((column) => column !== header);
+        resolvedFields.push(`column:${header}`);
+      }
+      resolvedFields.push("developerId");
+      if (project.locationId) resolvedFields.push("locationId");
+      await this.prisma.dataImport.update({ where: { id }, data: { projectId: project.id, developerId: project.developerId } });
+    } else if (field === "developerId") {
+      const developer = await this.prisma.developer.findUnique({ where: { id: String(value) }, select: { id: true, slug: true } });
+      if (!developer) throw new BadRequestException("اختر مطوراً موجوداً.");
+      analysis.metadata.developerId = developer.id;
+      analysis.metadata.developerSlug = developer.slug;
+      await this.prisma.dataImport.update({ where: { id }, data: { developerId: developer.id } });
+    } else if (field === "locationId") {
+      const location = await this.prisma.location.findUnique({ where: { id: String(value) }, select: { id: true } });
+      if (!location) throw new BadRequestException("اختر منطقة موجودة.");
+      analysis.metadata.locationId = location.id;
+    } else if (field === "currency") {
+      const currency = String(value).toUpperCase();
+      if (!SUPPORTED_CURRENCIES.includes(currency as any)) throw new BadRequestException("اختر عملة مدعومة.");
+      analysis.defaultValues.currency = currency;
     } else if (
       [
-        "projectId",
         "projectName",
-        "developerId",
         "developerName",
-        "locationId",
         "parentImportId",
       ].includes(field)
     )
@@ -664,7 +811,7 @@ export class ImporterService {
         },
       }),
       this.prisma.importIssue.updateMany({
-        where: { importId: id, field },
+        where: { importId: id, field: { in: resolvedFields } },
         data: { resolvedAt: new Date(), resolution: this.json({ value }) },
       }),
     ]);
@@ -707,10 +854,18 @@ export class ImporterService {
       priceChanges = 0,
       availabilityChanges = 0,
       paymentPlanChanges = 0,
-      updatedUnits = 0;
+      updatedUnits = 0,
+      invalidRows = 0;
+    const validationErrors: unknown[] = [];
     const changeExamples: unknown[] = [];
     if (externalHeader)
-      for (const row of analysis.rows) {
+      for (const [rowIndex, row] of analysis.rows.entries()) {
+        const rowErrors = this.rowErrors(row, analysis);
+        if (rowErrors.length) {
+          invalidRows++;
+          if (validationErrors.length < 50) validationErrors.push({ row: rowIndex + 2, errors: rowErrors });
+          continue;
+        }
         const key = String(row[externalHeader] ?? "").trim();
         if (!key) continue;
         const prior = existingById.get(key);
@@ -722,20 +877,11 @@ export class ImporterService {
         const values = this.valuesForRow(row, analysis);
         const updateData = this.unitData(values, false);
         const changedFields = this.changedUnitFields(prior, updateData);
-        const plan = prior.paymentPlans[0];
-        const planChanged =
-          (updateData.downPayment != null &&
-            !this.sameValue(plan?.downPayment, updateData.downPayment)) ||
-          (updateData.installmentYears != null &&
-            !this.sameValue(
-              plan?.installmentYears,
-              updateData.installmentYears,
-            )) ||
-          (updateData.installmentAmount != null &&
-            !this.sameValue(
-              plan?.installmentAmount,
-              updateData.installmentAmount,
-            ));
+        const incomingPlans = this.paymentPlansForRow(row, analysis, rowIndex + 2);
+        const planChanged = incomingPlans.some((incoming) => {
+          const priorPlan = prior.paymentPlans.find((plan) => (plan.durationMonths ?? undefined) === incoming.durationMonths && plan.isActive);
+          return !priorPlan || !this.sameValue(priorPlan.totalPrice, incoming.totalPrice) || !this.sameValue(priorPlan.installmentAmount, incoming.installmentAmount) || !this.sameValue(priorPlan.downPaymentAmount ?? priorPlan.downPayment, incoming.downPaymentAmount ?? incoming.downPayment);
+        });
         if (changedFields.includes("price")) priceChanges++;
         if (changedFields.includes("status")) availabilityChanges++;
         if (planChanged) paymentPlanChanges++;
@@ -761,6 +907,8 @@ export class ImporterService {
           severity: IssueSeverity.BLOCKING,
           field: "duplicate:externalUnitId",
           message: `${duplicateIdentifiers} duplicate unit identifiers were found. Correct the workbook or choose a stable identity column before confirmation.`,
+          inputType: "CONFIRMATION",
+          required: true,
         },
       });
     }
@@ -771,6 +919,8 @@ export class ImporterService {
       rowsFound: analysis.rows.length,
       valid: identifiers.length,
       rejected: analysis.rows.length - identifiers.length,
+      invalidRows,
+      validationErrors,
       newUnits,
       existingUnits,
       updatedUnits,
@@ -785,14 +935,17 @@ export class ImporterService {
       missingUnitPolicy: item.missingUnitPolicy,
       changeExamples,
       blockingIssues: blocking + (duplicateIdentifiers ? 1 : 0),
-      canConfirm: blocking === 0 && duplicateIdentifiers === 0,
+      paymentPlanCount: analysis.rows.reduce((total, row, index) => total + this.paymentPlansForRow(row, analysis, index + 2).length, 0),
+      paymentPlanDurations: [...new Set(Object.values(analysis.paymentPlanMappings ?? {}).filter((plan) => plan.approved).map((plan) => plan.durationMonths))],
+      currency: String(analysis.defaultValues.currency ?? ""),
+      canConfirm: blocking === 0 && duplicateIdentifiers === 0 && invalidRows === 0,
     };
     await this.prisma.dataImport.update({
       where: { id },
       data: {
         preview: this.json(preview),
         status:
-          blocking || duplicateIdentifiers
+          blocking || duplicateIdentifiers || invalidRows
             ? ImportStatus.NEEDS_INPUT
             : ImportStatus.READY,
       },
@@ -816,6 +969,22 @@ export class ImporterService {
           : UnitStatus.AVAILABLE;
   }
 
+  private rowErrors(row: Record<string, unknown>, analysis: Analysis) {
+    const values = this.valuesForRow(row, analysis);
+    const errors: Array<{ field: string; code: string }> = [];
+    if (!String(values.externalUnitId ?? "").trim()) errors.push({ field: "externalUnitId", code: "REQUIRED" });
+    for (const field of ["bedrooms", "bathrooms", "builtUpArea", "landArea", "gardenArea", "roofArea", "terraceArea", "price", "downPayment", "installmentYears", "installmentAmount", "maintenance"])
+      if (values[field] != null && values[field] !== "" && this.number(values[field]) == null) errors.push({ field, code: "INVALID_NUMBER" });
+    if (values.deliveryDate != null && values.deliveryDate !== "" && !parseImportDate(values.deliveryDate)) errors.push({ field: "deliveryDate", code: "INVALID_DATE" });
+    const currency = String(values.currency ?? analysis.defaultValues.currency ?? "").toUpperCase();
+    if (!SUPPORTED_CURRENCIES.includes(currency as any)) errors.push({ field: "currency", code: "INVALID_CURRENCY" });
+    for (const [sourceColumn, mapping] of Object.entries(analysis.paymentPlanMappings ?? {})) {
+      if (!mapping.approved) errors.push({ field: sourceColumn, code: "PAYMENT_PLAN_NOT_APPROVED" });
+      if (row[sourceColumn] != null && row[sourceColumn] !== "" && this.number(row[sourceColumn]) == null) errors.push({ field: sourceColumn, code: "INVALID_PAYMENT_VALUE" });
+    }
+    return errors;
+  }
+
   private valuesForRow(row: Record<string, unknown>, analysis: Analysis) {
     const values: Record<string, unknown> = { ...analysis.defaultValues };
     for (const [header, field] of Object.entries(analysis.mappings))
@@ -826,6 +995,44 @@ export class ImporterService {
       }
     return values;
   }
+  private paymentPlansForRow(
+    row: Record<string, unknown>,
+    analysis: Analysis,
+    rowNumber: number,
+    importId?: string,
+    fileName?: string,
+  ): Array<Record<string, any>> {
+    const grouped = new Map<string, Record<string, any>>();
+    for (const [sourceColumn, mapping] of Object.entries(analysis.paymentPlanMappings ?? {})) {
+      if (!mapping.approved) continue;
+      const numeric = this.number(row[sourceColumn]);
+      if (numeric == null) continue;
+      const currency = mapping.currency || String(analysis.defaultValues.currency || "EGP");
+      const key = `${mapping.durationMonths ?? "default"}:${currency}`;
+      const plan = grouped.get(key) ?? {
+        name: mapping.durationMonths ? `${mapping.durationMonths} months` : "Imported payment plan",
+        durationMonths: mapping.durationMonths,
+        installmentYears: mapping.durationMonths ? mapping.durationMonths / 12 : undefined,
+        currency,
+        sourceImportId: importId,
+        sourceMetadata: { importId, filename: fileName, sheet: analysis.sheetName, row: rowNumber, sources: [] },
+        isActive: true,
+      };
+      const target: Record<string, string> = { TOTAL_PRICE: "totalPrice", INSTALLMENT_AMOUNT: "installmentAmount", DOWN_PAYMENT_AMOUNT: "downPaymentAmount", DOWN_PAYMENT_PERCENT: "downPaymentPercent", MAINTENANCE_AMOUNT: "maintenanceAmount", MAINTENANCE_PERCENT: "maintenancePercent" };
+      plan[target[mapping.valueType]] = numeric;
+      if (mapping.valueType === "DOWN_PAYMENT_AMOUNT") plan.downPayment = numeric;
+      plan.sourceMetadata.sources.push({ sourceColumn, originalValue: row[sourceColumn], mappedCanonicalField: mapping.valueType, adminMappingDecision: "APPROVED", sourceDurationText: mapping.sourceDurationText, parsedDurationMonths: mapping.durationMonths });
+      grouped.set(key, plan);
+    }
+    const values = this.valuesForRow(row, analysis);
+    if (this.number(values.downPayment) != null || this.number(values.installmentYears) != null || this.number(values.installmentAmount) != null) {
+      const months = this.number(values.installmentYears) != null ? Math.round(this.number(values.installmentYears)! * 12) : undefined;
+      const key = `${months ?? "default"}:${String(values.currency || analysis.defaultValues.currency || "EGP")}`;
+      const prior = grouped.get(key) ?? {};
+      grouped.set(key, { ...prior, name: months ? `${months} months` : "Imported payment plan", durationMonths: months, installmentYears: this.number(values.installmentYears), downPayment: this.number(values.downPayment), downPaymentAmount: this.number(values.downPayment), installmentAmount: this.number(values.installmentAmount), currency: String(values.currency || analysis.defaultValues.currency || "EGP"), sourceImportId: importId, sourceMetadata: prior.sourceMetadata ?? this.json({ importId, filename: fileName, sheet: analysis.sheetName, row: rowNumber, mappedCanonicalField: "paymentPlan" }), isActive: true });
+    }
+    return [...grouped.values()].map((plan) => ({ ...plan, sourceMetadata: this.json(plan.sourceMetadata) }));
+  }
   private unitData(
     values: Record<string, unknown>,
     contactSales: boolean,
@@ -834,13 +1041,13 @@ export class ImporterService {
       values[field] == null || values[field] === ""
         ? undefined
         : String(values[field]);
-    const date = text("deliveryDate");
+    const deliveryDate = parseImportDate(values.deliveryDate);
     return {
       phase: text("phase"),
       cluster: text("cluster"),
       building: text("building"),
       floor: text("floor"),
-      unitType: text("unitType"),
+      unitType: values.unitType == null ? undefined : normalizeUnitType(values.unitType),
       unitSubType: text("unitSubType"),
       bedrooms: this.number(values.bedrooms),
       bathrooms: this.number(values.bathrooms),
@@ -856,9 +1063,12 @@ export class ImporterService {
         : values.status != null
           ? this.status(values.status)
           : undefined,
-      deliveryDate: date ? new Date(date) : undefined,
+      deliveryDate,
       deliveryYears: this.number(values.deliveryYears),
-      finishingType: text("finishingType"),
+      finishingType:
+        values.finishingType == null
+          ? undefined
+          : normalizeFinishing(values.finishingType),
       downPayment: this.number(values.downPayment),
       installmentYears: this.number(values.installmentYears),
       installmentAmount: this.number(values.installmentAmount),
@@ -899,7 +1109,7 @@ export class ImporterService {
     return Object.entries(data)
       .filter(
         ([field, value]) =>
-          field !== "availabilityUpdatedAt" &&
+          field !== "availabilityUpdatedAt" && field !== "sourceMetadata" &&
           value !== undefined &&
           !this.sameValue(existing[field], value),
       )
@@ -936,42 +1146,25 @@ export class ImporterService {
     try {
       const result = await this.prisma.$transaction(
         async (tx) => {
-          let developerId = item.developerId || analysis.metadata.developerId;
-          let projectId = item.projectId || analysis.metadata.projectId;
-          if (!developerId) {
-            const name = analysis.metadata.developerName;
-            const slug = this.normalize(name).replace(/ /g, "-");
-            developerId = (
-              await tx.developer.upsert({
-                where: { slug },
-                create: { name, slug },
-                update: {},
-              })
-            ).id;
-          }
-          if (!projectId) {
-            const name = analysis.metadata.projectName;
-            const slugBase = this.normalize(name).replace(/ /g, "-");
-            const slug = `${slugBase}-${developerId.slice(-5)}`;
-            projectId = (
-              await tx.project.upsert({
-                where: { developerId_name: { developerId, name } },
-                create: {
-                  developerId,
-                  name,
-                  slug,
-                  locationId: analysis.metadata.locationId,
-                },
-                update: { locationId: analysis.metadata.locationId },
-              })
-            ).id;
-          }
+          const developerId = item.developerId || analysis.metadata.developerId;
+          const projectId = item.projectId || analysis.metadata.projectId;
+          if (!developerId || !projectId || !analysis.metadata.locationId)
+            throw new ImportHttpException(HttpStatus.UNPROCESSABLE_ENTITY, "IMPORT_VALIDATION_ISSUES", "اختر المشروع والمطور والمنطقة قبل التأكيد.", "normalization", id);
           let created = 0,
             updated = 0,
             rejected = 0,
             skipped = 0;
           const importedIdentifiers = new Set<string>();
-          for (const row of analysis.rows) {
+          for (const [rowIndex, row] of analysis.rows.entries()) {
+            const validationErrors = this.rowErrors(row, analysis);
+            if (validationErrors.length)
+              throw new ImportHttpException(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                "IMPORT_ROW_VALIDATION_FAILED",
+                `تعذر اعتماد الصف ${rowIndex + 2}. راجع القيم المحددة.`,
+                "normalization",
+                id,
+              );
             const values = this.valuesForRow(row, analysis);
             if (
               Object.entries(analysis.rowPolicies).some(
@@ -1005,8 +1198,9 @@ export class ImporterService {
                 (values[field] == null || values[field] === ""),
             );
         const updateData = this.unitData(values, contactSales);
-        const sourceMetadata = Object.fromEntries((analysis.metadataColumns ?? []).filter(header => row[header] != null && row[header] !== "").map(header => [header, row[header]]));
-        if (Object.keys(sourceMetadata).length) updateData.sourceMetadata = this.json(sourceMetadata);
+        const sourceMetadata: Record<string, unknown> = Object.fromEntries((analysis.metadataColumns ?? []).filter(header => row[header] != null && row[header] !== "").map(header => [header, row[header]]));
+        sourceMetadata._provenance = { importId: id, filename: item.fileName, sheet: analysis.sheetName, row: rowIndex + 2, values: Object.entries(analysis.mappings).filter(([header]) => row[header] != null && row[header] !== "").map(([sourceColumn, mappedCanonicalField]) => ({ sourceColumn, originalValue: row[sourceColumn], mappedCanonicalField, adminMappingDecision: analysis.mappingSources[sourceColumn] ?? "KNOWN_RULE", aiSuggestion: (analysis.aiSuggestions as any[]).find((suggestion: any) => suggestion?.sourceColumn === sourceColumn) ?? null })) };
+        updateData.sourceMetadata = this.json(sourceMetadata);
             const createData = {
               ...updateData,
               externalUnitId,
@@ -1017,30 +1211,29 @@ export class ImporterService {
             const activePlan = existing?.paymentPlans.find(
               (plan) => plan.isActive,
             );
+            const incomingPlans = this.paymentPlansForRow(
+              row,
+              analysis,
+              rowIndex + 2,
+              id,
+              item.fileName,
+            );
             const activeOffer = existing?.offers.find(
               (offer) => offer.isActive,
             );
-            const planChanged =
-              updateData.downPayment != null ||
-              updateData.installmentYears != null ||
-              updateData.installmentAmount != null
-                ? !activePlan ||
-                  (updateData.downPayment != null &&
-                    !this.sameValue(
-                      activePlan.downPayment,
-                      updateData.downPayment,
-                    )) ||
-                  (updateData.installmentYears != null &&
-                    !this.sameValue(
-                      activePlan.installmentYears,
-                      updateData.installmentYears,
-                    )) ||
-                  (updateData.installmentAmount != null &&
-                    !this.sameValue(
-                      activePlan.installmentAmount,
-                      updateData.installmentAmount,
-                    ))
-                : false;
+            const planChanged = incomingPlans.some((incoming) => {
+              const priorPlan = existing?.paymentPlans.find(
+                (plan) =>
+                  plan.isActive &&
+                  (plan.durationMonths ?? undefined) === incoming.durationMonths,
+              );
+              return (
+                !priorPlan ||
+                !this.sameValue(priorPlan.totalPrice, incoming.totalPrice) ||
+                !this.sameValue(priorPlan.installmentAmount, incoming.installmentAmount) ||
+                !this.sameValue(priorPlan.downPaymentAmount ?? priorPlan.downPayment, incoming.downPaymentAmount ?? incoming.downPayment)
+              );
+            });
             const offerChanged =
               updateData.offerText || updateData.discount != null
                 ? !activeOffer ||
@@ -1079,30 +1272,17 @@ export class ImporterService {
               : await tx.unit.create({ data: createData });
             existing ? updated++ : created++;
             if (
-              planChanged ||
-              (!existing &&
-                (updateData.downPayment != null ||
-                  updateData.installmentYears != null ||
-                  updateData.installmentAmount != null))
+              planChanged || (!existing && incomingPlans.length)
             ) {
-              await tx.paymentPlan.updateMany({
-                where: { unitId: unit.id, isActive: true },
-                data: { isActive: false },
-              });
-              await tx.paymentPlan.create({
-                data: {
-                  unitId: unit.id,
-                  name: activePlan?.name || "Imported payment plan",
-                  downPayment: (updateData.downPayment ??
-                    activePlan?.downPayment) as any,
-                  installmentYears: (updateData.installmentYears ??
-                    activePlan?.installmentYears) as any,
-                  installmentAmount: (updateData.installmentAmount ??
-                    activePlan?.installmentAmount) as any,
-                  notes: activePlan?.notes,
-                  isActive: true,
-                },
-              });
+              for (const incoming of incomingPlans) {
+                await tx.paymentPlan.updateMany({
+                  where: { unitId: unit.id, durationMonths: incoming.durationMonths == null ? null : Number(incoming.durationMonths), isActive: true },
+                  data: { isActive: false },
+                });
+                await tx.paymentPlan.create({
+                  data: { ...incoming, unitId: unit.id } as Prisma.PaymentPlanUncheckedCreateInput,
+                });
+              }
             }
             if (
               offerChanged ||
@@ -1227,6 +1407,16 @@ export class ImporterService {
               update: { canonicalField, approved: true },
             });
           }
+          for (const [header, plan] of Object.entries(analysis.paymentPlanMappings ?? {})) {
+            if (!plan.approved) continue;
+            const developerSlug = analysis.metadata.developerSlug || `developer:${developerId}`;
+            const canonicalField = `paymentPlan:${plan.durationMonths ?? 0}:${plan.valueType}`;
+            await tx.importMapping.upsert({
+              where: { developerSlug_normalizedColumn: { developerSlug, normalizedColumn: this.normalize(header) } },
+              create: { developerSlug, sourceColumn: header, normalizedColumn: this.normalize(header), canonicalField, approved: true, confidence: 1 },
+              update: { canonicalField, approved: true, confidence: 1 },
+            });
+          }
           for (const [canonicalField, mappings] of Object.entries(
             analysis.valueMappings,
           ))
@@ -1281,6 +1471,13 @@ export class ImporterService {
       );
       return { import: await this.get(id), result };
     } catch (error) {
+      if (error instanceof ImportHttpException) {
+        await this.prisma.dataImport.update({
+          where: { id },
+          data: { status: ImportStatus.NEEDS_INPUT },
+        });
+        throw error;
+      }
       await this.markFailed(
         id,
         "IMPORT_CONFIRM_FAILED",

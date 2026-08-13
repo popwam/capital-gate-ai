@@ -6,7 +6,7 @@
     "start:dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/main",
-    "test:smoke": "node --test dist/providers/demo.provider.spec.js dist/providers/hybrid.provider.spec.js dist/providers/advisor-evals.spec.js dist/admin/lead-crm.service.spec.js dist/imports/workbook-reader.spec.js dist/imports/importer.service.spec.js dist/imports/imports.controller.spec.js dist/imports/rollback-safety.spec.js dist/security/http-exception.filter.spec.js dist/text/unicode.spec.js"
+    "test:smoke": "node --test dist/providers/demo.provider.spec.js dist/providers/hybrid.provider.spec.js dist/providers/advisor-evals.spec.js dist/admin/lead-crm.service.spec.js dist/imports/import-contract.spec.js dist/imports/workbook-reader.spec.js dist/imports/importer.service.spec.js dist/imports/imports.controller.spec.js dist/imports/rollback-safety.spec.js dist/security/http-exception.filter.spec.js dist/text/unicode.spec.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.922.0",

@@ -100,6 +100,16 @@ class PaymentPlanDto {
   @IsOptional() @Type(() => Number) @IsNumber() downPayment?: number;
   @IsOptional() @Type(() => Number) @IsNumber() installmentYears?: number;
   @IsOptional() @Type(() => Number) @IsNumber() installmentAmount?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(18) @Max(180) durationMonths?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() downPaymentAmount?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() downPaymentPercent?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() totalPrice?: number;
+  @IsOptional() @IsIn(["MONTHLY", "QUARTERLY", "SEMI_ANNUAL", "ANNUAL", "CUSTOM"]) installmentFrequency?: string;
+  @IsOptional() @IsIn(["EGP", "USD", "EUR", "AED", "SAR", "GBP"]) currency?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() maintenanceAmount?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() maintenancePercent?: number;
+  @IsOptional() @IsDateString() validFrom?: string;
+  @IsOptional() @IsDateString() validTo?: string;
   @IsOptional() @IsString() notes?: string;
 }
 class OfferDto {
@@ -145,6 +155,8 @@ export class CatalogController {
     @Body() body: DeveloperDto,
     @Req() req: any,
   ) {
+    const existing = await this.prisma.developer.findFirst({ where: { name: { equals: body.name.trim(), mode: "insensitive" } } });
+    if (existing) return existing;
     const item = await this.prisma.developer.create({ data: body });
     await this.audit.record(
       req.admin.id,
@@ -198,6 +210,8 @@ export class CatalogController {
     @Body() body: ProjectDto,
     @Req() req: any,
   ) {
+    const existing = await this.prisma.project.findFirst({ where: { developerId: body.developerId, name: { equals: body.name.trim(), mode: "insensitive" } } });
+    if (existing) return existing;
     const item = await this.prisma.project.create({ data: body });
     await this.audit.record(
       req.admin.id,
@@ -395,7 +409,7 @@ export class CatalogController {
     @Req() req: any,
   ) {
     const item = await this.prisma.paymentPlan.create({
-      data: { ...body, unitId },
+      data: { ...body, validFrom: body.validFrom ? new Date(body.validFrom) : undefined, validTo: body.validTo ? new Date(body.validTo) : undefined, unitId },
     });
     await this.audit.record(
       req.admin.id,
@@ -412,7 +426,7 @@ export class CatalogController {
   ) {
     const item = await this.prisma.paymentPlan.update({
       where: { id },
-      data: body,
+      data: { ...body, validFrom: body.validFrom ? new Date(body.validFrom) : undefined, validTo: body.validTo ? new Date(body.validTo) : undefined },
     });
     await this.audit.record(
       req.admin.id,

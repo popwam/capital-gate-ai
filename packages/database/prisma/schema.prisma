@@ -292,8 +292,24 @@ model PaymentPlan {
   downPayment       Decimal? @db.Decimal(16, 2)
   installmentYears  Decimal? @db.Decimal(4, 1)
   installmentAmount Decimal? @db.Decimal(16, 2)
+  durationMonths    Int?
+  downPaymentAmount Decimal? @db.Decimal(16, 2)
+  downPaymentPercent Decimal? @db.Decimal(7, 4)
+  totalPrice        Decimal? @db.Decimal(16, 2)
+  installmentFrequency String?
+  currency          String?
+  maintenanceAmount Decimal? @db.Decimal(16, 2)
+  maintenancePercent Decimal? @db.Decimal(7, 4)
+  validFrom         DateTime?
+  validTo           DateTime?
+  sourceImportId    String?
+  sourceImport      DataImport? @relation(fields: [sourceImportId], references: [id], onDelete: SetNull)
+  sourceMetadata    Json?
   notes             String?
   isActive          Boolean  @default(true)
+
+  @@index([unitId, durationMonths])
+  @@index([sourceImportId])
 }
 
 model Offer {
@@ -373,6 +389,7 @@ model DataImport {
   priceHistory  UnitPriceHistory[]
   issues        ImportIssue[]
   unitChanges   ImportUnitChange[]
+  paymentPlans  PaymentPlan[]
 
   @@index([fileHash])
 }
@@ -429,6 +446,9 @@ model ImportIssue {
   field      String?
   rowNumber  Int?
   message    String
+  inputType  String?
+  options    Json?
+  required   Boolean       @default(false)
   resolution Json?
   resolvedAt DateTime?
 

@@ -19,7 +19,8 @@
     "smoke:api": "node scripts/smoke-api.mjs",
     "smoke:production": "node scripts/production-live-smoke.mjs",
     "ai:smoke": "node scripts/ai-live-smoke.mjs",
-    "smoke:imports": "node scripts/import-live-smoke.mjs"
+    "smoke:imports": "node scripts/import-live-smoke.mjs",
+    "smoke:typed-import": "node scripts/typed-import-live-smoke.mjs"
   },
   "dependencies": {
     "@nestjs/platform-express": "11.1.29",

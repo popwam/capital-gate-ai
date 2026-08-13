@@ -15,6 +15,7 @@ export class ImportsController {
   private readonly logger = new Logger(ImportsController.name);
   constructor(private readonly imports: ImporterService, private readonly audit: AuditService) {}
   @Get() list(@Query("page") page?: string, @Query("pageSize") pageSize?: string) { return this.imports.list(Number(page) || 1, Number(pageSize) || 50); }
+  @Get("options/selectors") options(@Query("type") type: string, @Query("search") search?: string, @Query("page") page?: string, @Query("pageSize") pageSize?: string) { return this.imports.options(type, search || "", Number(page) || 1, Number(pageSize) || 20); }
   @Get(":id") get(@Param("id") id: string) { return this.imports.get(id); }
   @Post("upload") @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 20 * 1024 * 1024, files: 1 } }))
   async upload(@UploadedFile() file: Express.Multer.File, @Body() body: Record<string,string>, @Req() req: any) {

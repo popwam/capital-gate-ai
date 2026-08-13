@@ -30,8 +30,12 @@ function fixture(options: { aiFails?: boolean; storageFails?: boolean } = {}) {
   const issues: any[] = [];
   let record: any;
   const prisma: any = {
+    project: { findUnique: async () => ({ id: "project-1", developerId: "developer-1", locationId: "location-1", developer: { slug: "developer-one" } }) },
+    developer: { findUnique: async () => ({ id: "developer-1", slug: "developer-one" }) },
+    location: { findUnique: async () => ({ id: "location-1" }) },
     importMapping: { findMany: async () => [] },
     importValueMapping: { findMany: async () => [] },
+    unit: { findMany: async () => [] },
     dataImport: {
       create: async ({ data }: any) => {
         events.push("database-create");
@@ -65,6 +69,13 @@ function fixture(options: { aiFails?: boolean; storageFails?: boolean } = {}) {
           })),
         );
       },
+      updateMany: async ({ where, data }: any) => {
+        for (const issue of issues)
+          if (issue.importId === where.importId && (where.field?.in ? where.field.in.includes(issue.field) : issue.field === where.field)) Object.assign(issue, data);
+        return { count: issues.length };
+      },
+      deleteMany: async () => ({ count: 0 }),
+      create: async ({ data }: any) => { const issue = { id: `issue-${issues.length}`, resolvedAt: null, ...data }; issues.push(issue); return issue; },
     },
     $transaction: async (callback: any) => {
       events.push("transaction");
@@ -118,7 +129,7 @@ test("raw upload survives unavailable AI and creates manual mapping issues", asy
       (issue: any) => issue.field === "column:Unknown Sales Label",
     ),
   );
-  assert.ok(result.issues.some((issue: any) => issue.field === "projectName"));
+  assert.ok(result.issues.some((issue: any) => issue.field === "projectId"));
   assert.deepEqual(f.events, ["database-create", "storage", "ai", "transaction"]);
 });
 
@@ -177,4 +188,65 @@ test("preview becomes ready only after blocking questions are resolved", async (
   assert.equal(preview.preview.canConfirm, true);
   assert.equal(preview.preview.valid, 1);
   assert.equal(f.record().status, "READY");
+});
+
+test("real workbook shape produces typed selectors and an 8-year payment plan", async () => {
+  const f = fixture();
+  const rows = Array.from({ length: 16 }, (_, index) => ({
+    "Properties Unit no.": `C51 4/${index + 1}`,
+    "Properties Delivery Date": "28-02-2027",
+    "Properties Standard Unit Price": 13_578_000 + index,
+    "Properties Unit Price 8 Y": 13_578_000 + index,
+    "Properties Finishing": "Semi-Finished",
+    "Properties Total Gross Area": 165,
+  }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), "Inventory");
+  const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+  const result: any = await f.service.analyze(file(buffer), {});
+  assert.equal(result.rowsDetected, 16);
+  assert.equal(result.analysis.mappings["Properties Unit no."], "externalUnitId");
+  assert.equal(result.analysis.mappings["Properties Standard Unit Price"], "price");
+  assert.equal(result.analysis.mappings["Properties Total Gross Area"], "builtUpArea");
+  assert.equal(result.analysis.paymentPlanMappings["Properties Unit Price 8 Y"].durationMonths, 96);
+  assert.equal(result.issues.find((issue: any) => issue.field === "projectId")?.inputType, "PROJECT_SELECT");
+  assert.equal(result.issues.find((issue: any) => issue.field === "developerId")?.inputType, "DEVELOPER_SELECT");
+  assert.equal(result.issues.find((issue: any) => issue.field === "locationId")?.inputType, "LOCATION_SELECT");
+  assert.equal(result.issues.find((issue: any) => issue.field === "currency")?.inputType, "CURRENCY_SELECT");
+  const planIssue = result.issues.find((issue: any) => issue.field === "paymentPlan:Properties Unit Price 8 Y");
+  assert.equal(planIssue.inputType, "PAYMENT_PLAN_MAPPING");
+  assert.equal(planIssue.options.suggestedDurationMonths, 96);
+});
+
+test("multiple plan columns stay on one unit and preserve the official price", () => {
+  const f = fixture();
+  const analysis: any = { sheetName: "Inventory", mappings: { "Unit No": "externalUnitId", "Standard Price": "price" }, paymentPlanMappings: { "Price 5 Y": { durationMonths: 60, valueType: "TOTAL_PRICE", sourceDurationText: "5 Y", approved: true }, "Price 8 Y": { durationMonths: 96, valueType: "TOTAL_PRICE", sourceDurationText: "8 Y", approved: true }, "Price 10 Y": { durationMonths: 120, valueType: "TOTAL_PRICE", sourceDurationText: "10 Y", approved: true } }, valueMappings: {}, defaultValues: { currency: "EGP" } };
+  const row = { "Unit No": "A-1", "Standard Price": 10_000_000, "Price 5 Y": 11_000_000, "Price 8 Y": 12_000_000, "Price 10 Y": 13_000_000 };
+  const values = (f.service as any).valuesForRow(row, analysis);
+  const plans = (f.service as any).paymentPlansForRow(row, analysis, 2, "import-1", "plans.xlsx");
+  assert.equal(values.price, 10_000_000);
+  assert.deepEqual(plans.map((plan: any) => plan.durationMonths), [60, 96, 120]);
+  assert.deepEqual(plans.map((plan: any) => plan.totalPrice), [11_000_000, 12_000_000, 13_000_000]);
+});
+
+test("selecting a newly created project returns to the same import and resolves relations", async () => {
+  const f = fixture();
+  const uploaded: any = await f.service.analyze(file(workbookBuffer({ "Unit Number": "RETURN-1", Currency: "EGP" })), {});
+  const returned: any = await f.service.resolve(uploaded.id, "projectId", "project-1");
+  assert.equal(returned.id, uploaded.id);
+  assert.equal(returned.analysis.metadata.projectId, "project-1");
+  assert.equal(returned.analysis.metadata.developerId, "developer-1");
+  assert.equal(returned.analysis.metadata.locationId, "location-1");
+  assert.ok(returned.issues.find((issue: any) => issue.field === "projectId").resolvedAt);
+  assert.ok(returned.issues.find((issue: any) => issue.field === "developerId").resolvedAt);
+  assert.ok(returned.issues.find((issue: any) => issue.field === "locationId").resolvedAt);
+});
+
+test("preview and confirm share typed normalization and reject an invalid date before writes", async () => {
+  const f = fixture();
+  const uploaded: any = await f.service.analyze(file(workbookBuffer({ "Unit Number": "BAD-DATE", Currency: "EGP", "Delivery Date": "31-02-2027" })), { projectId: "project-1", developerId: "developer-1", locationId: "location-1" });
+  const preview: any = await f.service.preview(uploaded.id);
+  assert.equal(preview.preview.invalidRows, 1);
+  assert.equal(preview.preview.canConfirm, false);
+  await assert.rejects(() => f.service.confirm(uploaded.id), (error: any) => error.getResponse().code === "IMPORT_PREVIEW_REQUIRED");
 });
