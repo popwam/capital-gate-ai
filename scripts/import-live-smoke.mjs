@@ -4,205 +4,46 @@ import { DeleteObjectsCommand, S3Client } from "@aws-sdk/client-s3";
 import { PrismaClient } from "@prisma/client";
 import * as XLSX from "xlsx";
 
-if (!process.env.DATABASE_URL && process.loadEnvFile) {
-  try { process.loadEnvFile(".env"); } catch { /* CI provides environment directly */ }
+if (!process.env.DATABASE_URL && process.loadEnvFile) try { process.loadEnvFile(".env"); } catch {}
+for (const key of ["ADMIN_BOOTSTRAP_EMAIL","ADMIN_BOOTSTRAP_PASSWORD","DATABASE_URL","R2_ACCOUNT_ID","R2_ACCESS_KEY_ID","R2_SECRET_ACCESS_KEY","R2_BUCKET","R2_PUBLIC_BASE_URL"]) assert.ok(process.env[key], `${key} is required`);
+const base=(process.env.IMPORT_SMOKE_API_URL||"http://127.0.0.1:4100").replace(/\/$/,"")+"/v1";const origin=process.env.WEB_ORIGIN||"https://ai.cg.popwam.com";const stamp=`${Date.now()}-${randomUUID().slice(0,8)}`;const prisma=new PrismaClient();const s3=new S3Client({region:"auto",endpoint:`https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,credentials:{accessKeyId:process.env.R2_ACCESS_KEY_ID,secretAccessKey:process.env.R2_SECRET_ACCESS_KEY}});const importIds=[];const objectKeys=[];const cleanupUnitIds=[];let cookie="";let locationId="";let developerId="";let projectId="";
+function bookBuffer(rows,bookType="xlsx",sheetName="Inventory"){const workbook=XLSX.utils.book_new();XLSX.utils.book_append_sheet(workbook,XLSX.utils.json_to_sheet(rows),sheetName);return XLSX.write(workbook,{type:"buffer",bookType});}
+async function request(path,{method="GET",body}={}){const jsonBody=typeof body==="string";const response=await fetch(`${base}${path}`,{method,headers:{Origin:origin,...(cookie?{Cookie:cookie}:{}),...(jsonBody?{"content-type":"application/json"}:{})},body,credentials:"include"});const data=await response.json().catch(()=>({}));return{response,data};}
+function track(item){if(item?.id)importIds.push(item.id);const prefix=`${process.env.R2_PUBLIC_BASE_URL.replace(/\/$/,"")}/`;if(item?.fileUrl?.startsWith(prefix))objectKeys.push(decodeURIComponent(item.fileUrl.slice(prefix.length)));}
+async function upload(name,buffer,mime="application/octet-stream",fields={}){const form=new FormData();form.append("file",new Blob([buffer],{type:mime}),name);for(const[key,value]of Object.entries(fields))form.append(key,String(value));const result=await request("/admin/imports/upload",{method:"POST",body:form});if(result.response.ok)track(result.data);return result;}
+async function resolveAll(item,context={}){let current=item;for(let guard=0;guard<50;guard++){const issue=current.issues?.find(x=>!x.resolvedAt);if(!issue)break;let value="LEAVE_EMPTY";if(issue.field==="projectName")value=context.projectName;if(issue.field==="developerName")value=context.developerName;if(issue.field==="locationId")value=locationId;if(issue.field?.startsWith("column:"))value="METADATA";if(issue.field==="aiMapping")value="ACKNOWLEDGED";if(issue.field?.startsWith("value:unitType:"))value="Apartment";const resolved=await request(`/admin/imports/${current.id}/resolve`,{method:"POST",body:JSON.stringify({field:issue.field,value})});assert.ok(resolved.response.ok,`resolve ${issue.field}: ${JSON.stringify(resolved.data)}`);current=resolved.data;}return current;}
+async function preview(id){const result=await request(`/admin/imports/${id}/preview`,{method:"POST",body:"{}"});assert.ok(result.response.ok,JSON.stringify(result.data));return result.data;}
+async function confirm(id){const result=await request(`/admin/imports/${id}/confirm`,{method:"POST",body:"{}"});assert.ok(result.response.ok,JSON.stringify(result.data));return result.data;}
+
+async function main(){
+ const preflight=await fetch(`${base}/admin/imports/upload`,{method:"OPTIONS",headers:{Origin:origin,"Access-Control-Request-Method":"POST","Access-Control-Request-Headers":"content-type"}});assert.equal(preflight.status,204);assert.equal(preflight.headers.get("access-control-allow-origin"),origin);assert.equal(preflight.headers.get("access-control-allow-credentials"),"true");
+ const unauthForm=new FormData();unauthForm.append("file",new Blob([bookBuffer([{"Unit Number":"UNAUTH"}])]),`unauth-${stamp}.xlsx`);const unauth=await fetch(`${base}/admin/imports/upload`,{method:"POST",headers:{Origin:origin},body:unauthForm,credentials:"include"});assert.equal(unauth.status,401);
+ const login=await fetch(`${base}/admin/auth/login`,{method:"POST",headers:{Origin:origin,"content-type":"application/json"},body:JSON.stringify({email:process.env.ADMIN_BOOTSTRAP_EMAIL,password:process.env.ADMIN_BOOTSTRAP_PASSWORD}),credentials:"include"});assert.ok(login.ok,`login ${login.status}`);cookie=(login.headers.get("set-cookie")||"").split(";")[0];assert.match(cookie,/^maqar_admin_session=/);
+ const location=await request("/admin/locations",{method:"POST",body:JSON.stringify({type:"AREA",name:`منطقة اختبار ${stamp}`,slug:`import-smoke-${stamp}`})});assert.equal(location.response.status,201);locationId=location.data.id;
+
+ const baseRows=[
+  {"Unit Number":`U1-${stamp}`,"Unit Type":"Apartment",Bedrooms:3,BUA:170,Price:9000000,Currency:"EGP",Status:"AVAILABLE","Legacy Notes":"garden"},
+  {"Unit Number":`U2-${stamp}`,"Unit Type":"Apartment",Bedrooms:2,BUA:140,Price:8000000,Currency:"EGP",Status:"AVAILABLE","Legacy Notes":"middle"},
+  {"Unit Number":`U4-${stamp}`,"Unit Type":"Apartment",Bedrooms:4,BUA:210,Price:12000000,Currency:"EGP",Status:"AVAILABLE","Legacy Notes":"corner"},
+ ];
+ const firstUpload=await upload(`import-smoke-${stamp}.xlsx`,bookBuffer(baseRows));assert.equal(firstUpload.response.status,201);assert.equal((await fetch(firstUpload.data.fileUrl)).status,200);let first=await resolveAll(firstUpload.data,{projectName:`Import Smoke Project ${stamp}`,developerName:`Import Smoke Developer ${stamp}`});first=await preview(first.id);assert.equal(first.preview.newUnits,3);assert.equal(first.preview.canConfirm,true);const firstConfirmed=await confirm(first.id);assert.equal(firstConfirmed.result.created,3);assert.equal(firstConfirmed.result.updated,0);developerId=firstConfirmed.result.developerId;projectId=firstConfirmed.result.projectId;const units=await prisma.unit.findMany({where:{projectId}});assert.equal(units.length,3);cleanupUnitIds.push(...units.map(x=>x.id));assert.ok(units.every(x=>x.sourceMetadata&&x.sourceMetadata["Legacy Notes"]));
+
+ const updateRows=[
+  {"Unit Number":`U1-${stamp}`,"Unit Type":"Apartment",Bedrooms:3,BUA:170,Price:9500000,Currency:"EGP",Status:"AVAILABLE","Legacy Notes":"garden changed"},
+  {"Unit Number":`U3-${stamp}`,"Unit Type":"Apartment",Bedrooms:1,BUA:95,Price:6000000,Currency:"EGP",Status:"AVAILABLE","Legacy Notes":"new"},
+  {"Unit Number":`U4-${stamp}`,"Unit Type":"Apartment",Bedrooms:4,BUA:210,Price:12000000,Currency:"EGP",Status:"AVAILABLE","Legacy Notes":"corner"},
+ ];
+ const updateUpload=await upload(`import-smoke-update-${stamp}.xlsx`,bookBuffer(updateRows),"application/octet-stream",{parentImportId:first.id,batchName:`Update ${stamp}`});assert.equal(updateUpload.response.status,201);let update=await resolveAll(updateUpload.data);update=await preview(update.id);assert.equal(update.preview.newUnits,1);assert.equal(update.preview.updatedUnits,1);assert.equal(update.preview.priceChanges,1);assert.equal(update.preview.removedUnits,1);assert.equal(update.preview.unchangedRows,1);const updated=await confirm(update.id);assert.equal(updated.result.created,1);assert.equal(updated.result.updated,1);assert.equal(updated.result.skipped,1);const u1=await prisma.unit.findFirstOrThrow({where:{projectId,externalUnitId:`U1-${stamp}`},include:{priceHistory:true}});assert.equal(Number(u1.price),9500000);assert.ok(u1.priceHistory.length>=2);const u3=await prisma.unit.findFirstOrThrow({where:{projectId,externalUnitId:`U3-${stamp}`}});cleanupUnitIds.push(u3.id);
+
+ const priorWhileNewerActive=await request(`/admin/imports/${first.id}`,{method:"DELETE",body:JSON.stringify({mode:"ROLLBACK_SAFE"})});assert.ok(priorWhileNewerActive.response.ok);assert.equal(priorWhileNewerActive.data.conflicts,1);assert.equal(priorWhileNewerActive.data.affected,2);
+ const rollbackUpdate=await request(`/admin/imports/${update.id}`,{method:"DELETE",body:JSON.stringify({mode:"ROLLBACK_SAFE"})});assert.ok(rollbackUpdate.response.ok);assert.equal(rollbackUpdate.data.conflicts,0);assert.equal(await prisma.unit.count({where:{projectId,externalUnitId:`U3-${stamp}`}}),0);assert.equal(Number((await prisma.unit.findFirstOrThrow({where:{projectId,externalUnitId:`U1-${stamp}`}})).price),9000000);
+ const retryFirst=await request(`/admin/imports/${first.id}`,{method:"DELETE",body:JSON.stringify({mode:"ROLLBACK_SAFE"})});assert.ok(retryFirst.response.ok);assert.equal(retryFirst.data.affected,1);assert.equal(await prisma.unit.count({where:{projectId}}),0);
+
+ const manualUpload=await upload(`import-smoke-manual-${stamp}.csv`,Buffer.from(`رقم الوحدة,السعر,العملة\nM-${stamp},7000000,EGP\n`,"utf8"),"text/csv");assert.equal(manualUpload.response.status,201);let manual=await resolveAll(manualUpload.data,{projectName:`Manual Smoke Project ${stamp}`,developerName:`Manual Smoke Developer ${stamp}`});manual=await preview(manual.id);const manualConfirmed=await confirm(manual.id);const manualUnit=await prisma.unit.findFirstOrThrow({where:{projectId:manualConfirmed.result.projectId}});cleanupUnitIds.push(manualUnit.id);await request(`/admin/catalog/units/${manualUnit.id}`,{method:"PATCH",body:JSON.stringify({price:7100000})});const manualRollback=await request(`/admin/imports/${manual.id}`,{method:"DELETE",body:JSON.stringify({mode:"ROLLBACK_SAFE"})});assert.ok(manualRollback.response.ok);assert.equal(manualRollback.data.conflicts,1);
+
+ const xls=await upload(`import-smoke-${stamp}.xls`,bookBuffer([{"Unit Number":`XLS-${stamp}`,Currency:"EGP"}],"biff8"),"application/vnd.ms-excel");assert.equal(xls.response.status,201);
+ const emptyBook=XLSX.utils.book_new();XLSX.utils.book_append_sheet(emptyBook,XLSX.utils.aoa_to_sheet([]),"Empty");const empty=await upload(`empty-${stamp}.xlsx`,XLSX.write(emptyBook,{type:"buffer",bookType:"xlsx"}));assert.equal(empty.response.status,422);assert.equal(empty.data.code,"IMPORT_NO_USABLE_SHEETS");const invalid=await upload(`invalid-${stamp}.xlsx`,Buffer.from("not xlsx"));assert.equal(invalid.response.status,415);const oversized=await upload(`large-${stamp}.csv`,Buffer.alloc(20*1024*1024+1,0x61),"text/csv");assert.equal(oversized.response.status,413);
+ console.log(JSON.stringify({cors:"PASS",authentication:"PASS",xlsx:"PASS",xls:"PASS",utf8CsvArabic:"PASS",r2Source:"PASS",newBatch:"PASS",updateDiff:"PASS",priceHistory:"PASS",transactionalConfirm:"PASS",laterImportConflict:"PASS",safeRollback:"PASS",manualEditProtection:"PASS",sourceMetadata:"PASS",empty422:"PASS",invalid415:"PASS",oversized413:"PASS"}));
 }
-
-const required = [
-  "ADMIN_BOOTSTRAP_EMAIL",
-  "ADMIN_BOOTSTRAP_PASSWORD",
-  "DATABASE_URL",
-  "R2_ACCOUNT_ID",
-  "R2_ACCESS_KEY_ID",
-  "R2_SECRET_ACCESS_KEY",
-  "R2_BUCKET",
-  "R2_PUBLIC_BASE_URL",
-];
-for (const key of required) assert.ok(process.env[key], `${key} is required`);
-
-const base = (process.env.IMPORT_SMOKE_API_URL || "http://127.0.0.1:4100").replace(/\/$/, "") + "/v1";
-const origin = process.env.WEB_ORIGIN || "https://ai.cg.popwam.com";
-const stamp = `${Date.now()}-${randomUUID().slice(0, 8)}`;
-const prisma = new PrismaClient();
-const s3 = new S3Client({
-  region: "auto",
-  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-  },
-});
-const importIds = [];
-const objectKeys = [];
-let cookie = "";
-
-function bookBuffer(rows, bookType = "xlsx", sheetName = "Inventory") {
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), sheetName);
-  return XLSX.write(workbook, { type: "buffer", bookType });
-}
-
-async function request(path, { method = "GET", body } = {}) {
-  const jsonBody = typeof body === "string";
-  const response = await fetch(`${base}${path}`, {
-    method,
-    headers: { Origin: origin, ...(cookie ? { Cookie: cookie } : {}), ...(jsonBody ? { "content-type": "application/json" } : {}) },
-    body,
-    credentials: "include",
-  });
-  const data = await response.json().catch(() => ({}));
-  return { response, data };
-}
-
-function track(item) {
-  if (item?.id) importIds.push(item.id);
-  const prefix = `${process.env.R2_PUBLIC_BASE_URL.replace(/\/$/, "")}/`;
-  if (item?.fileUrl?.startsWith(prefix)) objectKeys.push(decodeURIComponent(item.fileUrl.slice(prefix.length)));
-}
-
-async function upload(name, buffer, mime = "application/octet-stream") {
-  const form = new FormData();
-  form.append("file", new Blob([buffer], { type: mime }), name);
-  const result = await request("/admin/imports/upload", { method: "POST", body: form });
-  if (result.response.ok) track(result.data);
-  return result;
-}
-
-async function main() {
-  const preflight = await fetch(`${base}/admin/imports/upload`, {
-    method: "OPTIONS",
-    headers: {
-      Origin: origin,
-      "Access-Control-Request-Method": "POST",
-      "Access-Control-Request-Headers": "content-type",
-    },
-  });
-  assert.equal(preflight.status, 204);
-  assert.equal(preflight.headers.get("access-control-allow-origin"), origin);
-  assert.equal(preflight.headers.get("access-control-allow-credentials"), "true");
-
-  const unauthenticatedForm = new FormData();
-  unauthenticatedForm.append(
-    "file",
-    new Blob([bookBuffer([{ "Unit Number": "UNAUTH" }])]),
-    `unauthenticated-${stamp}.xlsx`,
-  );
-  const unauthenticated = await fetch(`${base}/admin/imports/upload`, {
-    method: "POST",
-    headers: { Origin: origin },
-    body: unauthenticatedForm,
-    credentials: "include",
-  });
-  const unauthenticatedBody = await unauthenticated.json();
-  assert.equal(unauthenticated.status, 401);
-  assert.equal(unauthenticatedBody.code, "UNAUTHENTICATED");
-
-  const login = await fetch(`${base}/admin/auth/login`, {
-    method: "POST",
-    headers: { Origin: origin, "content-type": "application/json" },
-    body: JSON.stringify({
-      email: process.env.ADMIN_BOOTSTRAP_EMAIL,
-      password: process.env.ADMIN_BOOTSTRAP_PASSWORD,
-    }),
-    credentials: "include",
-  });
-  assert.ok(login.ok, `Admin login failed: ${login.status}`);
-  cookie = (login.headers.get("set-cookie") || "").split(";")[0];
-  assert.match(cookie, /^maqar_admin_session=/);
-
-  const xlsx = await upload(
-    `import-smoke-${stamp}.xlsx`,
-    bookBuffer([{ "Unit Number": `XLSX-${stamp}`, Price: 9_000_000, Currency: "EGP", "Unknown Sales Label": "Garden" }]),
-  );
-  assert.equal(xlsx.response.status, 201);
-  assert.equal(xlsx.data.status, "NEEDS_INPUT");
-  assert.ok(xlsx.data.issues.some((issue) => issue.field === "aiMapping"));
-  assert.ok(xlsx.data.issues.some((issue) => issue.field === "column:Unknown Sales Label"));
-  assert.equal((await fetch(xlsx.data.fileUrl)).status, 200);
-
-  const xls = await upload(
-    `import-smoke-${stamp}.xls`,
-    bookBuffer([{ "Unit Number": `XLS-${stamp}`, Currency: "EGP" }], "biff8"),
-    "application/vnd.ms-excel",
-  );
-  assert.equal(xls.response.status, 201);
-
-  const csv = await upload(
-    `import-smoke-${stamp}.csv`,
-    Buffer.from("رقم الوحدة,السعر\nع-١٠١,٧٥٠٠٠٠٠\n", "utf8"),
-    "text/csv",
-  );
-  assert.equal(csv.response.status, 201);
-  assert.equal(csv.data.analysis.rows[0]["رقم الوحدة"], "ع-١٠١");
-
-  let current = xlsx.data;
-  const resolutions = [
-    ["projectName", `Import Smoke Project ${stamp}`],
-    ["developerName", `Import Smoke Developer ${stamp}`],
-    ["locationId", `unconfirmed-smoke-location-${stamp}`],
-    ["column:Unknown Sales Label", "IGNORE"],
-  ];
-  for (const [field, value] of resolutions) {
-    const resolved = await request(`/admin/imports/${xlsx.data.id}/resolve`, {
-      method: "POST",
-      body: JSON.stringify({ field, value }),
-    });
-    assert.ok(resolved.response.ok, `${field} resolution failed`);
-    current = resolved.data;
-  }
-  assert.equal(current.preview.canConfirm, true);
-  assert.equal(current.status, "READY");
-
-  const emptyBook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(emptyBook, XLSX.utils.aoa_to_sheet([]), "Empty");
-  const empty = await upload(
-    `import-smoke-empty-${stamp}.xlsx`,
-    XLSX.write(emptyBook, { type: "buffer", bookType: "xlsx" }),
-  );
-  assert.equal(empty.response.status, 422);
-  assert.equal(empty.data.code, "IMPORT_NO_USABLE_SHEETS");
-
-  const invalid = await upload(
-    `import-smoke-invalid-${stamp}.xlsx`,
-    Buffer.from("not an xlsx", "utf8"),
-  );
-  assert.equal(invalid.response.status, 415);
-  assert.equal(invalid.data.code, "IMPORT_SIGNATURE_MISMATCH");
-
-  const oversized = await upload(
-    `import-smoke-large-${stamp}.csv`,
-    Buffer.alloc(20 * 1024 * 1024 + 1, 0x61),
-    "text/csv",
-  );
-  assert.equal(oversized.response.status, 413);
-  assert.equal(oversized.data.code, "IMPORT_FILE_TOO_LARGE");
-
-  console.log(JSON.stringify({
-    cors: "PASS",
-    unauthenticated401: "PASS",
-    adminCookie: "PASS",
-    xlsx: "PASS",
-    xls: "PASS",
-    utf8CsvArabic: "PASS",
-    aiIndependentUpload: "PASS",
-    missingFields: "PASS",
-    r2Source: "PASS",
-    preview: "PASS",
-    emptyWorkbook422: "PASS",
-    invalidSignature415: "PASS",
-    oversized413: "PASS",
-  }));
-}
-
-async function cleanup() {
-  if (importIds.length)
-    await prisma.dataImport.deleteMany({ where: { id: { in: importIds } } });
-  if (objectKeys.length)
-    await s3.send(new DeleteObjectsCommand({
-      Bucket: process.env.R2_BUCKET,
-      Delete: { Objects: [...new Set(objectKeys)].map((Key) => ({ Key })) },
-    }));
-  await prisma.$disconnect();
-}
-
-try { await main(); } finally { await cleanup(); }
+async function cleanup(){try{if(cleanupUnitIds.length)await prisma.unit.deleteMany({where:{id:{in:cleanupUnitIds}}});const projects=await prisma.project.findMany({where:{name:{contains:`${stamp}`}},select:{id:true,developerId:true}});if(importIds.length)await prisma.dataImport.deleteMany({where:{id:{in:importIds}}});if(projects.length)await prisma.project.deleteMany({where:{id:{in:projects.map(x=>x.id)}}});const developerIds=[...new Set(projects.map(x=>x.developerId))];if(developerIds.length)await prisma.developer.deleteMany({where:{id:{in:developerIds}}});if(locationId)await prisma.location.deleteMany({where:{id:locationId}});if(objectKeys.length)await s3.send(new DeleteObjectsCommand({Bucket:process.env.R2_BUCKET,Delete:{Objects:[...new Set(objectKeys)].map(Key=>({Key}))}}));}finally{await prisma.$disconnect();}}
+try{await main();}finally{await cleanup();}

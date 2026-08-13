@@ -37,6 +37,13 @@ enum ImportStatus {
   IMPORTING
   COMPLETED
   FAILED
+  CANCELLED
+  ROLLED_BACK
+}
+
+enum ImportUnitOperation {
+  CREATED
+  UPDATED
 }
 
 enum IssueSeverity {
@@ -203,6 +210,9 @@ model ProjectKnowledgeItem {
   sourceText       String?
   confidence       Decimal?       @db.Decimal(4, 3)
   approvalStatus   ApprovalStatus @default(PENDING)
+  approvedByAdminId String?
+  approvedBy       AdminUser?     @relation(fields: [approvedByAdminId], references: [id], onDelete: SetNull)
+  approvedAt       DateTime?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
@@ -246,6 +256,9 @@ model Unit {
   longitude             Decimal?           @db.Decimal(10, 7)
   sourceImportId        String?
   sourceImport          DataImport?        @relation(fields: [sourceImportId], references: [id], onDelete: SetNull)
+  archivedAt            DateTime?
+  sourceMetadata        Json?
+  importChanges         ImportUnitChange[]
   availabilityUpdatedAt DateTime           @default(now())
   priceHistory          UnitPriceHistory[]
   paymentPlans          PaymentPlan[]
@@ -327,6 +340,7 @@ model Document {
 
 model DataImport {
   id            String             @id @default(cuid())
+  name          String?
   fileName      String
   fileHash      String
   fileUrl       String?
@@ -334,21 +348,50 @@ model DataImport {
   developer     Developer?         @relation(fields: [developerId], references: [id])
   projectId     String?
   project       Project?           @relation(fields: [projectId], references: [id])
+  uploadedByAdminId String?
+  uploadedBy    AdminUser?         @relation(fields: [uploadedByAdminId], references: [id], onDelete: SetNull)
+  parentImportId String?
+  parentImport  DataImport?        @relation("ImportVersions", fields: [parentImportId], references: [id], onDelete: SetNull)
+  versions      DataImport[]        @relation("ImportVersions")
   uploadedAt    DateTime           @default(now())
   status        ImportStatus       @default(UPLOADED)
   rowsDetected  Int                @default(0)
   rowsCreated   Int                @default(0)
   rowsUpdated   Int                @default(0)
   rowsRejected  Int                @default(0)
+  rowsSkipped   Int                @default(0)
+  rowsFailed    Int                @default(0)
   warnings      Json?
+  missingUnitPolicy String @default("LEAVE_UNCHANGED")
+  completedAt   DateTime?
+  cancelledAt   DateTime?
+  rolledBackAt  DateTime?
   mappingConfig Json?
   analysis      Json?
   preview       Json?
   units         Unit[]
   priceHistory  UnitPriceHistory[]
   issues        ImportIssue[]
+  unitChanges   ImportUnitChange[]
 
   @@index([fileHash])
+}
+
+model ImportUnitChange {
+  id          String              @id @default(cuid())
+  importId    String
+  import      DataImport          @relation(fields: [importId], references: [id], onDelete: Cascade)
+  unitId      String?
+  unit        Unit?               @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  operation   ImportUnitOperation
+  beforeData  Json?
+  afterData   Json
+  appliedAt   DateTime            @default(now())
+  revertedAt  DateTime?
+  conflictReason String?
+
+  @@unique([importId, unitId])
+  @@index([unitId, appliedAt])
 }
 
 model ImportMapping {
@@ -504,6 +547,8 @@ model AdminUser {
   assignedLeads Lead[]      @relation("LeadAssignment")
   leadNotes     LeadNote[]
   leadEvents    LeadEvent[]
+  imports       DataImport[]
+  approvedKnowledgeItems ProjectKnowledgeItem[]
 }
 
 model AuditLog {
@@ -517,4 +562,21 @@ model AuditLog {
   createdAt   DateTime   @default(now())
 
   @@index([entityType, entityId])
+}
+
+model AIUsage {
+  id           String   @id @default(cuid())
+  provider     String
+  model        String
+  taskType     String
+  inputTokens  Int?
+  outputTokens Int?
+  latencyMs    Int
+  success      Boolean
+  fallbackUsed Boolean  @default(false)
+  errorCode    String?
+  createdAt    DateTime @default(now())
+
+  @@index([provider, createdAt])
+  @@index([taskType, createdAt])
 }

@@ -22,7 +22,7 @@ export class ConversationsController {
   @Post(":id/messages/stream") async stream(@Param("id") id: string, @Headers("x-device-token") token: string | undefined, @Body() body: SendMessageDto, @Res() response: Response) {
     response.status(200); response.setHeader("Content-Type", "text/event-stream; charset=utf-8"); response.setHeader("Cache-Control", "no-cache, no-transform"); response.setHeader("Connection", "keep-alive"); response.flushHeaders();
     try { for await (const item of this.chat.stream(id, this.token(token), body.content)) response.write(`event: ${item.event}\ndata: ${JSON.stringify(item.data)}\n\n`); }
-    catch (error) { response.write(`event: error\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : "Chat failed" })}\n\n`); }
+    catch { response.write(`event: error\ndata: ${JSON.stringify({ message: "تعذر إكمال الرد حاليًا. حاول مرة أخرى بعد قليل." })}\n\n`); }
     finally { response.end(); }
   }
 }

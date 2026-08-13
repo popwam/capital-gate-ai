@@ -1,6 +1,7 @@
 export type AIMessage = { role: "user" | "assistant" | "system"; content: string };
 export type StructuredIntent = {
   language: string;
+  dialect?: "EGYPTIAN_ARABIC" | "MSA" | "ENGLISH" | "MIXED";
   purpose?: "LIVING" | "INVESTMENT";
   locations?: string[];
   propertyTypes?: string[];
@@ -22,12 +23,25 @@ export type StructuredIntent = {
   purchaseIntent?: number;
   contactName?: string;
   contactPhone?: string;
+  budgetFlexible?: boolean;
+  rejectedLocations?: string[];
+  rejectedProjects?: string[];
+  preferredDevelopers?: string[];
+  preferredProjects?: string[];
+  minimumArea?: number;
+  maximumArea?: number;
+  familyRequirements?: string[];
+  investmentRequirements?: string[];
+  customerConcerns?: string[];
+  extractionDegraded?: boolean;
 };
 export type AnswerInput = { messages: AIMessage[]; intent: StructuredIntent; verifiedFacts: unknown[]; approvedKnowledge?: unknown[] };
+export type AIHealth = { provider: string; configured: boolean; healthy: boolean; model: string | null; errorCode?: string };
 export interface AIProvider {
   extractIntent(messages: AIMessage[], previous: StructuredIntent): Promise<StructuredIntent>;
   composeAnswer(input: AnswerInput): Promise<string>;
   streamAnswer(input: AnswerInput): AsyncIterable<string>;
   extractKnowledge(sourceText: string): Promise<Record<string, unknown>>;
   mapColumns(headers: string[], sampleRows: unknown[][], canonicalFields: string[]): Promise<Array<{ sourceColumn: string; canonicalField: string; confidence: number; explanation?: string }>>;
+  health?(): Promise<AIHealth | AIHealth[]>;
 }

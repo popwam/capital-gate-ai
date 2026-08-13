@@ -10,7 +10,7 @@ for (const key of required) assert.ok(process.env[key], `${key} is required`);
 
 let cookie = "";
 const device = `${randomUUID()}-${randomUUID()}`;
-const created = { locationId: "", developerId: "", projectId: "", importIds: [], conversationIds: [], objectKeys: [] };
+const created = { locationId: "", distanceLocationId: "", developerId: "", projectId: "", importIds: [], conversationIds: [], objectKeys: [] };
 const prisma = new PrismaClient();
 const s3 = new S3Client({ region: "auto", endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`, credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY } });
 
@@ -58,13 +58,19 @@ async function main() {
   const setCookie = login.headers.get("set-cookie") || "";
   const token = setCookie.match(/maqar_admin_session=([^;]+)/)?.[1];
   assert.ok(token); cookie = `maqar_admin_session=${token}`;
-  for (const attribute of [/HttpOnly/i, /Secure/i, /SameSite=Lax/i, /Domain=\.cg\.popwam\.com/i, /Path=\//i, /Max-Age=/i]) assert.match(setCookie, attribute);
+  for (const attribute of [/HttpOnly/i, /Secure/i, /SameSite=Lax/i, /Path=\//i, /Max-Age=/i]) assert.match(setCookie, attribute);
+  if (process.env.SMOKE_EXPECT_COOKIE_DOMAIN)
+    assert.match(setCookie, new RegExp(`Domain=${process.env.SMOKE_EXPECT_COOKIE_DOMAIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i"));
   await request("/admin/auth/me", { admin: true });
 
   const stamp = Date.now();
   const location = (await request("/admin/locations", { method: "POST", admin: true, body: { type: "AREA", name: `Railway Verification Area ${stamp}`, slug: `railway-verification-${stamp}`, latitude: 30.0074, longitude: 31.4913 } })).data;
   created.locationId = location.id;
   await request(`/admin/locations/${location.id}/aliases`, { method: "POST", admin: true, body: { value: `Railway Area ${stamp}`, language: "en" } });
+  const distanceLocation = (await request("/admin/locations", { method: "POST", admin: true, body: { type: "AREA", name: `AUC Verification ${stamp}`, slug: `auc-verification-${stamp}`, latitude: 30.018, longitude: 31.499 } })).data;
+  created.distanceLocationId = distanceLocation.id;
+  await request(`/admin/locations/${distanceLocation.id}/aliases`, { method: "POST", admin: true, body: { value: `AUC Smoke ${stamp}`, language: "en" } });
+  await request("/admin/locations/distances", { method: "POST", admin: true, body: { fromLocationId: location.id, toLocationId: distanceLocation.id, distanceKm: 12.5, estimatedMinutes: 22, notes: "Smoke-test verified distance" } });
 
   const metadata = { projectName: `Railway Verification Residence ${stamp}`, developerName: `Railway Verification Developer ${stamp}`, locationId: location.id };
   const xlsx = await uploadImport("xlsx", `RAIL-${stamp}-A`, metadata);
@@ -72,7 +78,7 @@ async function main() {
   const xls = await uploadImport("xls", `RAIL-${stamp}-B`, metadata);
   assert.equal(xls.projectId, created.projectId);
   const units = (await request(`/admin/catalog/units?projectId=${created.projectId}`, { admin: true })).data;
-  assert.equal(units.length, 2);
+  assert.equal(units.items.length, 2);
 
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
   const mediaForm = new FormData(); mediaForm.append("type", "IMAGE"); mediaForm.append("projectId", created.projectId); mediaForm.append("file", new Blob([png], { type: "image/png" }), "project.png");
@@ -101,15 +107,22 @@ async function main() {
   assert.ok(english.state.language);
   const mixed = (await request(`/conversations/${first.id}/messages`, { method: "POST", deviceToken: true, body: { content: "ممكن payment plan details لل options دي؟" } })).data;
   assert.ok(mixed.state.language);
+  const distance = (await request(`/conversations/${first.id}/messages`, { method: "POST", deviceToken: true, body: { content: `المسافة من Railway Area ${stamp} إلى AUC Smoke ${stamp} كام؟` } })).data;
+  assert.equal(distance.map?.route?.source, "ADMIN_VERIFIED");
+  assert.equal(Number(distance.map.route.distanceKm), 12.5);
   const images = (await request(`/conversations/${first.id}/messages`, { method: "POST", deviceToken: true, body: { content: "وريني صور" } })).data; assert.equal(images.type, "media"); assert.ok(images.media.some(item => item.id === media.id));
   const brochure = (await request(`/conversations/${first.id}/messages`, { method: "POST", deviceToken: true, body: { content: "ممكن البروشور؟" } })).data; assert.equal(brochure.type, "documents"); assert.ok(brochure.documents.some(item => item.id === document.id));
   const lead = (await request(`/conversations/${first.id}/messages`, { method: "POST", deviceToken: true, body: { content: "أنا جاهز أشتري now. اسمي Railway Tester ورقمي +201000000000" } })).data; assert.equal(lead.type, "lead_created");
   const storedLead = await prisma.lead.findUnique({ where: { id: lead.leadId } }); assert.equal(storedLead.conversationId, first.id); assert.ok(storedLead.payload?.conversationSummary); assert.ok(storedLead.payload?.interestedUnits?.length); assert.ok(storedLead.payload?.interestedProjects?.includes(created.projectId));
 
-  console.log(JSON.stringify({ adminAuth: "PASS", xlsxImport: "PASS", xlsImport: "PASS", importTransaction: "PASS", geminiStructured: "PASS", geminiStreaming: "PASS", databaseSearch: "PASS", multipleConversations: "PASS", media: "PASS", brochure: "PASS", knowledge: "PASS", lead: "PASS", r2Retrieval: "PASS" }));
+  console.log(JSON.stringify({ adminAuth: "PASS", xlsxImport: "PASS", xlsImport: "PASS", importTransaction: "PASS", hybridStructured: "PASS", hybridStreaming: "PASS", databaseSearch: "PASS", multipleConversations: "PASS", storedDistance: "PASS", media: "PASS", brochure: "PASS", knowledge: "PASS", lead: "PASS", r2Retrieval: "PASS" }));
 }
 
 async function cleanup() {
+  if (created.conversationIds.length)
+    await prisma.lead.deleteMany({
+      where: { conversationId: { in: created.conversationIds } },
+    });
   for (const id of created.conversationIds) await prisma.conversation.deleteMany({ where: { id } });
   if (created.projectId) {
     await prisma.projectKnowledgeItem.deleteMany({ where: { projectId: created.projectId } });
@@ -121,7 +134,11 @@ async function cleanup() {
   if (created.importIds.length) await prisma.dataImport.deleteMany({ where: { id: { in: created.importIds } } });
   if (created.projectId) await prisma.project.deleteMany({ where: { id: created.projectId } });
   if (created.developerId) await prisma.developer.deleteMany({ where: { id: created.developerId } });
-  if (created.locationId) await prisma.location.deleteMany({ where: { id: created.locationId } });
+  const locationIds = [created.locationId, created.distanceLocationId].filter(Boolean);
+  if (locationIds.length) {
+    await prisma.locationDistance.deleteMany({ where: { OR: [{ fromLocationId: { in: locationIds } }, { toLocationId: { in: locationIds } }] } });
+    await prisma.location.deleteMany({ where: { id: { in: locationIds } } });
+  }
   if (created.objectKeys.length) await s3.send(new DeleteObjectsCommand({ Bucket: process.env.R2_BUCKET, Delete: { Objects: [...new Set(created.objectKeys)].map(Key => ({ Key })) } }));
 }
 

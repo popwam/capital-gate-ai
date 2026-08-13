@@ -52,7 +52,7 @@ export default function Conversations() {
           <ArrowLeft size={13} /> Admin overview
         </a>
       </header>
-      <AdminSectionNav active="Conversations" />
+      <AdminSectionNav active="المحادثات" />
       <div className="mx-auto max-w-5xl p-5 sm:p-8">
         <p className="text-[9px] font-bold uppercase tracking-[.15em] text-coral">
           Read-only context

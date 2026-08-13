@@ -86,7 +86,7 @@ export default function LeadDetail({
           <ArrowLeft size={13} /> All leads
         </a>
       </header>
-      <AdminSectionNav active="Leads" />
+      <AdminSectionNav active="العملاء المحتملون" />
       <div className="mx-auto max-w-6xl p-4 sm:p-7">
         {error && (
           <div className="mb-4 rounded-xl bg-[#fbe9e5] p-3 text-[9px]">

@@ -1,16 +1,12 @@
-import "@fontsource-variable/manrope";
+import "@fontsource-variable/cairo";
 import "@fontsource-variable/noto-sans-arabic";
 import "./globals.css";
 
 export const metadata = {
-  title: "Maqar — Your property advisor",
-  description: "A conversation-first real estate advisor for Egypt."
+  title: "مقار — مستشارك العقاري",
+  description: "مستشار عقاري محادثي للسوق المصري.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return (
-    <html lang="en" dir="ltr">
-      <body>{children}</body>
-    </html>
-  );
+  return <html lang="ar" dir="rtl"><body>{children}</body></html>;
 }

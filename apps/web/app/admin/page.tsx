@@ -54,14 +54,14 @@ type Location = {
   parent?: { name: string } | null;
 };
 const nav = [
-  [LayoutDashboard, "Overview", "/admin"],
-  [Map, "Locations", "/admin/locations"],
-  [Building2, "Projects", "/admin/projects"],
-  [Files, "Inventory", "/admin"],
-  [UploadCloud, "Imports", "/admin"],
-  [BookOpen, "AI knowledge", "/admin/projects"],
-  [MessageSquareText, "Conversations", "/admin/conversations"],
-  [Users, "Leads", "/admin/leads"],
+  [LayoutDashboard, "لوحة التحكم", "/admin"],
+  [Map, "المناطق", "/admin/locations"],
+  [Building2, "المشروعات", "/admin/projects"],
+  [Files, "المخزون", "/admin/inventory"],
+  [UploadCloud, "الاستيراد", "/admin/data"],
+  [BookOpen, "معرفة المشروعات", "/admin/projects"],
+  [MessageSquareText, "المحادثات", "/admin/conversations"],
+  [Users, "العملاء المحتملون", "/admin/leads"],
 ] as const;
 
 export default function AdminPage() {
@@ -79,6 +79,8 @@ export default function AdminPage() {
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
+    const importId = new URLSearchParams(location.search).get("import");
+    if (importId) adminApi.get<ImportData>(`/imports/${importId}`).then(setItem).catch((e) => setError(adminErrorMessage(e)));
     adminApi
       .get<Location[]>("/locations")
       .then(setLocations)
@@ -157,6 +159,13 @@ export default function AdminPage() {
     } finally {
       setLoading(false);
     }
+  }
+  async function missingPolicy(value: string) {
+    if (!item) return;
+    setLoading(true);
+    try { setItem(await adminApi.post<ImportData>(`/imports/${item.id}/resolve`, { field: "missingUnitPolicy", value })); }
+    catch (e) { setError(adminErrorMessage(e)); }
+    finally { setLoading(false); }
   }
   return (
     <main className="flex min-h-[100dvh] bg-[#f6f5f1] text-ink">
@@ -313,6 +322,7 @@ export default function AdminPage() {
                   </div>
                   {item.preview?.canConfirm && item.status !== "COMPLETED" && (
                     <div className="border-t bg-[#fbfaf7] p-4">
+                      {item.preview.removedUnits > 0 && <div className="mx-auto mb-3 max-w-[680px] rounded-xl border bg-white p-3 text-[13px]"><p className="font-bold">{item.preview.removedUnits} وحدة غير موجودة في الملف الجديد. اختر السياسة قبل التأكيد:</p><div className="mt-2 flex flex-wrap gap-2">{[["LEAVE_UNCHANGED","اتركها بدون تغيير"],["MARK_UNAVAILABLE","علّمها غير متاحة"],["ARCHIVE","أرشفها"]].map(([value,label])=><button key={value} onClick={()=>missingPolicy(value)} className={`rounded-lg border px-3 py-2 ${item.preview.missingUnitPolicy===value?"bg-forest text-white":""}`}>{label}</button>)}</div></div>}
                       <button
                         onClick={confirm}
                         disabled={loading}
@@ -354,7 +364,7 @@ function AdminNav() {
           <a
             key={label}
             href={href}
-            className={`mb-1 flex h-10 w-full items-center gap-3 rounded-xl px-3 text-[10px] font-semibold ${label === "Imports" ? "bg-white text-forest" : "text-white/65 hover:bg-white/10 hover:text-white"}`}
+            className={`mb-1 flex h-10 w-full items-center gap-3 rounded-xl px-3 text-[13px] font-semibold ${label === "لوحة التحكم" ? "bg-white text-forest" : "text-white/65 hover:bg-white/10 hover:text-white"}`}
           >
             <Icon size={15} />
             {label}
@@ -457,7 +467,7 @@ function Answer({
           className="min-w-0 flex-1 px-2 text-[10px] outline-none"
           placeholder={
             issue.field?.startsWith("column:")
-              ? "Canonical field or IGNORE"
+              ? "Canonical field, METADATA or IGNORE"
               : issue.field?.startsWith("value:")
                 ? "Canonical value or IGNORE"
                 : "Enter a default value"

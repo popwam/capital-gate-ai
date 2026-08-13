@@ -84,15 +84,13 @@ export class ChatService {
       }),
       this.prisma.conversationState.findUnique({ where: { conversationId } }),
     ]);
-    const messages: AIMessage[] = history
-      .reverse()
-      .map((m) => ({
-        role: m.role === MessageRole.USER ? "user" : "assistant",
-        content: m.content,
-      }));
+    const messages: AIMessage[] = history.reverse().map((m) => ({
+      role: m.role === MessageRole.USER ? "user" : "assistant",
+      content: m.content,
+    }));
     const previous =
       (existingState?.searchContext as StructuredIntent | null) ?? {
-        language: conversation.detectedLanguage ?? "en",
+        language: conversation.detectedLanguage ?? "ar-EG",
       };
     const state = await this.ai.extractIntent(messages, previous);
     let properties: any[] = [];
@@ -151,25 +149,6 @@ export class ChatService {
         payload = { type: "map", map: this.serialize(map) };
         verifiedFacts = map ? [map] : [];
       }
-      if (
-        state.exactRouteRequested &&
-        state.routeOrigin &&
-        state.routeDestination &&
-        process.env.GOOGLE_MAPS_SERVER_API_KEY
-      ) {
-        const route = await this.maps.route(
-          state.routeOrigin,
-          state.routeDestination,
-        );
-        verifiedFacts = [...verifiedFacts, this.serialize(route)];
-        payload = {
-          ...payload,
-          map: {
-            ...((payload.map as object) || {}),
-            route: this.serialize(route),
-          },
-        };
-      }
     } else {
       properties = await this.search.searchProperties(state);
       verifiedFacts = this.serialize(properties);
@@ -200,6 +179,54 @@ export class ChatService {
           },
         });
       }
+    }
+
+    if (
+      state.exactRouteRequested &&
+      state.routeOrigin &&
+      state.routeDestination
+    ) {
+      const [origins, destinations] = await Promise.all([
+        this.search.resolveLocations([state.routeOrigin]),
+        this.search.resolveLocations([state.routeDestination]),
+      ]);
+      const stored =
+        origins.length && destinations.length
+          ? await this.prisma.locationDistance.findFirst({
+              where: {
+                fromLocationId: { in: origins },
+                toLocationId: { in: destinations },
+                verifiedAt: { not: null },
+              },
+              include: { from: true, to: true },
+            })
+          : null;
+      const route = stored
+        ? {
+            source: "ADMIN_VERIFIED",
+            distanceKm: stored.distanceKm,
+            estimatedMinutes: stored.estimatedMinutes,
+            from: stored.from.name,
+            to: stored.to.name,
+            notes: stored.notes,
+          }
+        : process.env.GOOGLE_MAPS_SERVER_API_KEY
+          ? {
+              source: "GOOGLE_ROUTES",
+              ...((await this.maps.route(
+                state.routeOrigin,
+                state.routeDestination,
+              )) as object),
+            }
+          : { source: "UNAVAILABLE" };
+      verifiedFacts = [...verifiedFacts, this.serialize(route)];
+      payload = {
+        ...payload,
+        map: {
+          ...((payload.map as object) || {}),
+          route: this.serialize(route),
+        },
+      };
     }
 
     const unitIds = properties.map((p) => p.id);

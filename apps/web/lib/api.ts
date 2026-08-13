@@ -26,13 +26,13 @@ export function adminErrorMessage(error: unknown) {
   if (!(error instanceof ApiRequestError))
     return error instanceof Error ? error.message : "An unexpected error occurred.";
   const known: Record<string, string> = {
-    UNAUTHENTICATED: "Your Admin session expired. Sign in again and retry.",
+    UNAUTHENTICATED: "انتهت جلسة الإدارة. سجّل الدخول مرة أخرى. (Admin session expired)",
     FORBIDDEN: "Your Admin account is not authorized for this action.",
-    IMPORT_FILE_TOO_LARGE: "The file exceeds the 20 MB upload limit.",
-    IMPORT_UNSUPPORTED_FILE_TYPE: "Unsupported file type. Upload an .xlsx, .xls or UTF-8 .csv file.",
+    IMPORT_FILE_TOO_LARGE: "الملف أكبر من الحد المسموح 20 MB.",
+    IMPORT_UNSUPPORTED_FILE_TYPE: "نوع الملف غير مدعوم. Unsupported file type: استخدم XLSX أو XLS أو CSV بترميز UTF-8.",
     IMPORT_SIGNATURE_MISMATCH: "The file content does not match its extension.",
     IMPORT_PARSE_FAILED: "The file could not be read. Check that it is a valid Excel workbook or UTF-8 CSV.",
-    IMPORT_NO_USABLE_SHEETS: "The workbook contains no usable sheets or data rows.",
+    IMPORT_NO_USABLE_SHEETS: "لا يحتوي الملف على صفحات أو صفوف صالحة. No usable sheets were found.",
     IMPORT_ROW_LIMIT_EXCEEDED: "The workbook exceeds the 10,000-row import limit.",
     IMPORT_VALIDATION_ISSUES: "Resolve all blocking import questions before confirmation.",
     IMPORT_STORAGE_AUTH_FAILED: "Storage authentication failed. Contact an administrator.",
@@ -84,5 +84,6 @@ export const adminApi = {
   get: <T>(path: string) => request<T>(`/admin${path}`, {}, false),
   post: <T>(path: string, body?: unknown) => request<T>(`/admin${path}`, { method: "POST", body: JSON.stringify(body ?? {}) }, false),
   patch: <T>(path: string, body?: unknown) => request<T>(`/admin${path}`, { method: "PATCH", body: JSON.stringify(body ?? {}) }, false),
+  delete: <T>(path: string, body?: unknown) => request<T>(`/admin${path}`, { method: "DELETE", body: JSON.stringify(body ?? {}) }, false),
   upload: async <T>(path: string, form: FormData) => request<T>(`/admin${path}`, { method: "POST", body: form }, false)
 };

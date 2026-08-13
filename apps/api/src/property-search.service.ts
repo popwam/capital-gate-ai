@@ -22,20 +22,30 @@ export class PropertySearchService {
   }
 
   async searchProperties(intent: StructuredIntent, limit = 8) {
+    if (intent.extractionDegraded && !intent.locations?.length && intent.budgetMin == null && intent.budgetMax == null && intent.bedrooms == null && !intent.propertyTypes?.length) return [];
     const locationIds = await this.resolveLocations(intent.locations);
+    if (intent.locations?.length && !locationIds.length) return [];
+    const rejectedLocationIds = await this.resolveLocations(intent.rejectedLocations);
     if (locationIds.length && intent.maxTravelMinutes) {
       const nearby = await this.prisma.locationDistance.findMany({ where: { fromLocationId: { in: locationIds }, estimatedMinutes: { lte: intent.maxTravelMinutes } }, select: { toLocationId: true } });
       for (const item of nearby) if (!locationIds.includes(item.toLocationId)) locationIds.push(item.toLocationId);
     }
-    const where: Prisma.UnitWhereInput = { status: UnitStatus.AVAILABLE };
+    const where: Prisma.UnitWhereInput = { status: UnitStatus.AVAILABLE, archivedAt: null };
     if (intent.bedrooms != null) where.bedrooms = intent.bedrooms;
     if (intent.bathrooms != null) where.bathrooms = { gte: intent.bathrooms };
     if (intent.budgetMin != null || intent.budgetMax != null) where.price = { gte: intent.budgetMin, lte: intent.budgetMax };
     if (intent.maxDownPayment != null) where.downPayment = { lte: intent.maxDownPayment };
+    if (intent.minimumArea != null || intent.maximumArea != null) where.builtUpArea = { gte: intent.minimumArea, lte: intent.maximumArea };
     if (intent.currency) where.currency = { equals: intent.currency, mode: "insensitive" };
     if (intent.deliveryMaxYears != null) { const latest = new Date(); latest.setFullYear(latest.getFullYear() + Math.ceil(intent.deliveryMaxYears)); where.deliveryDate = { lte: latest }; }
     if (intent.propertyTypes?.length) where.unitType = { in: intent.propertyTypes, mode: "insensitive" };
-    if (locationIds.length) where.project = { locationId: { in: locationIds } };
+    const projectWhere: Prisma.ProjectWhereInput = {};
+    if (locationIds.length) projectWhere.locationId = { in: locationIds };
+    if (rejectedLocationIds.length) projectWhere.NOT = { locationId: { in: rejectedLocationIds } };
+    if (intent.rejectedProjects?.length) projectWhere.name = { notIn: intent.rejectedProjects, mode: "insensitive" };
+    if (intent.preferredProjects?.length) projectWhere.OR = intent.preferredProjects.map(name => ({ name: { contains: name, mode: "insensitive" } }));
+    if (Object.keys(projectWhere).length) where.project = projectWhere;
+    if (intent.preferredDevelopers?.length) where.developer = { OR: intent.preferredDevelopers.map(name => ({ name: { contains: name, mode: "insensitive" } })) };
     const units = await this.prisma.unit.findMany({ where, take: limit, orderBy: [{ availabilityUpdatedAt: "desc" }, { price: "asc" }], include: { developer: { select: { id: true, name: true } }, project: { include: { location: true } }, paymentPlans: { where: { isActive: true } }, offers: { where: { isActive: true } } } });
     return units.map(unit => { let score = 50; const reasons: string[] = ["currently available"];
       if (intent.bedrooms != null && unit.bedrooms === intent.bedrooms) { score += 15; reasons.push("bedroom match"); }

@@ -1,65 +1,79 @@
 # Maqar AI
 
-Conversation-first real-estate platform for the Egyptian market.
+Arabic-first, conversation-first real-estate search for the Egyptian market. PostgreSQL is the source of truth for inventory and the public experience remains anonymous.
 
-- `apps/web` — Next.js customer experience and protected admin console
-- `apps/api` — NestJS conversations, Gemini, verified search, imports, knowledge, storage and lead APIs
-- `packages/database` — Prisma/PostgreSQL schema and committed migrations
+## Architecture
 
-## Local development
+- `apps/web` — Next.js customer chat and protected Admin console.
+- `apps/api` — NestJS conversations, verified search, imports, knowledge, storage, maps, leads, and AI routing.
+- `packages/database` — Prisma/PostgreSQL schema and forward-only migrations.
+- Cloudflare Workers AI performs structured extraction; Groq writes and streams the primary customer response; OpenAI is invoked only as a failure/quality fallback.
+- R2 stores source workbooks and approved project assets. Neon PostgreSQL stores all canonical facts and provenance.
+
+## AI routing
+
+Production uses `AI_PROVIDER=hybrid`:
+
+1. Workers AI extracts validated intent, conversation state, import mappings, and document knowledge.
+2. Application services query PostgreSQL and return verified facts.
+3. Groq generates the customer answer and normalized stream.
+4. Retryable Groq failure routes to OpenAI, then a compatible Workers model. Provider failure never creates inventory facts.
+
+`AI_PROVIDER=demo` is development-only and the API refuses it in production.
+
+## Data import lifecycle
+
+`Upload → parse → R2 source → DataImport → known/remembered mapping → optional Workers suggestion → progressive questions → diff preview → transactional confirm → searchable inventory`
+
+Each applied batch records per-unit before/after provenance. New versions reference the earlier completed batch. Missing rows remain unchanged unless an Admin explicitly selects unavailable or archive policy.
+
+## Batch update and delete
+
+- Update: select a completed batch, upload the new workbook, review new/changed/missing units, then confirm.
+- Safe rollback: restores only units whose current values still match that batch’s applied snapshot.
+- Exclusive delete: removes only units created by that batch when no later import, manual edit, or media attachment conflicts.
+- Source-record deletion is refused after inventory provenance exists. All destructive operations require explicit confirmation and create an audit event.
+
+## Admin routes
+
+- `/admin` import assistant
+- `/admin/data` batch history, updates, downloads, and rollback
+- `/admin/inventory` searchable units, correction, and bulk status/archive actions
+- `/admin/projects` developers, projects, and project knowledge
+- `/admin/locations` hierarchy, aliases, coordinates, and verified distances
+- `/admin/leads` and `/admin/conversations` internal CRM context
+- `/admin/system` protected AI health and lightweight usage
+
+## Customer flow
+
+The browser creates a random anonymous device token. The API stores only its keyed hash. Multiple server-side conversations are supported. Messages use first-strong-character direction, while the page defaults to Arabic/RTL and Cairo. Media, brochures, and maps are returned only when requested.
+
+## Environment
+
+Copy `.env.example` and populate only the variables used by the chosen runtime. Never expose Workers, Groq, OpenAI, R2, Google, database, device-hash, or Admin signing secrets to the browser.
+
+## Production migration
+
+```bash
+npm run db:generate
+npm run db:migrate:deploy
+```
+
+Production uses committed `prisma migrate deploy` migrations. Never use `prisma db push` for deployment and never reset a production database.
+
+## Development and validation
 
 ```bash
 npm install
-copy .env.example .env
 npm run db:generate
-npm run db:migrate:deploy
 npm run dev:api
 npm run dev:web
-```
 
-Set `AI_PROVIDER=demo` and `STORAGE_PROVIDER=local` only in development. The API intentionally refuses those providers in production.
-
-## Production database
-
-```bash
-npm run db:generate
-npm run db:migrate:deploy
-```
-
-Production deployments use `prisma migrate deploy`; `db push` is retained only as an explicit development utility.
-
-## Railway
-
-Use repository root `/` for both application services so the npm workspace and lockfile remain available.
-
-### Web service
-
-- Build: `npm run build -w @maqar/web`
-- Start: `npm run start -w @maqar/web`
-- Health check: `/`
-- Variables: `NEXT_PUBLIC_API_URL`, `ADMIN_JWT_SECRET`
-
-### API service
-
-- Build: `npm run db:generate && npm run build -w @maqar/api`
-- Pre-deploy: `npm run db:migrate:deploy`
-- Start: `npm run start -w @maqar/api`
-- Health check: `/v1/health`
-- Attach `DATABASE_URL` using `${{Postgres.DATABASE_URL}}`
-- Set all API variables documented in `.env.example`
-
-The API must have a public HTTPS domain because customer chat streams directly from the browser. Set that URL in `NEXT_PUBLIC_API_URL`. Set `WEB_ORIGIN` to the exact web origin; comma-separated staging and production origins are supported. For sibling domains, set `ADMIN_COOKIE_DOMAIN` to their shared registrable domain (for example `.example.com`) and put the same `ADMIN_JWT_SECRET` on web and API services.
-
-## First administrator
-
-On an empty database, temporarily set `ADMIN_BOOTSTRAP_EMAIL` and a 12+ character `ADMIN_BOOTSTRAP_PASSWORD` on the API service. The API creates the first hashed `AdminUser` and writes an audit event. Remove both variables immediately after the successful boot.
-
-## Smoke checks
-
-```bash
 npm run build
 npm run test:smoke -w @maqar/api
-SMOKE_API_URL=https://api.example.com npm run smoke:api
+npm run test -w @maqar/web
+npm run smoke:imports
+npm run ai:smoke
 ```
 
-The live smoke command expects a running API and database. It creates and deletes an anonymous test conversation.
+Live smoke commands consume local environment credentials, create isolated test records, and must clean those records afterwards.

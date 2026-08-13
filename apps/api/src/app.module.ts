@@ -20,7 +20,11 @@ import { KnowledgeService } from "./knowledge/knowledge.service";
 import { StorageService } from "./storage/storage.service";
 import { AuditService } from "./audit.service";
 import { DemoAIProvider } from "./providers/demo.provider";
-import { GeminiProvider } from "./providers/gemini.provider";
+import { CloudflareWorkersAIProvider } from "./providers/cloudflare-workers-ai.provider";
+import { GroqProvider } from "./providers/groq.provider";
+import { OpenAIProvider } from "./providers/openai.provider";
+import { HybridAIProvider } from "./providers/hybrid.provider";
+import { AIUsageService } from "./providers/ai-usage.service";
 import { createAIProvider } from "./providers/ai-provider.factory";
 import { MapsService } from "./maps.service";
 import {
@@ -61,10 +65,14 @@ import { SystemController } from "./admin/system.controller";
     AuditService,
     LeadCrmService,
     DemoAIProvider,
-    GeminiProvider,
+    CloudflareWorkersAIProvider,
+    GroqProvider,
+    OpenAIProvider,
+    HybridAIProvider,
+    AIUsageService,
     {
       provide: "AI_PROVIDER",
-      inject: [GeminiProvider, DemoAIProvider],
+      inject: [HybridAIProvider, DemoAIProvider],
       useFactory: createAIProvider,
     },
     { provide: APP_GUARD, useClass: ThrottlerGuard },

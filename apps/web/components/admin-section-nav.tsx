@@ -4,15 +4,21 @@ import {
   LayoutDashboard,
   Map,
   MessageSquareText,
+  Database,
+  FileSpreadsheet,
+  Activity,
   Users,
 } from "lucide-react";
 
 const items = [
-  [LayoutDashboard, "Overview", "/admin"],
-  [Map, "Locations", "/admin/locations"],
-  [Building2, "Projects", "/admin/projects"],
-  [Users, "Leads", "/admin/leads"],
-  [MessageSquareText, "Conversations", "/admin/conversations"],
+  [LayoutDashboard, "لوحة التحكم", "/admin"],
+  [FileSpreadsheet, "البيانات والاستيراد", "/admin/data"],
+  [Database, "المخزون", "/admin/inventory"],
+  [Building2, "المطورون والمشروعات", "/admin/projects"],
+  [Map, "المناطق", "/admin/locations"],
+  [Users, "العملاء المحتملون", "/admin/leads"],
+  [MessageSquareText, "المحادثات", "/admin/conversations"],
+  [Activity, "حالة النظام", "/admin/system"],
 ] as const;
 export function AdminSectionNav({ active }: { active: string }) {
   return (

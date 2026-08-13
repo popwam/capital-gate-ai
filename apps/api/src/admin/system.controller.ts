@@ -1,15 +1,16 @@
 import { Controller, Get, UseGuards } from "@nestjs/common";
 import { AdminAuthGuard } from "../auth/admin-auth.guard";
-import { GeminiProvider } from "../providers/gemini.provider";
+import { HybridAIProvider } from "../providers/hybrid.provider";
+import { AIUsageService } from "../providers/ai-usage.service";
 
 @UseGuards(AdminAuthGuard)
 @Controller("admin/system")
 export class SystemController {
-  constructor(private readonly gemini: GeminiProvider) {}
+  constructor(private readonly hybrid: HybridAIProvider, private readonly usage: AIUsageService) {}
 
   @Get("ai-health")
   aiHealth() {
-    if ((process.env.AI_PROVIDER ?? "demo").toLowerCase() !== "gemini") {
+    if ((process.env.AI_PROVIDER ?? "demo").toLowerCase() !== "hybrid") {
       return {
         provider: "demo",
         configuredModel: null,
@@ -19,6 +20,9 @@ export class SystemController {
         status: "development-only",
       };
     }
-    return this.gemini.health();
+    return this.hybrid.health();
   }
+
+  @Get("ai-usage")
+  aiUsage() { return this.usage.stats(); }
 }

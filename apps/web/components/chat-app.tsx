@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, ArrowUp, Building2, Check, ChevronDown, Clock3, FileText,
-  Heart, Image as ImageIcon, MapPin, Menu, MessageSquareText, Mic,
+  Heart, Image as ImageIcon, MapPin, Menu, MessageSquareText,
   MoreHorizontal, Plus, Search, ShieldCheck, Sparkles, Trash2, X
 } from "lucide-react";
 import { LogoMark } from "./logo";
@@ -15,9 +15,9 @@ type Message = { id: string; role: "user" | "assistant"; text: string; kind?: Me
 type Conversation = { id: string; title: string; updatedAt: string; messages: Message[] };
 
 const starters = [
-  { icon: Building2, label: "Find a home", prompt: "I’m looking for a home in New Cairo" },
-  { icon: Sparkles, label: "Explore investments", prompt: "Show me good investment options under 15M" },
-  { icon: MapPin, label: "Search by location", prompt: "What’s available near the New Capital?" }
+  { icon: Building2, label: "ابحث عن بيت", prompt: "عاوز شقة في القاهرة الجديدة" },
+  { icon: Sparkles, label: "فرص استثمار", prompt: "وريني اختيارات استثمارية في حدود 15 مليون" },
+  { icon: MapPin, label: "ابحث بالمنطقة", prompt: "إيه المتاح قريب من العاصمة الإدارية؟" }
 ];
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -29,7 +29,7 @@ export default function ChatApp() {
   const [input, setInput] = useState("");
   const [drawer, setDrawer] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [lang, setLang] = useState<"EN" | "AR">("EN");
+  const [lang, setLang] = useState<"EN" | "AR">("AR");
   const [liked, setLiked] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [streamingText, setStreamingText] = useState("");
@@ -64,7 +64,7 @@ export default function ChatApp() {
     if (!clean || generating) return;
     let id = activeId;
     try {
-      if (id === "fresh") { const title = clean.length > 50 ? clean.slice(0, 50) + "…" : clean; const created = await conversationsApi.create(title); id = created.id; setConversations(prev => [{ id, title: created.title || title, updatedAt: "Now", messages: [] }, ...prev]); setActiveId(id); }
+      if (id === "fresh") { const title = clean.length > 50 ? clean.slice(0, 50) + "…" : clean; const created = await conversationsApi.create(title); id = created.id; setConversations(prev => [{ id, title: created.title || title, updatedAt: "الآن", messages: [] }, ...prev]); setActiveId(id); }
       append(id, { id: uid(), role: "user", text: clean }); setInput(""); setGenerating(true); setStreamingText(""); setConnectionError("");
       let completed: any;
       await conversationsApi.stream(id, clean, { token: text => setStreamingText(current => current + text), complete: data => { completed = data; } });
@@ -94,10 +94,10 @@ export default function ChatApp() {
           <div className="flex items-center gap-3">
             <button onClick={() => setDrawer(true)} className="grid h-10 w-10 place-items-center rounded-full border border-[#dedfd9] lg:hidden" aria-label="Open conversations"><Menu size={19}/></button>
             <div className="lg:hidden"><LogoMark compact/></div>
-            <div className="hidden sm:block"><p className="text-[13px] font-semibold" dir="auto">{active?.title ?? (isArabic ? "محادثة جديدة" : "New conversation")}</p><p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-[#79867f]"><span className="h-1.5 w-1.5 rounded-full bg-[#45a67a]"/> Verified database inventory</p></div>
+            <div className="hidden sm:block"><p className="text-[14px] font-semibold" dir="auto">{active?.title ?? (isArabic ? "محادثة جديدة" : "New conversation")}</p><p className="mt-0.5 flex items-center gap-1.5 text-[13px] font-medium text-[#79867f]"><span className="h-1.5 w-1.5 rounded-full bg-[#45a67a]"/> مخزون موثق من قاعدة البيانات</p></div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => setLang(lang === "EN" ? "AR" : "EN")} className="h-9 rounded-full border border-[#dedfd9] px-3 text-[11px] font-bold tracking-wide hover:bg-white">{lang === "EN" ? "العربية" : "EN"}</button>
+            <button onClick={() => setLang(lang === "EN" ? "AR" : "EN")} className="h-9 rounded-full border border-[#dedfd9] px-3 text-[13px] font-bold tracking-wide hover:bg-white">{lang === "EN" ? "العربية" : "EN"}</button>
             <button onClick={newChat} className="grid h-9 w-9 place-items-center rounded-full bg-forest text-white shadow-sm hover:bg-[#0e332b]" aria-label="New conversation"><Plus size={17}/></button>
           </div>
         </header>
@@ -106,7 +106,7 @@ export default function ChatApp() {
           {messages.length === 0 ? <Welcome isArabic={isArabic} onSelect={send}/> : (
             <div className="mx-auto w-full max-w-[790px] px-4 pb-40 pt-7 sm:px-7 sm:pt-10">
               {messages.map((m, i) => <MessageView key={m.id} message={m} liked={liked} setLiked={setLiked} onAction={send} isLast={i === messages.length - 1}/>) }
-              {generating && <div className="message-rise mb-7 flex gap-3"><AssistantAvatar/>{streamingText ? <div className="max-w-[84%] pt-1 text-[13px] leading-6 text-[#27322e] sm:text-[14px]" dir={textDirection(streamingText)}>{streamingText}<span className="ms-1 inline-block h-4 w-0.5 animate-pulse bg-forest"/></div> : <div className="mt-1 flex h-9 items-center gap-1 rounded-2xl rounded-tl-sm bg-[#efede6] px-4"><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/></div>}</div>}
+              {generating && <div className="message-rise mb-7 flex gap-3"><AssistantAvatar/>{streamingText ? <div className="max-w-[84%] pt-1 text-[16px] leading-[1.8] text-[#27322e] sm:text-[17px]" dir={textDirection(streamingText)}>{streamingText}<span className="ms-1 inline-block h-4 w-0.5 animate-pulse bg-forest"/></div> : <div className="mt-1 flex h-9 items-center gap-1 rounded-2xl rounded-tl-sm bg-[#efede6] px-4"><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/></div>}</div>}
             </div>
           )}
         </div>
@@ -131,7 +131,7 @@ function Welcome({ onSelect, isArabic }: { onSelect:(v:string)=>void; isArabic:b
     <div className="relative mb-7"><div className="absolute -inset-4 rounded-full bg-[#d9e9e0] blur-xl"/><div className="relative grid h-16 w-16 place-items-center rounded-[22px] bg-forest text-white shadow-soft"><svg viewBox="0 0 36 36" className="h-8 w-8" fill="none"><path d="M8 29V15l10-7 10 7v14" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"/><path d="M13 29v-8h10v8M11 13l7 6 7-6" stroke="#f3b79f" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"/></svg></div></div>
     <p className="mb-2 text-[10px] font-bold uppercase tracking-[.2em] text-coral">{isArabic ? "مستشارك العقاري الذكي" : "Your AI property advisor"}</p>
     <h1 className="max-w-[620px] text-[32px] font-semibold leading-[1.12] tracking-[-.045em] sm:text-[46px]">{isArabic ? "إيه مواصفات البيت اللي بتدور عليه؟" : "What kind of place are you looking for?"}</h1>
-    <p className="mt-4 max-w-[530px] text-[13px] leading-6 text-[#6d7974] sm:text-sm">{isArabic ? "احكيلي بطريقتك — المنطقة، الميزانية، أو حتى مجرد فكرة. هدوّر لك في الوحدات المتاحة فعلاً." : "Tell me in your own words — an area, a budget, or just an idea. I’ll search verified, currently available properties for you."}</p>
+    <p className="mt-4 max-w-[530px] text-[16px] leading-[1.8] text-[#6d7974] sm:text-[17px]">{isArabic ? "احكيلي بطريقتك — المنطقة، الميزانية، أو حتى مجرد فكرة. هدوّر لك في الوحدات المتاحة فعلاً." : "Tell me in your own words — an area, a budget, or just an idea. I’ll search verified, currently available properties for you."}</p>
     <div className="mt-9 grid w-full gap-2.5 sm:grid-cols-3" dir="ltr">{starters.map(({icon:Icon,label,prompt}) => <button key={label} onClick={() => onSelect(prompt)} className="group flex min-h-[96px] flex-col items-start justify-between rounded-2xl border border-[#dedfd9] bg-white p-4 text-left shadow-[0_4px_15px_rgba(20,40,32,.03)] transition hover:-translate-y-1 hover:border-[#b8c9c1] hover:shadow-soft"><Icon size={18} className="text-coral"/><span className="flex w-full items-end justify-between text-[11px] font-bold">{label}<ArrowUp className="rotate-45 text-[#8a958f] transition group-hover:text-forest" size={15}/></span></button>)}</div>
     <div className="mt-7 flex items-center gap-2 text-[9px] font-semibold text-[#8b958f]"><ShieldCheck size={13}/> Verified inventory · Private by design · No account needed</div>
   </div>;
@@ -144,11 +144,11 @@ function MessageView({ message, liked, setLiked, onAction, isLast }: { message:M
   return <div className={`message-rise mb-7 flex gap-3 ${assistant ? "justify-start" : "justify-end"}`}>
     {assistant && <AssistantAvatar/>}
     <div className={assistant ? "max-w-[92%] sm:max-w-[84%]" : "max-w-[84%]"}>
-      <div dir={textDirection(message.text)} className={assistant ? "pt-1 text-start text-[13px] leading-6 text-[#27322e] sm:text-[14px]" : "rounded-2xl rounded-tr-sm bg-[#e8e5de] px-4 py-3 text-start text-[13px] leading-5 text-[#26312d]"}>{message.text}</div>
-      {message.kind === "properties" && <PropertyResults properties={message.payload?.properties ?? []} liked={liked} setLiked={setLiked} onAction={onAction}/>} 
-      {message.kind === "media" && <MediaGallery media={message.payload?.media ?? []}/>} 
-      {message.kind === "documents" && <Documents documents={message.payload?.documents ?? []}/>} 
-      {message.kind === "map" && <MapResult map={message.payload?.map}/>} 
+      <div dir={textDirection(message.text)} className={assistant ? "pt-1 text-start text-[16px] leading-[1.8] text-[#27322e] sm:text-[17px]" : "rounded-2xl rounded-tr-sm bg-[#e8e5de] px-4 py-3 text-start text-[16px] leading-[1.75] text-[#26312d] sm:text-[17px]"}>{message.text}</div>
+      {!!message.payload?.properties?.length && <PropertyResults properties={message.payload.properties} liked={liked} setLiked={setLiked} onAction={onAction}/>} 
+      {!!message.payload?.media?.length && <MediaGallery media={message.payload.media}/>} 
+      {!!message.payload?.documents?.length && <Documents documents={message.payload.documents}/>} 
+      {!!message.payload?.map && <MapResult map={message.payload.map}/>} 
       {(message.kind === "lead_prompt" || message.kind === "lead_created") && <LeadHint created={message.kind === "lead_created"}/>} 
       {assistant && isLast && <div className="mt-2 flex gap-1"><button className="rounded-lg p-1.5 text-[#8b958f] hover:bg-[#efede7]"><Check size={13}/></button><button className="rounded-lg p-1.5 text-[#8b958f] hover:bg-[#efede7]"><MoreHorizontal size={14}/></button></div>}
     </div>
@@ -169,7 +169,7 @@ function LeadHint({created}:{created:boolean}) { return <div className="mt-3 fle
 
 function Composer({ input, setInput, send, disabled, isArabic }: {input:string;setInput:(v:string)=>void;send:()=>void;disabled:boolean;isArabic:boolean}) {
   return <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-[#fbfaf7] via-[#fbfaf7] to-transparent px-3 pb-[max(14px,env(safe-area-inset-bottom))] pt-9 sm:px-6">
-    <div className="pointer-events-auto mx-auto max-w-[790px]"><div className="rounded-[22px] border border-[#d9dcd6] bg-white p-2 shadow-[0_14px_50px_rgba(28,45,39,.12)] transition focus-within:border-[#9bb3a9]"><textarea dir={input ? textDirection(input) : (isArabic ? "rtl" : "ltr")} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}} rows={1} placeholder={isArabic ? "اسألني عن أي عقار..." : "Ask about any property..."} className="scrollbar-none block max-h-28 min-h-[46px] w-full resize-none bg-transparent px-3 py-3 text-start text-[12px] leading-5 outline-none placeholder:text-[#9ba39f]"/><div className="flex items-center justify-between px-1 pb-1"><div className="flex items-center gap-1"><button className="grid h-9 w-9 place-items-center rounded-full text-[#708079] hover:bg-[#f2f1ec]" aria-label="Voice message"><Mic size={17}/></button><span className="hidden text-[8px] font-medium text-[#a0a6a3] sm:inline">Shift + Enter for a new line</span></div><button disabled={disabled || !input.trim()} onClick={send} className="grid h-9 w-9 place-items-center rounded-full bg-forest text-white transition enabled:hover:scale-105 disabled:bg-[#d5dad7]" aria-label="Send"><ArrowUp size={17}/></button></div></div><p className="mt-2 text-center text-[8px] text-[#9aa29e]">Maqar only uses verified inventory. Availability can change — we’ll always show the last update.</p></div>
+    <div className="pointer-events-auto mx-auto max-w-[790px]"><div className="rounded-[22px] border border-[#d9dcd6] bg-white p-2 shadow-[0_14px_50px_rgba(28,45,39,.12)] transition focus-within:border-[#9bb3a9]"><textarea dir={input ? textDirection(input) : (isArabic ? "rtl" : "ltr")} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}} rows={1} placeholder={isArabic ? "اسألني عن أي عقار..." : "Ask about any property..."} className="scrollbar-none block max-h-28 min-h-[50px] w-full resize-none bg-transparent px-3 py-3 text-start text-[16px] leading-[1.75] outline-none placeholder:text-[#9ba39f]"/><div className="flex items-center justify-between px-1 pb-1"><span className="hidden text-[13px] font-medium text-[#8c9691] sm:inline">Shift + Enter لسطر جديد</span><button disabled={disabled || !input.trim()} onClick={send} className="grid h-10 w-10 place-items-center rounded-full bg-forest text-white transition enabled:hover:scale-105 disabled:bg-[#d5dad7]" aria-label="إرسال"><ArrowUp size={18}/></button></div></div><p className="mt-2 text-center text-[13px] text-[#7e8984]">مقار يعرض بيانات المخزون الموثقة فقط، مع تاريخ آخر تحديث للإتاحة.</p></div>
   </div>;
 }
 

@@ -36,7 +36,7 @@ export default function ConversationDetail({
           <ArrowLeft size={13} /> Conversations
         </a>
       </header>
-      <AdminSectionNav active="Conversations" />
+      <AdminSectionNav active="المحادثات" />
       <div className="mx-auto max-w-4xl p-5 sm:p-8">
         <p className="text-[9px] font-bold uppercase tracking-[.15em] text-coral">
           Conversation context

@@ -15,7 +15,11 @@ export type ImportErrorCode =
   | "IMPORT_STORAGE_FAILED"
   | "IMPORT_DATABASE_FAILED"
   | "IMPORT_PREVIEW_FAILED"
-  | "IMPORT_CONFIRM_FAILED";
+  | "IMPORT_CONFIRM_FAILED"
+  | "IMPORT_PARENT_INVALID"
+  | "IMPORT_PREVIEW_REQUIRED"
+  | "IMPORT_HAS_INVENTORY_PROVENANCE"
+  | "IMPORT_NOT_ROLLBACKABLE";
 
 export class ImportHttpException extends HttpException {
   constructor(

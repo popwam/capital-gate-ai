@@ -1,6 +1,6 @@
-import { Body, Controller, Get, HttpStatus, Logger, Param, Post, Req, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpStatus, Logger, Param, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
-import { Allow, IsNotEmpty, IsString } from "class-validator";
+import { Allow, IsIn, IsNotEmpty, IsString } from "class-validator";
 import { extname } from "node:path";
 import { AdminAuthGuard } from "../auth/admin-auth.guard";
 import { AuditService } from "../audit.service";
@@ -8,12 +8,13 @@ import { ImporterService } from "./importer.service";
 import { ImportHttpException, importErrorDetails } from "./import-errors";
 
 class ResolutionDto { @IsString() @IsNotEmpty() field!: string; @Allow() value!: unknown; }
+class RemoveBatchDto { @IsIn(["DELETE_SOURCE_RECORD", "DELETE_EXCLUSIVE_RECORDS", "ROLLBACK_SAFE"]) mode!: "DELETE_SOURCE_RECORD" | "DELETE_EXCLUSIVE_RECORDS" | "ROLLBACK_SAFE"; }
 @UseGuards(AdminAuthGuard)
 @Controller("admin/imports")
 export class ImportsController {
   private readonly logger = new Logger(ImportsController.name);
   constructor(private readonly imports: ImporterService, private readonly audit: AuditService) {}
-  @Get() list() { return this.imports.list(); }
+  @Get() list(@Query("page") page?: string, @Query("pageSize") pageSize?: string) { return this.imports.list(Number(page) || 1, Number(pageSize) || 50); }
   @Get(":id") get(@Param("id") id: string) { return this.imports.get(id); }
   @Post("upload") @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 20 * 1024 * 1024, files: 1 } }))
   async upload(@UploadedFile() file: Express.Multer.File, @Body() body: Record<string,string>, @Req() req: any) {
@@ -37,4 +38,5 @@ export class ImportsController {
   @Post(":id/resolve") resolve(@Param("id") id: string, @Body() body: ResolutionDto) { return this.imports.resolve(id, body.field, body.value); }
   @Post(":id/preview") preview(@Param("id") id: string) { return this.imports.preview(id); }
   @Post(":id/confirm") async confirm(@Param("id") id: string, @Req() req: any) { const result = await this.imports.confirm(id); await this.audit.record(req.admin.id, "IMPORT_CONFIRMED", "DataImport", id, result.result); return result; }
+  @Delete(":id") async remove(@Param("id") id: string, @Body() body: RemoveBatchDto, @Req() req: any) { const result = await this.imports.removeBatch(id, body.mode); await this.audit.record(req.admin.id, "IMPORT_BATCH_REMOVED", "DataImport", id, { mode: body.mode, affected: result.affected, conflicts: result.conflicts }); return result; }
 }

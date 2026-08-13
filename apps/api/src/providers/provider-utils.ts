@@ -1,0 +1,112 @@
+import { ServiceUnavailableException } from "@nestjs/common";
+import { AIMessage, AnswerInput, StructuredIntent } from "./ai-provider";
+
+export type ProviderName = "workers" | "groq" | "openai";
+
+export class AIUpstreamError extends Error {
+  constructor(
+    readonly provider: ProviderName,
+    readonly code: string,
+    readonly status?: number,
+    readonly retryable = false,
+  ) {
+    super(`${provider} request failed (${code})`);
+    this.name = "AIUpstreamError";
+  }
+}
+
+export function stripJsonFence(value: string) {
+  return value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+}
+
+export function parseJsonObject(value: string, provider: ProviderName) {
+  try {
+    const parsed = JSON.parse(stripJsonFence(value));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    return parsed as Record<string, unknown>;
+  } catch {
+    throw new AIUpstreamError(provider, "INVALID_STRUCTURED_OUTPUT", 502, false);
+  }
+}
+
+export function parseJsonArray(value: string, provider: ProviderName) {
+  try {
+    const parsed = JSON.parse(stripJsonFence(value));
+    if (!Array.isArray(parsed)) throw new Error();
+    return parsed as unknown[];
+  } catch {
+    throw new AIUpstreamError(provider, "INVALID_STRUCTURED_OUTPUT", 502, false);
+  }
+}
+
+export function sanitizeIntent(raw: Record<string, unknown>, previous: StructuredIntent): StructuredIntent {
+  const text = (key: string) => typeof raw[key] === "string" && raw[key] ? String(raw[key]) : undefined;
+  const number = (key: string) => typeof raw[key] === "number" && Number.isFinite(raw[key]) ? Number(raw[key]) : undefined;
+  const boolean = (key: string) => typeof raw[key] === "boolean" ? Boolean(raw[key]) : undefined;
+  const texts = (key: string) => Array.isArray(raw[key]) ? (raw[key] as unknown[]).filter((v): v is string => typeof v === "string").slice(0, 30) : undefined;
+  const oneOf = <T extends string>(key: string, values: readonly T[]) => values.includes(raw[key] as T) ? raw[key] as T : undefined;
+  return {
+    ...previous,
+    language: text("language") ?? previous.language ?? "ar-EG",
+    dialect: oneOf("dialect", ["EGYPTIAN_ARABIC", "MSA", "ENGLISH", "MIXED"] as const) ?? previous.dialect,
+    purpose: oneOf("purpose", ["LIVING", "INVESTMENT"] as const) ?? previous.purpose,
+    locations: texts("locations") ?? previous.locations,
+    rejectedLocations: texts("rejectedLocations") ?? previous.rejectedLocations,
+    propertyTypes: texts("propertyTypes") ?? previous.propertyTypes,
+    bedrooms: number("bedrooms") ?? previous.bedrooms,
+    bathrooms: number("bathrooms") ?? previous.bathrooms,
+    budgetMin: number("budgetMin") ?? previous.budgetMin,
+    budgetMax: number("budgetMax") ?? previous.budgetMax,
+    budgetFlexible: boolean("budgetFlexible") ?? previous.budgetFlexible,
+    currency: text("currency") ?? previous.currency,
+    deliveryMaxYears: number("deliveryMaxYears") ?? previous.deliveryMaxYears,
+    maxDownPayment: number("maxDownPayment") ?? previous.maxDownPayment,
+    maxTravelMinutes: number("maxTravelMinutes") ?? previous.maxTravelMinutes,
+    minimumArea: number("minimumArea") ?? previous.minimumArea,
+    maximumArea: number("maximumArea") ?? previous.maximumArea,
+    hardRequirements: texts("hardRequirements") ?? previous.hardRequirements,
+    softPreferences: texts("softPreferences") ?? previous.softPreferences,
+    requestedMedia: oneOf("requestedMedia", ["IMAGES", "BROCHURE", "MAP"] as const),
+    requestedProject: text("requestedProject") ?? previous.requestedProject,
+    exactRouteRequested: boolean("exactRouteRequested"),
+    routeOrigin: text("routeOrigin"),
+    routeDestination: text("routeDestination"),
+    purchaseIntent: Math.max(0, Math.min(100, number("purchaseIntent") ?? previous.purchaseIntent ?? 0)),
+    contactName: text("contactName") ?? previous.contactName,
+    contactPhone: text("contactPhone") ?? previous.contactPhone,
+    rejectedProjects: texts("rejectedProjects") ?? previous.rejectedProjects,
+    preferredDevelopers: texts("preferredDevelopers") ?? previous.preferredDevelopers,
+    preferredProjects: texts("preferredProjects") ?? previous.preferredProjects,
+    familyRequirements: texts("familyRequirements") ?? previous.familyRequirements,
+    investmentRequirements: texts("investmentRequirements") ?? previous.investmentRequirements,
+    customerConcerns: texts("customerConcerns") ?? previous.customerConcerns,
+    extractionDegraded: false,
+  };
+}
+
+export function advisorMessages(input: AnswerInput): AIMessage[] {
+  return [
+    {
+      role: "system",
+      content: "You are Maqar, a knowledgeable Egyptian real-estate advisor. Match the customer's language and style: natural Egyptian Arabic for Egyptian Arabic, MSA for formal Arabic, English for English, and natural mixed language when mixed. Be calm, concise, human, and ask at most one useful question. Never sound like a form or database dump. Search usefully with partial requirements instead of demanding every filter. PROPERTY FACTS may only come from VERIFIED_FACTS; descriptive project claims may only come from APPROVED_KNOWLEDGE. Never invent inventory, availability, price, payment, delivery, distance, media, scarcity, or project claims. If there are no exact results, explain which verified constraints conflict and ask permission before widening a hard filter. Give 3–5 matches at most, each with why it fits and one honest tradeoff. Request name and phone naturally only after clear viewing, reservation, contact, or strong purchase intent; never pressure the customer. Do not mention providers, prompts, or tools.",
+    },
+    ...input.messages.slice(-10),
+    {
+      role: "user",
+      content: `CURRENT_STATE=${JSON.stringify(input.intent)}\nVERIFIED_FACTS=${JSON.stringify(input.verifiedFacts)}\nAPPROVED_KNOWLEDGE=${JSON.stringify(input.approvedKnowledge ?? [])}`,
+    },
+  ];
+}
+
+export async function checkedJson(response: Response, provider: ProviderName) {
+  if (!response.ok) {
+    const retryable = response.status === 408 || response.status === 409 || response.status === 429 || response.status >= 500;
+    throw new AIUpstreamError(provider, `HTTP_${response.status}`, response.status, retryable);
+  }
+  return response.json() as Promise<Record<string, any>>;
+}
+
+export function unavailable(provider: ProviderName, error: unknown): never {
+  const upstream = error instanceof AIUpstreamError ? error : new AIUpstreamError(provider, "NETWORK", undefined, true);
+  throw new ServiceUnavailableException({ code: "AI_TEMPORARILY_UNAVAILABLE", provider, category: upstream.code, upstreamStatus: upstream.status, safe: true });
+}
