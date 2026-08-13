@@ -11,4 +11,4 @@ export async function proxy(request: NextRequest) {
   catch { const response = NextResponse.redirect(loginUrl); response.cookies.delete("maqar_admin_session"); return response; }
 }
 
-export const config = { matcher: ["/admin/((?!login).*)"] };
+export const config = { matcher: ["/admin", "/admin/((?!login).*)"] };
