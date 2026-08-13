@@ -25,7 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { LogoMark } from "@/components/logo";
-import { adminApi } from "@/lib/api";
+import { adminApi, adminErrorMessage } from "@/lib/api";
 
 type Issue = {
   id: string;
@@ -96,6 +96,14 @@ export default function AdminPage() {
   );
   async function upload(file?: File) {
     if (!file) return;
+    if (file.size > 20 * 1024 * 1024) {
+      setError("The file exceeds the 20 MB upload limit.");
+      return;
+    }
+    if (!/\.(xlsx|xls|csv)$/i.test(file.name)) {
+      setError("Unsupported file type. Upload an .xlsx, .xls or UTF-8 .csv file.");
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -103,7 +111,7 @@ export default function AdminPage() {
       form.append("file", file);
       setItem(await adminApi.upload<ImportData>("/imports/upload", form));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
+      setError(adminErrorMessage(e));
     } finally {
       setLoading(false);
     }

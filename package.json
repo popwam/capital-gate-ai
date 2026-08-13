@@ -17,7 +17,10 @@
     "db:push": "npm run push -w @maqar/database",
     "db:migrate:deploy": "npm run migrate:deploy -w @maqar/database",
     "smoke:api": "node scripts/smoke-api.mjs",
-    "smoke:production": "node scripts/production-live-smoke.mjs"
+    "smoke:production": "node scripts/production-live-smoke.mjs",
+    "gemini:models": "node scripts/gemini-models.mjs",
+    "gemini:smoke": "node scripts/gemini-live-smoke.mjs",
+    "smoke:imports": "node scripts/import-live-smoke.mjs"
   },
   "dependencies": {
     "@nestjs/platform-express": "11.1.29",

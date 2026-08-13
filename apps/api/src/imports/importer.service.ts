@@ -1,11 +1,12 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, HttpStatus, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ImportStatus, IssueSeverity, Prisma, UnitStatus } from "@prisma/client";
 import { createHash } from "node:crypto";
 import * as XLSX from "xlsx";
 import { PrismaService } from "../database/prisma.service";
-import { StorageService } from "../storage/storage.service";
+import { StorageProviderError, StorageService } from "../storage/storage.service";
 import { AIProvider } from "../providers/ai-provider";
 import { readImportWorkbook } from "./workbook-reader";
+import { ImportHttpException, importErrorDetails } from "./import-errors";
 
 const CANONICAL = ["externalUnitId", "phase", "cluster", "building", "floor", "unitType", "unitSubType", "bedrooms", "bathrooms", "builtUpArea", "landArea", "gardenArea", "roofArea", "terraceArea", "price", "currency", "status", "deliveryDate", "deliveryYears", "finishingType", "downPayment", "installmentYears", "installmentAmount", "maintenance", "clubFees", "discount", "offerText"];
 const KNOWN: Record<string, string> = {
@@ -15,38 +16,99 @@ const KNOWN: Record<string, string> = {
   "price": "price", "total price": "price", "currency": "currency", "status": "status", "availability": "status", "delivery": "deliveryDate", "delivery date": "deliveryDate", "finishing": "finishingType",
   "dp": "downPayment", "down payment": "downPayment", "years": "installmentYears", "installment years": "installmentYears", "installment": "installmentAmount", "maintenance": "maintenance", "club fees": "clubFees", "discount": "discount", "offer": "offerText", "phase": "phase", "cluster": "cluster", "building": "building", "floor": "floor"
 };
-type Analysis = { sheetName: string; sheets: string[]; headers: string[]; rows: Record<string, unknown>[]; mappings: Record<string, string>; mappingSources: Record<string, string>; valueMappings: Record<string, Record<string,string>>; rowPolicies: Record<string,string>; unknownColumns: string[]; aiSuggestions: unknown[]; defaultValues: Record<string, unknown>; metadata: Record<string, string>; fileKey: string };
+type Analysis = { sheetName: string; sheets: string[]; headers: string[]; rows: Record<string, unknown>[]; mappings: Record<string, string>; mappingSources: Record<string, string>; valueMappings: Record<string, Record<string,string>>; rowPolicies: Record<string,string>; unknownColumns: string[]; aiSuggestions: unknown[]; aiMapping: { status: "NOT_NEEDED" | "COMPLETED" | "UNAVAILABLE"; code?: string }; defaultValues: Record<string, unknown>; metadata: Record<string, string>; fileKey?: string };
+type ImportContext = { requestId?: string; adminUserId?: string };
 
 @Injectable()
 export class ImporterService {
+  private readonly logger = new Logger(ImporterService.name);
   constructor(private readonly prisma: PrismaService, private readonly storage: StorageService, @Inject("AI_PROVIDER") private readonly ai: AIProvider) {}
   private normalize(v: string) { return v.toLowerCase().trim().replace(/[_-]+/g, " ").replace(/\s+/g, " "); }
   private json<T>(value: T): any { return JSON.parse(JSON.stringify(value)); }
 
-  async analyze(file: Express.Multer.File, metadata: Record<string, string>) {
-    const workbook = readImportWorkbook(file.buffer, file.originalname);
-    if (!workbook.SheetNames.length) throw new BadRequestException("Workbook contains no sheets");
+  async analyze(file: Express.Multer.File, metadata: Record<string, string>, context: ImportContext = {}) {
+    const safeFileName = file.originalname.replace(/[\r\n]/g, " ").slice(0, 180);
+    const diagnostic = (stage: string, code: string, importId?: string, error?: unknown) => {
+      const details = importErrorDetails(error);
+      const upstreamStatus = error instanceof StorageProviderError ? error.upstreamStatus : details.upstreamStatus;
+      this.logger.error(`ImportFailure requestId=${context.requestId ?? "unknown"} adminUserId=${context.adminUserId ?? "unknown"} importId=${importId ?? "none"} filename=${JSON.stringify(safeFileName)} size=${file.size} mime=${file.mimetype || "unknown"} stage=${stage} code=${code} upstreamStatus=${upstreamStatus ?? "none"}`);
+    };
+    let workbook: XLSX.WorkBook;
+    try {
+      workbook = readImportWorkbook(file.buffer, file.originalname);
+    } catch (error) {
+      if (error instanceof ImportHttpException) throw error;
+      diagnostic("parser", "IMPORT_PARSE_FAILED", undefined, error);
+      throw new ImportHttpException(HttpStatus.UNPROCESSABLE_ENTITY, "IMPORT_PARSE_FAILED", "The file could not be read as a valid workbook.", "parser");
+    }
+    if (!workbook.SheetNames.length) throw new ImportHttpException(HttpStatus.UNPROCESSABLE_ENTITY, "IMPORT_NO_USABLE_SHEETS", "The workbook contains no usable sheets.", "parser");
     const sheetName = workbook.SheetNames.find(name => XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 }).length > 1) ?? workbook.SheetNames[0];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], { defval: null, raw: true });
-    if (!rows.length) throw new BadRequestException("Selected sheet contains no data rows");
-    if (rows.length > 10_000) throw new BadRequestException("Imports are limited to 10,000 rows per file");
+    if (!rows.length) throw new ImportHttpException(HttpStatus.UNPROCESSABLE_ENTITY, "IMPORT_NO_USABLE_SHEETS", "The workbook contains no usable data rows.", "parser");
+    if (rows.length > 10_000) throw new ImportHttpException(HttpStatus.UNPROCESSABLE_ENTITY, "IMPORT_ROW_LIMIT_EXCEEDED", "Imports are limited to 10,000 rows per file.", "parser");
     const headers = Object.keys(rows[0]); const mappings: Record<string, string> = {}; const mappingSources: Record<string, string> = {};
     const developerSlug = metadata.developerSlug || "__global__";
     const remembered = await this.prisma.importMapping.findMany({ where: { approved: true, developerSlug: { in: [developerSlug, "__global__"] } } });
     for (const header of headers) { const normalized = this.normalize(header); const prior = remembered.find(m => m.normalizedColumn === normalized); const field = prior?.canonicalField ?? KNOWN[normalized]; if (field) { mappings[header] = field; mappingSources[header] = prior ? "APPROVED_MEMORY" : "KNOWN_RULE"; } }
     const unknown = headers.filter(h => !mappings[h]);
-    const aiSuggestions = unknown.length ? await this.ai.mapColumns(unknown, rows.slice(0, 5).map(row => unknown.map(h => row[h])), CANONICAL) : [];
-    for (const suggestion of aiSuggestions) { if (suggestion.confidence >= .95 && CANONICAL.includes(suggestion.canonicalField) && !["price", "currency", "downPayment", "installmentAmount", "discount", "status"].includes(suggestion.canonicalField)) { mappings[suggestion.sourceColumn] = suggestion.canonicalField; mappingSources[suggestion.sourceColumn] = "AI_HIGH_CONFIDENCE"; } }
     const valueMappings: Record<string,Record<string,string>> = {}; const priorValues = await this.prisma.importValueMapping.findMany({ where: { developerSlug: { in: [developerSlug,"__global__"] }, approved: true } });
     for (const item of priorValues) (valueMappings[item.canonicalField] ??= {})[item.normalizedValue] = item.targetValue;
-    const stored = await this.storage.put(file.buffer, file.originalname, file.mimetype, "imports"); const fileHash = createHash("sha256").update(file.buffer).digest("hex");
-    const analysis: Analysis = { sheetName, sheets: workbook.SheetNames, headers, rows: this.json(rows), mappings, mappingSources, valueMappings, rowPolicies: {}, unknownColumns: headers.filter(h => !mappings[h]), aiSuggestions, defaultValues: {}, metadata, fileKey: stored.key };
-    const dataImport = await this.prisma.dataImport.create({ data: { fileName: file.originalname, fileHash, fileUrl: stored.url, status: ImportStatus.NEEDS_INPUT, rowsDetected: rows.length, mappingConfig: this.json({ mappings, mappingSources }), analysis: this.json(analysis), developerId: metadata.developerId || undefined, projectId: metadata.projectId || undefined } });
-    await this.createIssues(dataImport.id, analysis);
-    return this.get(dataImport.id);
+    const fileHash = createHash("sha256").update(file.buffer).digest("hex");
+    const analysis: Analysis = { sheetName, sheets: workbook.SheetNames, headers, rows: this.json(rows), mappings, mappingSources, valueMappings, rowPolicies: {}, unknownColumns: unknown, aiSuggestions: [], aiMapping: { status: unknown.length ? "UNAVAILABLE" : "NOT_NEEDED" }, defaultValues: {}, metadata };
+    let dataImport;
+    try {
+      dataImport = await this.prisma.dataImport.create({ data: { fileName: file.originalname, fileHash, status: ImportStatus.ANALYZING, rowsDetected: rows.length, mappingConfig: this.json({ mappings, mappingSources }), analysis: this.json(analysis), developerId: metadata.developerId || undefined, projectId: metadata.projectId || undefined } });
+    } catch (error) {
+      diagnostic("database", "IMPORT_DATABASE_FAILED", undefined, error);
+      throw new ImportHttpException(HttpStatus.INTERNAL_SERVER_ERROR, "IMPORT_DATABASE_FAILED", "The import could not be recorded.", "database");
+    }
+    try {
+      let stored;
+      try {
+        stored = await this.storage.put(file.buffer, file.originalname, file.mimetype || "application/octet-stream", "imports");
+        analysis.fileKey = stored.key;
+        await this.prisma.dataImport.update({ where: { id: dataImport.id }, data: { fileUrl: stored.url, analysis: this.json(analysis) } });
+      } catch (error) {
+        const storageCode = error instanceof StorageProviderError ? error.code : "UNKNOWN";
+        const code = storageCode === "AUTH" ? "IMPORT_STORAGE_AUTH_FAILED" : storageCode === "BUCKET" ? "IMPORT_STORAGE_BUCKET_FAILED" : storageCode === "NETWORK" ? "IMPORT_STORAGE_NETWORK_FAILED" : "IMPORT_STORAGE_FAILED";
+        diagnostic("storage", code, dataImport.id, error);
+        await this.markFailed(dataImport.id, code, "storage");
+        throw new ImportHttpException(HttpStatus.SERVICE_UNAVAILABLE, code, "Storage upload failed. Please retry or contact an administrator.", "storage", dataImport.id);
+      }
+
+      let aiIssue = false;
+      if (unknown.length) {
+        try {
+          const suggestions = await this.ai.mapColumns(unknown, rows.slice(0, 5).map(row => unknown.map(h => row[h])), CANONICAL);
+          analysis.aiSuggestions = suggestions;
+          analysis.aiMapping = { status: "COMPLETED" };
+          for (const suggestion of suggestions) if (suggestion.confidence >= .95 && CANONICAL.includes(suggestion.canonicalField) && !["price", "currency", "downPayment", "installmentAmount", "discount", "status"].includes(suggestion.canonicalField)) { mappings[suggestion.sourceColumn] = suggestion.canonicalField; mappingSources[suggestion.sourceColumn] = "AI_HIGH_CONFIDENCE"; }
+          analysis.unknownColumns = headers.filter(header => !mappings[header]);
+        } catch (error) {
+          const details = importErrorDetails(error);
+          analysis.aiMapping = { status: "UNAVAILABLE", code: String(details.category ?? details.code ?? "AI_UNAVAILABLE") };
+          aiIssue = true;
+          this.logger.warn(`ImportAIMappingUnavailable requestId=${context.requestId ?? "unknown"} adminUserId=${context.adminUserId ?? "unknown"} importId=${dataImport.id} filename=${JSON.stringify(safeFileName)} stage=ai-mapping code=${analysis.aiMapping.code} upstreamStatus=${details.upstreamStatus ?? "none"}`);
+        }
+      }
+      await this.prisma.$transaction(async tx => {
+        await tx.dataImport.update({ where: { id: dataImport.id }, data: { status: ImportStatus.NEEDS_INPUT, analysis: this.json(analysis), mappingConfig: this.json({ mappings, mappingSources }) } });
+        await this.createIssues(dataImport.id, analysis, tx, aiIssue);
+      });
+      return this.get(dataImport.id);
+    } catch (error) {
+      if (error instanceof ImportHttpException) throw error;
+      diagnostic("database", "IMPORT_DATABASE_FAILED", dataImport.id, error);
+      await this.markFailed(dataImport.id, "IMPORT_DATABASE_FAILED", "database");
+      throw new ImportHttpException(HttpStatus.INTERNAL_SERVER_ERROR, "IMPORT_DATABASE_FAILED", "The workbook was stored, but its analysis could not be recorded.", "database", dataImport.id);
+    }
   }
 
-  private async createIssues(importId: string, analysis: Analysis) {
+  private async markFailed(importId: string, code: string, stage: string) {
+    try { await this.prisma.dataImport.update({ where: { id: importId }, data: { status: ImportStatus.FAILED, warnings: this.json({ code, stage, failedAt: new Date().toISOString() }) } }); } catch { /* preserve the original failure */ }
+  }
+
+  private async createIssues(importId: string, analysis: Analysis, prisma: Prisma.TransactionClient = this.prisma, aiUnavailable = false) {
     const mapped = new Set(Object.values(analysis.mappings)); const issues: Prisma.ImportIssueCreateManyInput[] = [];
     if (!mapped.has("externalUnitId")) issues.push({ importId, severity: IssueSeverity.BLOCKING, field: "mapping:externalUnitId", message: "I could not identify the unit number/code. Enter the exact source column header that uniquely identifies each unit." });
     if (!mapped.has("currency")) issues.push({ importId, severity: IssueSeverity.BLOCKING, field: "currency", message: "The workbook does not contain currency. What currency applies to all prices?" });
@@ -57,7 +119,8 @@ export class ImporterService {
     const typeHeader = Object.entries(analysis.mappings).find(([,field]) => field === "unitType")?.[0];
     if (typeHeader) for (const raw of [...new Set(analysis.rows.map(row => String(row[typeHeader] ?? "").trim()).filter(Boolean))]) if (/^[A-Z]{1,3}$/.test(raw) && !analysis.valueMappings.unitType?.[this.normalize(raw)]) issues.push({ importId, severity: IssueSeverity.WARNING, field: `value:unitType:${raw}`, message: `What does the unit type abbreviation “${raw}” mean? Enter its canonical value or IGNORE.` });
     for (const [header, canonical] of Object.entries(analysis.mappings)) { const missing = analysis.rows.filter(r => r[header] == null || r[header] === "").length; if (missing) issues.push({ importId, severity: canonical === "externalUnitId" ? IssueSeverity.ERROR : IssueSeverity.WARNING, field: canonical, message: `${missing} rows are missing ${canonical}.`, resolution: { missingRows: missing } }); }
-    if (issues.length) await this.prisma.importIssue.createMany({ data: issues });
+    if (aiUnavailable) issues.push({ importId, severity: IssueSeverity.WARNING, field: "aiMapping", message: "AI-assisted column mapping is temporarily unavailable. Review unknown columns manually; the uploaded workbook is safe." });
+    if (issues.length) await prisma.importIssue.createMany({ data: issues });
   }
 
   async get(id: string) { const item = await this.prisma.dataImport.findUnique({ where: { id }, include: { issues: { orderBy: [{ severity: "desc" }, { id: "asc" }] }, developer: true, project: true } }); if (!item) throw new NotFoundException("Import not found"); return item; }
@@ -86,9 +149,11 @@ export class ImporterService {
   private status(value: unknown) { const s = String(value ?? "AVAILABLE").toUpperCase(); return s.includes("SOLD") ? UnitStatus.SOLD : s.includes("RESERV") ? UnitStatus.RESERVED : s.includes("UNAV") ? UnitStatus.UNAVAILABLE : UnitStatus.AVAILABLE; }
 
   async confirm(id: string) {
-    const item = await this.get(id); const unresolved = item.issues.filter(i => i.severity === IssueSeverity.BLOCKING && !i.resolvedAt); if (unresolved.length) throw new BadRequestException("Resolve all blocking issues before import");
+    const item = await this.get(id); const unresolved = item.issues.filter(i => i.severity === IssueSeverity.BLOCKING && !i.resolvedAt); if (unresolved.length) throw new ImportHttpException(HttpStatus.UNPROCESSABLE_ENTITY, "IMPORT_VALIDATION_ISSUES", "Resolve all blocking import questions before confirmation.", "validation", id);
     const analysis = item.analysis as unknown as Analysis;
-    const result = await this.prisma.$transaction(async tx => {
+    await this.prisma.dataImport.update({ where: { id }, data: { status: ImportStatus.IMPORTING } });
+    try {
+      const result = await this.prisma.$transaction(async tx => {
       let developerId = item.developerId || analysis.metadata.developerId; let projectId = item.projectId || analysis.metadata.projectId;
       if (!developerId) { const name = analysis.metadata.developerName; const slug = this.normalize(name).replace(/ /g, "-"); developerId = (await tx.developer.upsert({ where: { slug }, create: { name, slug }, update: {} })).id; }
       if (!projectId) { const name = analysis.metadata.projectName; const slugBase = this.normalize(name).replace(/ /g, "-"); const slug = `${slugBase}-${developerId.slice(-5)}`; projectId = (await tx.project.upsert({ where: { developerId_name: { developerId, name } }, create: { developerId, name, slug, locationId: analysis.metadata.locationId }, update: { locationId: analysis.metadata.locationId } })).id; }
@@ -108,6 +173,11 @@ export class ImporterService {
       for (const [header, canonicalField] of Object.entries(analysis.mappings)) { const developerSlug = analysis.metadata.developerSlug || "__global__"; await tx.importMapping.upsert({ where: { developerSlug_normalizedColumn: { developerSlug, normalizedColumn: this.normalize(header) } }, create: { developerSlug, sourceColumn: header, normalizedColumn: this.normalize(header), canonicalField, approved: true, confidence: analysis.mappingSources[header] === "AI_HIGH_CONFIDENCE" ? .95 : 1 }, update: { canonicalField, approved: true } }); }
       for (const [canonicalField,mappings] of Object.entries(analysis.valueMappings)) for (const [normalizedValue,targetValue] of Object.entries(mappings)) { const developerSlug=analysis.metadata.developerSlug||"__global__"; await tx.importValueMapping.upsert({where:{developerSlug_canonicalField_normalizedValue:{developerSlug,canonicalField,normalizedValue}},create:{developerSlug,canonicalField,sourceValue:normalizedValue,normalizedValue,targetValue,approved:true},update:{targetValue,approved:true}}); }
       await tx.dataImport.update({ where: { id }, data: { developerId, projectId, status: ImportStatus.COMPLETED, rowsCreated: created, rowsUpdated: updated, rowsRejected: rejected } }); return { developerId, projectId, created, updated, rejected };
-    }, { timeout: 120_000 }); return { import: await this.get(id), result };
+      }, { timeout: 120_000 });
+      return { import: await this.get(id), result };
+    } catch (error) {
+      await this.markFailed(id, "IMPORT_CONFIRM_FAILED", "database-transaction");
+      throw new ImportHttpException(HttpStatus.INTERNAL_SERVER_ERROR, "IMPORT_CONFIRM_FAILED", "The transactional import failed; no partial inventory was committed.", "database-transaction", id);
+    }
   }
 }

@@ -36,3 +36,25 @@ test("legacy or malformed CSV bytes are rejected instead of corrupted", () => {
     /must be valid UTF-8/,
   );
 });
+
+test("XLSX keeps formulas, dates, merged cells and ignores empty rows", () => {
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ["Unit Number", "Price", "Delivery Date", "Notes", null],
+    ["A-201", 9_000_000, new Date("2028-06-01T00:00:00.000Z"), "Ready", null],
+    [],
+  ], { cellDates: true });
+  sheet.B2 = { t: "n", f: "4500000*2", v: 9_000_000 };
+  sheet["!merges"] = [XLSX.utils.decode_range("D1:E1")];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, "Inventory");
+  const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+  const parsed = readImportWorkbook(buffer, "inventory.xlsx");
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
+    parsed.Sheets.Inventory,
+    { raw: true },
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]["Unit Number"], "A-201");
+  assert.equal(rows[0].Price, 9_000_000);
+  assert.ok(rows[0]["Delivery Date"] instanceof Date);
+});

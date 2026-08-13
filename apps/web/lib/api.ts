@@ -3,6 +3,48 @@ export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:400
 export type ApiConversation = { id: string; title: string | null; detectedLanguage?: string | null; createdAt: string; updatedAt: string; _count?: { messages: number } };
 export type ApiMessage = { id: string; role: "USER" | "ASSISTANT"; content: string; toolPayload?: Record<string, unknown> | null; createdAt: string };
 
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly requestId?: string;
+
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+    requestId?: string,
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.code = code;
+    this.requestId = requestId;
+  }
+}
+
+export function adminErrorMessage(error: unknown) {
+  if (!(error instanceof ApiRequestError))
+    return error instanceof Error ? error.message : "An unexpected error occurred.";
+  const known: Record<string, string> = {
+    UNAUTHENTICATED: "Your Admin session expired. Sign in again and retry.",
+    FORBIDDEN: "Your Admin account is not authorized for this action.",
+    IMPORT_FILE_TOO_LARGE: "The file exceeds the 20 MB upload limit.",
+    IMPORT_UNSUPPORTED_FILE_TYPE: "Unsupported file type. Upload an .xlsx, .xls or UTF-8 .csv file.",
+    IMPORT_SIGNATURE_MISMATCH: "The file content does not match its extension.",
+    IMPORT_PARSE_FAILED: "The file could not be read. Check that it is a valid Excel workbook or UTF-8 CSV.",
+    IMPORT_NO_USABLE_SHEETS: "The workbook contains no usable sheets or data rows.",
+    IMPORT_ROW_LIMIT_EXCEEDED: "The workbook exceeds the 10,000-row import limit.",
+    IMPORT_VALIDATION_ISSUES: "Resolve all blocking import questions before confirmation.",
+    IMPORT_STORAGE_AUTH_FAILED: "Storage authentication failed. Contact an administrator.",
+    IMPORT_STORAGE_BUCKET_FAILED: "The inventory storage bucket is unavailable. Contact an administrator.",
+    IMPORT_STORAGE_NETWORK_FAILED: "Storage is temporarily unavailable. Retry shortly.",
+    IMPORT_STORAGE_FAILED: "Storage upload failed. Retry shortly.",
+    IMPORT_DATABASE_FAILED: "The import could not be recorded. Retry or contact an administrator.",
+  };
+  const base = known[error.code ?? ""] || error.message || "An unexpected error occurred.";
+  return `${base}${error.requestId ? ` Request ID: ${error.requestId}` : ""}`;
+}
+
 export function getDeviceToken() {
   let token = localStorage.getItem("maqar-device-id");
   if (!token) { token = `${crypto.randomUUID()}-${crypto.randomUUID()}`; localStorage.setItem("maqar-device-id", token); }
@@ -13,7 +55,7 @@ async function request<T>(path: string, init: RequestInit = {}, device = true): 
   const headers = new Headers(init.headers); if (!(init.body instanceof FormData)) headers.set("content-type", "application/json");
   if (device) headers.set("x-device-token", getDeviceToken());
   const response = await fetch(`${API_URL}/v1${path}`, { ...init, headers, credentials: "include" });
-  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(Array.isArray(body.message) ? body.message[0] : body.message || `Request failed (${response.status})`); }
+  if (!response.ok) { const body = await response.json().catch(() => ({})); const message = Array.isArray(body.message) ? body.message[0] : body.message || `Request failed (${response.status})`; throw new ApiRequestError(message, response.status, body.code, body.requestId || response.headers.get("x-request-id") || undefined); }
   return response.json();
 }
 

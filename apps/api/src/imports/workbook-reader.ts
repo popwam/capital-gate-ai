@@ -1,7 +1,8 @@
-import { BadRequestException } from "@nestjs/common";
+import { HttpStatus } from "@nestjs/common";
 import { extname } from "node:path";
 import * as XLSX from "xlsx";
 import { decodeUtf8 } from "../text/unicode";
+import { ImportHttpException } from "./import-errors";
 
 export function readImportWorkbook(
   buffer: Buffer,
@@ -17,8 +18,11 @@ export function readImportWorkbook(
     return XLSX.read(source, { type: "string", cellDates: true });
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new BadRequestException(
+      throw new ImportHttpException(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        "IMPORT_PARSE_FAILED",
         "CSV files must be valid UTF-8. Convert legacy Windows-1256 or other encoded CSV files to UTF-8 before uploading.",
+        "parser",
       );
     }
     throw error;

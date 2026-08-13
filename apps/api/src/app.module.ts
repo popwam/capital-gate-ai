@@ -28,6 +28,7 @@ import {
   LeadCrmController,
 } from "./admin/lead-crm.controller";
 import { LeadCrmService } from "./admin/lead-crm.service";
+import { SystemController } from "./admin/system.controller";
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { LeadCrmService } from "./admin/lead-crm.service";
     StorageController,
     LeadCrmController,
     AdminConversationsController,
+    SystemController,
   ],
   providers: [
     ChatService,
