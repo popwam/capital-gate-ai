@@ -1,0 +1,26 @@
+import "reflect-metadata";
+import { NestFactory } from "@nestjs/core";
+import { ValidationPipe } from "@nestjs/common";
+import helmet from "helmet";
+import cookieParser from "cookie-parser";
+import { json, urlencoded } from "express";
+import { randomUUID } from "node:crypto";
+import { AppModule } from "./app.module";
+import { SafeHttpExceptionFilter } from "./security/http-exception.filter";
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
+  app.getHttpAdapter().getInstance().set("trust proxy", 1);
+  app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+  app.use(cookieParser());
+  app.use(json({ limit: "1mb" }), urlencoded({ extended: true, limit: "1mb" }));
+  app.use((request: any, response: any, next: () => void) => { request.requestId = request.headers["x-request-id"] || randomUUID(); response.setHeader("x-request-id", request.requestId); next(); });
+  app.setGlobalPrefix("v1");
+  const origins = (process.env.WEB_ORIGIN ?? "http://localhost:3000").split(",").map(x => x.trim()).filter(Boolean);
+  app.enableCors({ origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => !origin || origins.includes(origin) ? callback(null, true) : callback(new Error("Origin not allowed"), false), credentials: true, allowedHeaders: ["content-type", "x-device-token", "x-request-id"], methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"] });
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, stopAtFirstError: true }));
+  app.useGlobalFilters(new SafeHttpExceptionFilter());
+  app.enableShutdownHooks();
+  await app.listen(process.env.PORT ?? 4000, "0.0.0.0");
+}
+bootstrap();

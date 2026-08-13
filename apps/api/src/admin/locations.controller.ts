@@ -1,0 +1,25 @@
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
+import { ApprovalStatus, LocationType } from "@prisma/client";
+import { IsArray, IsBoolean, IsEnum, IsNumber, IsOptional, IsString, MaxLength } from "class-validator";
+import { PrismaService } from "../database/prisma.service";
+import { AdminAuthGuard } from "../auth/admin-auth.guard";
+import { AuditService } from "../audit.service";
+
+class LocationDto { @IsEnum(LocationType) type!: LocationType; @IsString() @MaxLength(120) name!: string; @IsString() @MaxLength(140) slug!: string; @IsOptional() @IsString() parentId?: string; @IsOptional() @IsNumber() latitude?: number; @IsOptional() @IsNumber() longitude?: number; @IsOptional() @IsString() googlePlaceId?: string; }
+class AliasDto { @IsString() value!: string; @IsOptional() @IsString() language?: string; }
+class DistanceDto { @IsString() fromLocationId!: string; @IsString() toLocationId!: string; @IsNumber() distanceKm!: number; @IsOptional() @IsNumber() estimatedMinutes?: number; @IsOptional() @IsString() distanceType?: string; @IsOptional() @IsString() notes?: string; @IsOptional() @IsBoolean() isBidirectional?: boolean; }
+
+@UseGuards(AdminAuthGuard)
+@Controller("admin/locations")
+export class LocationsController {
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  private admin(req: any) { return req.admin?.id as string; }
+  @Get() list() { return this.prisma.location.findMany({ include: { aliases: true, parent: { select: { id: true, name: true, type: true } } }, orderBy: [{ type: "asc" }, { name: "asc" }] }); }
+  @Post() async create(@Body() body: LocationDto, @Req() req: any) { const item = await this.prisma.location.create({ data: body }); await this.audit.record(this.admin(req), "LOCATION_CREATED", "Location", item.id, body); return item; }
+  @Patch(":id") async update(@Param("id") id: string, @Body() body: Partial<LocationDto>, @Req() req: any) { const item = await this.prisma.location.update({ where: { id }, data: body }); await this.audit.record(this.admin(req), "LOCATION_UPDATED", "Location", id, body); return item; }
+  @Delete(":id") async remove(@Param("id") id: string, @Req() req: any) { await this.prisma.location.delete({ where: { id } }); await this.audit.record(this.admin(req), "LOCATION_DELETED", "Location", id); return { deleted: true }; }
+  @Post(":id/aliases") async alias(@Param("id") locationId: string, @Body() body: AliasDto, @Req() req: any) { const normalizedValue = body.value.toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, " ").trim(); const item = await this.prisma.locationAlias.create({ data: { locationId, value: body.value, normalizedValue, language: body.language, approvalStatus: ApprovalStatus.APPROVED } }); await this.audit.record(this.admin(req), "LOCATION_ALIAS_CREATED", "LocationAlias", item.id); return item; }
+  @Delete("aliases/:aliasId") async removeAlias(@Param("aliasId") id: string, @Req() req: any) { await this.prisma.locationAlias.delete({ where: { id } }); await this.audit.record(this.admin(req), "LOCATION_ALIAS_DELETED", "LocationAlias", id); return { deleted: true }; }
+  @Get("distances/all") distances() { return this.prisma.locationDistance.findMany({ include: { from: true, to: true }, orderBy: { distanceKm: "asc" } }); }
+  @Post("distances") async distance(@Body() body: DistanceDto, @Req() req: any) { const item = await this.prisma.$transaction(async tx => { const first = await tx.locationDistance.upsert({ where: { fromLocationId_toLocationId: { fromLocationId: body.fromLocationId, toLocationId: body.toLocationId } }, create: { ...body, distanceType: body.distanceType || "ADMIN_VERIFIED", verifiedAt: new Date() }, update: { ...body, verifiedAt: new Date() } }); if (body.isBidirectional !== false) await tx.locationDistance.upsert({ where: { fromLocationId_toLocationId: { fromLocationId: body.toLocationId, toLocationId: body.fromLocationId } }, create: { ...body, fromLocationId: body.toLocationId, toLocationId: body.fromLocationId, distanceType: body.distanceType || "ADMIN_VERIFIED", verifiedAt: new Date() }, update: { distanceKm: body.distanceKm, estimatedMinutes: body.estimatedMinutes, notes: body.notes, verifiedAt: new Date() } }); return first; }); await this.audit.record(this.admin(req), "LOCATION_DISTANCE_SAVED", "LocationDistance", item.id); return item; }
+}

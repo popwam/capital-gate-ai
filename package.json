@@ -1,0 +1,17 @@
+{
+  "name": "maqar-ai-platform",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "npm run dev -w @maqar/web",
+    "dev:web": "npm run dev -w @maqar/web",
+    "dev:api": "npm run start:dev -w @maqar/api",
+    "build": "npm run build -w @maqar/web && npm run build -w @maqar/api",
+    "lint": "npm run lint -w @maqar/web",
+    "db:generate": "npm run generate -w @maqar/database",
+    "db:push": "npm run push -w @maqar/database",
+    "db:migrate:deploy": "npm run migrate:deploy -w @maqar/database",
+    "smoke:api": "node scripts/smoke-api.mjs"
+  }
+}

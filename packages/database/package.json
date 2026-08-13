@@ -1,0 +1,18 @@
+{
+  "name": "@maqar/database",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "generate": "prisma generate",
+    "push": "prisma db push",
+    "migrate:deploy": "prisma migrate deploy",
+    "migrate:status": "prisma migrate status",
+    "studio": "prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3"
+  },
+  "devDependencies": {
+    "prisma": "6.19.3"
+  }
+}

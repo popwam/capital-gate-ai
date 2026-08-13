@@ -1,0 +1,26 @@
+import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { PrismaService } from "./database/prisma.service";
+import { DevicesService } from "./devices.service";
+
+@Injectable()
+export class ConversationsService {
+  constructor(private readonly prisma: PrismaService, private readonly devices: DevicesService) {}
+  private async owned(id: string, rawToken: string) {
+    const device = await this.devices.resolve(rawToken);
+    const conversation = await this.prisma.conversation.findFirst({ where: { id, deviceId: device.id } });
+    if (!conversation) throw new NotFoundException("Conversation not found");
+    return { device, conversation };
+  }
+  async list(rawToken: string) {
+    const device = await this.devices.resolve(rawToken);
+    return this.prisma.conversation.findMany({ where: { deviceId: device.id }, orderBy: { updatedAt: "desc" }, select: { id: true, title: true, detectedLanguage: true, createdAt: true, updatedAt: true, _count: { select: { messages: true } } } });
+  }
+  async create(rawToken: string, title?: string) {
+    const device = await this.devices.resolve(rawToken);
+    return this.prisma.conversation.create({ data: { deviceId: device.id, title: title?.slice(0, 80) || "New conversation" } });
+  }
+  async rename(id: string, rawToken: string, title: string) { const { conversation } = await this.owned(id, rawToken); return this.prisma.conversation.update({ where: { id: conversation.id }, data: { title: title.trim().slice(0, 80) } }); }
+  async remove(id: string, rawToken: string) { const { conversation } = await this.owned(id, rawToken); await this.prisma.conversation.delete({ where: { id: conversation.id } }); return { deleted: true }; }
+  async messages(id: string, rawToken: string) { await this.owned(id, rawToken); return this.prisma.message.findMany({ where: { conversationId: id, role: { in: ["USER", "ASSISTANT"] } }, orderBy: { createdAt: "asc" } }); }
+  async assertOwned(id: string, rawToken: string) { return this.owned(id, rawToken); }
+}
