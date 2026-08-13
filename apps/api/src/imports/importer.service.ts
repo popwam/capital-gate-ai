@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import {
   ImportStatus,
@@ -25,6 +26,8 @@ import { AIProvider } from "../providers/ai-provider";
 import { readImportWorkbook } from "./workbook-reader";
 import { ImportHttpException, importErrorDetails } from "./import-errors";
 import { rollbackConflict } from "./rollback-safety";
+import { ApplicationCache } from "../cache/application-cache";
+import { analyzeWorkbook, detectSemanticColumn, detectTableAt, DetectedTable, rawSheetMatrix, recordsForTable, WorkbookAnalysis } from "./workbook-analysis";
 import {
   AVAILABILITY_TYPES,
   CANONICAL_FIELDS,
@@ -122,11 +125,14 @@ const KNOWN: Record<string, string> = {
 type Analysis = {
   sheetName: string;
   sheets: string[];
+  workbookAnalysis: WorkbookAnalysis;
+  selectedTable?: DetectedTable;
   headers: string[];
   rows: Record<string, unknown>[];
   mappings: Record<string, string>;
   paymentPlanMappings: Record<string, { durationMonths?: number; valueType: "TOTAL_PRICE" | "INSTALLMENT_AMOUNT" | "DOWN_PAYMENT_AMOUNT" | "DOWN_PAYMENT_PERCENT" | "MAINTENANCE_AMOUNT" | "MAINTENANCE_PERCENT"; currency?: string; sourceDurationText: string; approved: boolean }>;
   mappingSources: Record<string, string>;
+  mappingConfidence?: Record<string, number>;
   valueMappings: Record<string, Record<string, string>>;
   rowPolicies: Record<string, string>;
   unknownColumns: string[];
@@ -139,9 +145,28 @@ type Analysis = {
   };
   defaultValues: Record<string, unknown>;
   metadata: Record<string, string>;
+  projectCandidates?: Array<{ id: string; name: string; developerName: string; locationName?: string; confidence: number }>;
+  extractedWorkbookMetadata?: Record<string, string>;
   fileKey?: string;
 };
 type ImportContext = { requestId?: string; adminUserId?: string };
+type ImportWorkflowStage =
+  | "UPLOAD"
+  | "ANALYZE"
+  | "RESOLVE"
+  | "PREVIEW"
+  | "IMPORT"
+  | "COMPLETE"
+  | "FAILED";
+type ImportReadiness = {
+  stage: ImportWorkflowStage;
+  unresolvedBlockingCount: number;
+  unresolvedWarningCount: number;
+  canPreview: boolean;
+  canConfirm: boolean;
+  previewExists: boolean;
+  nextRequiredAction: "RESOLVE_ISSUES" | "GENERATE_PREVIEW" | "CONFIRM_IMPORT" | "NONE";
+};
 
 @Injectable()
 export class ImporterService {
@@ -150,12 +175,96 @@ export class ImporterService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     @Inject("AI_PROVIDER") private readonly ai: AIProvider,
+    @Optional() private readonly cache?: ApplicationCache,
   ) {}
   private normalize(v: string) {
     return v.toLowerCase().trim().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
   }
   private json<T>(value: T): any {
     return JSON.parse(JSON.stringify(value));
+  }
+
+  private getImportReadiness(item: {
+    status: ImportStatus;
+    issues: Array<{ severity: IssueSeverity; resolvedAt: Date | null; required?: boolean }>;
+    analysis: unknown;
+    preview: unknown;
+    developerId: string | null;
+    projectId: string | null;
+  }): ImportReadiness {
+    const analysis = (item.analysis ?? {}) as Partial<Analysis>;
+    const unresolved = item.issues.filter((issue) => !issue.resolvedAt);
+    const unresolvedBlockingCount = unresolved.filter(
+      (issue) => issue.severity === IssueSeverity.BLOCKING || issue.required === true,
+    ).length;
+    const unresolvedWarningCount = unresolved.filter(
+      (issue) =>
+        issue.severity !== IssueSeverity.BLOCKING &&
+        issue.severity !== IssueSeverity.INFO &&
+        issue.required !== true,
+    ).length;
+    const mappings = analysis.mappings ?? {};
+    const metadata = analysis.metadata ?? {};
+    const hasIdentity = Object.values(mappings).includes("externalUnitId");
+    const hasCurrency =
+      Object.values(mappings).includes("currency") ||
+      SUPPORTED_CURRENCIES.includes(
+        String(analysis.defaultValues?.currency ?? "").toUpperCase() as any,
+      );
+    const contextValid = Boolean(
+      analysis.selectedTable &&
+        hasIdentity &&
+        hasCurrency &&
+        (item.projectId || metadata.projectId) &&
+        (item.developerId || metadata.developerId) &&
+        metadata.locationId,
+    );
+    const canPreview = unresolvedBlockingCount === 0 && contextValid;
+    const preview = item.preview as Record<string, unknown> | null;
+    const previewExists = Boolean(preview);
+    const canConfirm = canPreview && previewExists && preview?.canConfirm === true;
+    const terminal = item.status === ImportStatus.COMPLETED;
+    const failed =
+      item.status === ImportStatus.FAILED ||
+      item.status === ImportStatus.CANCELLED ||
+      item.status === ImportStatus.ROLLED_BACK;
+    const stage: ImportWorkflowStage = terminal
+      ? "COMPLETE"
+      : failed
+        ? "FAILED"
+        : item.status === ImportStatus.UPLOADED || item.status === ImportStatus.ANALYZING
+          ? "ANALYZE"
+          : !canPreview
+            ? "RESOLVE"
+            : !previewExists || !canConfirm
+              ? "PREVIEW"
+              : "IMPORT";
+    return {
+      stage,
+      unresolvedBlockingCount,
+      unresolvedWarningCount,
+      canPreview,
+      canConfirm,
+      previewExists,
+      nextRequiredAction: terminal || failed
+        ? "NONE"
+        : !canPreview
+          ? "RESOLVE_ISSUES"
+          : !previewExists || !canConfirm
+            ? "GENERATE_PREVIEW"
+            : "CONFIRM_IMPORT",
+    };
+  }
+
+  private withImportReadiness<T extends {
+    status: ImportStatus;
+    issues: Array<{ severity: IssueSeverity; resolvedAt: Date | null; required?: boolean }>;
+    analysis: unknown;
+    preview: unknown;
+    developerId: string | null;
+    projectId: string | null;
+  }>(item: T): T & { workflow: ImportReadiness } {
+    return { ...item, workflow: this.getImportReadiness(item) };
   }
 
   async analyze(
@@ -201,34 +310,27 @@ export class ImporterService {
         "The workbook contains no usable sheets.",
         "parser",
       );
-    const sheetName =
-      workbook.SheetNames.find(
-        (name) =>
-          XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 })
-            .length > 1,
-      ) ?? workbook.SheetNames[0];
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-      workbook.Sheets[sheetName],
-      { defval: null, raw: true },
-    );
-    if (!rows.length)
-      throw new ImportHttpException(
-        HttpStatus.UNPROCESSABLE_ENTITY,
-        "IMPORT_NO_USABLE_SHEETS",
-        "The workbook contains no usable data rows.",
-        "parser",
-      );
-    if (rows.length > 10_000)
+    const workbookAnalysis = analyzeWorkbook(workbook, file.originalname);
+    const populatedCells = workbookAnalysis.sheets.reduce((total, sheet) => total + sheet.rawPreview.reduce((sum, row) => sum + row.cells.filter((cell) => cell != null && String(cell).trim() !== "").length, 0), 0);
+    if (!populatedCells) throw new ImportHttpException(HttpStatus.UNPROCESSABLE_ENTITY, "IMPORT_NO_USABLE_SHEETS", "The workbook contains no usable data rows.", "parser");
+    if (process.env.NODE_ENV !== "production") this.logger.debug(`WorkbookAnalysis ${JSON.stringify({ requestId: context.requestId ?? "unknown", sheets: workbookAnalysis.sheets.map((sheet) => ({ name: sheet.name, classification: sheet.classification, confidence: sheet.confidence, regions: sheet.regions, headerCandidates: sheet.headerCandidates.map((candidate) => ({ row: candidate.row, confidence: candidate.confidence, rejected: candidate.rejected })), mappings: sheet.candidateTables[0]?.columns.map((column) => ({ header: column.originalHeader, semanticField: column.semanticField, confidence: column.confidence })) })), selectedSheet: workbookAnalysis.selectedSheet, warnings: workbookAnalysis.warnings })}`);
+    const selectedSheet = workbookAnalysis.sheets.find((sheet) => sheet.name === workbookAnalysis.selectedSheet);
+    const selectedTable = selectedSheet?.candidateTables.find((table) => table.id === workbookAnalysis.selectedTableId);
+    const sheetName = selectedSheet?.name ?? workbook.SheetNames[0];
+    const rows = selectedTable ? recordsForTable(workbook, selectedTable) : [];
+    const totalRows = workbookAnalysis.sheets.reduce((total, sheet) => total + sheet.rowCount, 0);
+    if (totalRows > 10_000)
       throw new ImportHttpException(
         HttpStatus.UNPROCESSABLE_ENTITY,
         "IMPORT_ROW_LIMIT_EXCEEDED",
         "Imports are limited to 10,000 rows per file.",
         "parser",
       );
-    const headers = Object.keys(rows[0]);
+    const headers = selectedTable?.columns.map((column) => column.key) ?? [];
     const mappings: Record<string, string> = {};
     const paymentPlanMappings: Analysis["paymentPlanMappings"] = {};
     const mappingSources: Record<string, string> = {};
+    const mappingConfidence: Record<string, number> = {};
     if (metadata.parentImportId && !metadata.projectId) {
       const parent = await this.prisma.dataImport.findUnique({ where: { id: metadata.parentImportId }, select: { projectId: true, developerId: true, project: { select: { locationId: true, developer: { select: { slug: true } } } } } });
       if (parent) {
@@ -256,13 +358,16 @@ export class ImporterService {
     for (const header of headers) {
       const normalized = this.normalize(header);
       const prior = remembered.find((m) => m.normalizedColumn === normalized);
-      const field = prior?.canonicalField ?? KNOWN[normalized];
+      const detected = selectedTable?.columns.find((column) => column.key === header);
+      const semantic = detected?.semanticField ? { field: detected.semanticField, confidence: detected.confidence } : detectSemanticColumn(header);
+      const field = prior?.canonicalField ?? KNOWN[normalized] ?? semantic?.field;
       if (field?.startsWith("paymentPlan:")) {
         const [, duration, valueType = "TOTAL_PRICE"] = field.split(":");
         paymentPlanMappings[header] = { durationMonths: Number(duration) || undefined, valueType: valueType as PaymentPlanValueType, sourceDurationText: header, approved: true };
       } else if (field) {
         mappings[header] = field;
         mappingSources[header] = prior ? "ADMIN_APPROVED_MEMORY" : "KNOWN_RULE";
+        mappingConfidence[header] = prior ? Number(prior.confidence ?? 1) : semantic?.confidence ?? .8;
       } else {
         const detectedPlan = parsePaymentPlanComponentHeader(header);
         if (detectedPlan) paymentPlanMappings[header] = { ...detectedPlan, approved: false };
@@ -283,11 +388,14 @@ export class ImporterService {
     const analysis: Analysis = {
       sheetName,
       sheets: workbook.SheetNames,
+      workbookAnalysis,
+      selectedTable,
       headers,
       rows: this.json(rows),
       mappings,
       paymentPlanMappings,
       mappingSources,
+      mappingConfidence,
       valueMappings,
       rowPolicies: {},
       unknownColumns: unknown,
@@ -298,6 +406,24 @@ export class ImporterService {
       defaultValues: {},
       metadata,
     };
+    const extractedWorkbookMetadata: Record<string, string> = {};
+    for (const sheet of workbookAnalysis.sheets.filter((entry) => ["SUMMARY", "PROJECT_INFO"].includes(entry.classification))) {
+      for (const row of sheet.rawPreview) {
+        const values = row.cells.filter((cell) => cell != null && String(cell).trim() !== "");
+        if (values.length !== 2) continue;
+        const label = this.normalize(String(values[0]));
+        if (/^(?:project|project name|المشروع|اسم المشروع)$/iu.test(label)) extractedWorkbookMetadata.projectName = String(values[1]).trim();
+        if (/^(?:developer|developer name|المطور|اسم المطور)$/iu.test(label)) extractedWorkbookMetadata.developerName = String(values[1]).trim();
+        if (/^(?:location|area|الموقع|المنطقه|المنطقة)$/iu.test(label)) extractedWorkbookMetadata.locationName = String(values[1]).trim();
+      }
+    }
+    analysis.extractedWorkbookMetadata = extractedWorkbookMetadata;
+    const projectHint = extractedWorkbookMetadata.projectName || file.originalname.replace(/\.(?:xlsx|xls|csv)$/iu, "").replace(/[_-]+/g, " ").trim();
+    if (!metadata.projectId && projectHint.length >= 3 && typeof (this.prisma.project as any).findMany === "function") {
+      const hintTokens = this.normalize(projectHint).split(" ").filter((token) => token.length >= 2).slice(0, 5);
+      const candidates = await this.prisma.project.findMany({ where: { OR: [{ name: { contains: projectHint, mode: "insensitive" } }, ...hintTokens.map((token) => ({ name: { contains: token, mode: "insensitive" as const } }))] }, take: 8, include: { developer: { select: { name: true } }, location: { select: { name: true } } } });
+      analysis.projectCandidates = candidates.map((project) => { const normalizedName = this.normalize(project.name); const matches = hintTokens.filter((token) => normalizedName.includes(token)).length; return { id: project.id, name: project.name, developerName: project.developer.name, locationName: project.location?.name, confidence: hintTokens.length ? Math.round(matches / hintTokens.length * 100) : 0 }; }).sort((left, right) => right.confidence - left.confidence);
+    }
     let dataImport;
     try {
       if (metadata.parentImportId) {
@@ -482,6 +608,16 @@ export class ImporterService {
   ) {
     const mapped = new Set(Object.values(analysis.mappings));
     const issues: Prisma.ImportIssueCreateManyInput[] = [];
+    if (!analysis.selectedTable) {
+      issues.push({ importId, severity: IssueSeverity.BLOCKING, field: "workbook:selection", message: "لم نتمكن من تحديد جدول وحدات موثوق داخل الملف. اختر الصفحة وصف العناوين الصحيح لمتابعة الاستيراد.", inputType: "WORKBOOK_TABLE_SELECT", options: this.json({ code: "HEADER_NOT_FOUND", sheets: analysis.workbookAnalysis.sheets.map((sheet) => ({ name: sheet.name, classification: sheet.classification, confidence: sheet.confidence, rowCount: sheet.rowCount, candidateTables: sheet.candidateTables, headerCandidates: sheet.headerCandidates, rawPreview: sheet.rawPreview })) }), required: true });
+      await prisma.importIssue.createMany({ data: issues });
+      return;
+    }
+    if (analysis.selectedTable.confidence < 65) {
+      issues.push({ importId, severity: IssueSeverity.BLOCKING, field: "workbook:selection", message: "تم العثور على جدول محتمل، لكن دقة تحديد صف العناوين منخفضة. راجع الصفحة وصف العناوين قبل المتابعة.", inputType: "WORKBOOK_TABLE_SELECT", options: this.json({ code: "AMBIGUOUS_HEADER", selectedSheet: analysis.sheetName, selectedHeaderRow: analysis.selectedTable.headerRow, sheets: analysis.workbookAnalysis.sheets.map((sheet) => ({ name: sheet.name, classification: sheet.classification, confidence: sheet.confidence, rowCount: sheet.rowCount, candidateTables: sheet.candidateTables, headerCandidates: sheet.headerCandidates, rawPreview: sheet.rawPreview })) }), required: true });
+      await prisma.importIssue.createMany({ data: issues });
+      return;
+    }
     if (!mapped.has("externalUnitId"))
       issues.push({
         importId,
@@ -489,7 +625,7 @@ export class ImporterService {
         field: "mapping:externalUnitId",
         message: "لم أتمكن من تحديد كود الوحدة. اختر العمود الذي يميز كل وحدة.",
         inputType: "CANONICAL_FIELD_SELECT",
-        options: this.json({ canonicalField: "externalUnitId", sourceHeaders: analysis.headers }),
+        options: this.json({ canonicalField: "externalUnitId", sourceHeaders: analysis.headers, detectedColumns: analysis.selectedTable?.columns }),
         required: true,
       });
     if (!mapped.has("currency"))
@@ -509,7 +645,7 @@ export class ImporterService {
         field: "projectId",
         message: "الملف ده تابع لأي مشروع؟",
         inputType: "PROJECT_SELECT",
-        options: this.json({ allowCreate: true }),
+        options: this.json({ allowCreate: true, potentialMatches: analysis.projectCandidates ?? [], extractedProjectName: analysis.extractedWorkbookMetadata?.projectName }),
         required: true,
       });
     if (!analysis.metadata.developerId)
@@ -534,7 +670,8 @@ export class ImporterService {
       });
     for (const [column, canonical] of Object.entries(analysis.mappings)) {
       const source = analysis.mappingSources[column];
-      if (!CRITICAL_MAPPINGS.has(canonical) || source === "ADMIN_APPROVED_MEMORY" || source === "ADMIN_APPROVED") continue;
+      const confidence = analysis.mappingConfidence?.[column] ?? 0;
+      if (!CRITICAL_MAPPINGS.has(canonical) || source === "ADMIN_APPROVED_MEMORY" || source === "ADMIN_APPROVED" || confidence >= .95) continue;
       const field = CANONICAL_FIELDS.find((option) => option.value === canonical);
       issues.push({
         importId,
@@ -542,7 +679,7 @@ export class ImporterService {
         field: `column:${column}`,
         message: `راجع معنى العمود «${column}». النظام يقترح «${field?.labelAr ?? canonical}» ويحتاج تأكيدك أول مرة.`,
         inputType: "CANONICAL_FIELD_SELECT",
-        options: this.json({ sourceColumn: column, fields: CANONICAL_FIELDS, suggestedValue: canonical, mappingSource: source, requiresConfirmation: true }),
+        options: this.json({ sourceColumn: column, fields: CANONICAL_FIELDS, suggestedValue: canonical, mappingSource: source, mappingConfidence: confidence, samples: analysis.selectedTable?.columns.find((item) => item.key === column)?.samples ?? [], requiresConfirmation: true }),
         required: true,
       });
     }
@@ -564,7 +701,7 @@ export class ImporterService {
         field: `column:${column}`,
         message: `العمود «${column}» غير معروف. اختر معناه أو احتفظ به كمعلومة إضافية أو تجاهله.`,
         inputType: "CANONICAL_FIELD_SELECT",
-        options: this.json({ sourceColumn: column, fields: CANONICAL_FIELDS, actions: ["METADATA", "IGNORE"] }),
+        options: this.json({ sourceColumn: column, fields: CANONICAL_FIELDS, samples: analysis.selectedTable?.columns.find((item) => item.key === column)?.samples ?? [], actions: ["METADATA", "IGNORE"] }),
         required: true,
       });
     const typeHeader = Object.entries(analysis.mappings).find(
@@ -644,7 +781,22 @@ export class ImporterService {
       },
     });
     if (!item) throw new NotFoundException("Import not found");
-    return item;
+    return this.withImportReadiness(item);
+  }
+
+  private async refreshImportReadiness(id: string) {
+    const refreshed = await this.get(id);
+    const status = refreshed.workflow.canPreview
+      ? ImportStatus.READY
+      : ImportStatus.NEEDS_INPUT;
+    await this.prisma.dataImport.update({
+      where: { id },
+      data: {
+        status,
+        ...(refreshed.preview ? { preview: Prisma.DbNull } : {}),
+      },
+    });
+    return this.get(id);
   }
   async list(page = 1, pageSize = 50) {
     const safePage = Math.max(1, page);
@@ -690,9 +842,66 @@ export class ImporterService {
     throw new BadRequestException("نوع الخيارات غير مدعوم.");
   }
 
+  private async reselectWorkbookTable(id: string, analysis: Analysis, value: unknown) {
+    const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    const sheetName = String(input.sheetName ?? "");
+    const headerRow = Number(input.headerRow);
+    if (!analysis.fileKey || !sheetName || !Number.isInteger(headerRow) || headerRow < 1)
+      throw new BadRequestException("اختر صفحة وصف عناوين صحيحًا.");
+    const buffer = await this.storage.get(analysis.fileKey);
+    const workbook = readImportWorkbook(buffer, analysis.workbookAnalysis.workbookName);
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) throw new BadRequestException("الصفحة المختارة غير موجودة في الملف.");
+    const table = detectTableAt(rawSheetMatrix(sheet), sheetName, headerRow, 1);
+    if (!table) throw new BadRequestException("لم نتمكن من تكوين جدول صالح من صف العناوين المختار.");
+    const headers = table.columns.map((column) => column.key);
+    const rows = recordsForTable(workbook, table);
+    if (!rows.length) throw new BadRequestException("صف العناوين المختار لا يحتوي على صفوف بيانات صالحة تحته.");
+    const developerSlug = analysis.metadata.developerSlug || "__global__";
+    const remembered = await this.prisma.importMapping.findMany({ where: { approved: true, developerSlug: { in: [developerSlug, "__global__"] } } });
+    const mappings: Record<string, string> = {};
+    const mappingSources: Record<string, string> = {};
+    const mappingConfidence: Record<string, number> = {};
+    const paymentPlanMappings: Analysis["paymentPlanMappings"] = {};
+    for (const column of table.columns) {
+      const prior = remembered.find((mapping) => mapping.normalizedColumn === this.normalize(column.originalHeader));
+      const semantic = column.semanticField ? { field: column.semanticField, confidence: column.confidence } : detectSemanticColumn(column.originalHeader);
+      const canonical = prior?.canonicalField ?? KNOWN[this.normalize(column.originalHeader)] ?? semantic?.field;
+      if (canonical?.startsWith("paymentPlan:")) {
+        const [, duration, valueType = "TOTAL_PRICE"] = canonical.split(":");
+        paymentPlanMappings[column.key] = { durationMonths: Number(duration) || undefined, valueType: valueType as PaymentPlanValueType, sourceDurationText: column.originalHeader, approved: true };
+      } else if (canonical && CANONICAL.includes(canonical)) {
+        mappings[column.key] = canonical;
+        mappingSources[column.key] = prior ? "ADMIN_APPROVED_MEMORY" : "KNOWN_RULE";
+        mappingConfidence[column.key] = prior ? Number(prior.confidence ?? 1) : semantic?.confidence ?? .8;
+      } else {
+        const plan = parsePaymentPlanComponentHeader(column.originalHeader);
+        if (plan) paymentPlanMappings[column.key] = { ...plan, approved: false };
+      }
+    }
+    analysis.sheetName = sheetName;
+    analysis.selectedTable = table;
+    analysis.headers = headers;
+    analysis.rows = this.json(rows);
+    analysis.mappings = mappings;
+    analysis.mappingSources = mappingSources;
+    analysis.mappingConfidence = mappingConfidence;
+    analysis.paymentPlanMappings = paymentPlanMappings;
+    analysis.unknownColumns = headers.filter((header) => !mappings[header] && !paymentPlanMappings[header]);
+    analysis.workbookAnalysis.selectedSheet = sheetName;
+    analysis.workbookAnalysis.selectedTableId = table.id;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.importIssue.deleteMany({ where: { importId: id } });
+      await tx.dataImport.update({ where: { id }, data: { rowsDetected: rows.length, status: ImportStatus.NEEDS_INPUT, analysis: this.json(analysis), mappingConfig: this.json({ mappings, mappingSources, mappingConfidence }) } });
+      await this.createIssues(id, analysis, tx);
+    });
+    return this.refreshImportReadiness(id);
+  }
+
   async resolve(id: string, field: string, value: unknown) {
     const item = await this.get(id);
     const analysis = item.analysis as unknown as Analysis;
+    if (field === "workbook:selection") return this.reselectWorkbookTable(id, analysis, value);
     analysis.paymentPlanMappings ??= {};
     const resolvedFields = [field];
     if (field.startsWith("column:")) {
@@ -827,11 +1036,19 @@ export class ImporterService {
         data: { resolvedAt: new Date(), resolution: this.json({ value }) },
       }),
     ]);
-    return this.preview(id);
+    return this.refreshImportReadiness(id);
   }
 
   async preview(id: string) {
     const item = await this.get(id);
+    if (!item.workflow.canPreview)
+      throw new ImportHttpException(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        "IMPORT_VALIDATION_ISSUES",
+        "Resolve all blocking import questions and required context before generating a preview.",
+        "validation",
+        id,
+      );
     const analysis = item.analysis as unknown as Analysis;
     const blocking = item.issues.filter(
       (i) => i.severity === IssueSeverity.BLOCKING && !i.resolvedAt,
@@ -967,17 +1184,24 @@ export class ImporterService {
 
   private number(value: unknown) {
     if (value == null || value === "") return undefined;
-    const n = Number(String(value).replace(/[,\s]/g, ""));
+    if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+    const arabicDigits: Record<string, string> = { "٠":"0", "١":"1", "٢":"2", "٣":"3", "٤":"4", "٥":"5", "٦":"6", "٧":"7", "٨":"8", "٩":"9", "٫":".", "٬":"" };
+    let source = String(value).trim().replace(/[٠-٩٫٬]/g, (character) => arabicDigits[character]);
+    const negative = /^\(.*\)$/.test(source);
+    source = source.replace(/^\(|\)$/g, "").replace(/(?:EGP|USD|EUR|AED|SAR|GBP|جنيه|ج\.م)/giu, "").replace(/[$€£¥,%\s,]/g, "");
+    if (!/^[-+]?\d+(?:\.\d+)?$/.test(source)) return undefined;
+    const n = Number(source) * (negative ? -1 : 1);
     return Number.isFinite(n) ? n : undefined;
   }
   private status(value: unknown) {
     const s = String(value ?? "AVAILABLE").toUpperCase();
-    return s.includes("SOLD")
+    return /SOLD|مباع/u.test(s)
       ? UnitStatus.SOLD
-      : s.includes("RESERV")
+      : /RESERV|محجوز/u.test(s)
         ? UnitStatus.RESERVED
-        : s.includes("UNAV")
+        : /UNAV|غير\s*متاح/u.test(s)
           ? UnitStatus.UNAVAILABLE
+          : /CONTACT|تواصل/u.test(s) ? UnitStatus.CONTACT_SALES
           : UnitStatus.AVAILABLE;
   }
 
@@ -1481,6 +1705,7 @@ export class ImporterService {
         },
         { timeout: 120_000 },
       );
+      this.cache?.invalidateCustomerData();
       return { import: await this.get(id), result };
     } catch (error) {
       if (error instanceof ImportHttpException) {
@@ -1526,7 +1751,7 @@ export class ImporterService {
       ]);
       if (sourceUnits || sourcePlans)
         throw new ImportHttpException(HttpStatus.CONFLICT, "IMPORT_HAS_INVENTORY_PROVENANCE", "This import owns inventory records and requires safe rollback review.", "cleanup", id);
-      const analysis = (item.analysis ?? {}) as Analysis;
+      const analysis = (item.analysis ?? {}) as unknown as Analysis;
       let sourceObjectDeleted = false;
       let sourceObjectExclusive = false;
       if (item.fileUrl && analysis.fileKey) {

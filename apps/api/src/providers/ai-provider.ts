@@ -1,4 +1,22 @@
 export type AIMessage = { role: "user" | "assistant" | "system"; content: string };
+export type CustomerTurnIntent =
+  | "SMALL_TALK" | "PROPERTY_SEARCH" | "PROPERTY_REFINEMENT" | "PROPERTY_OPTIONS_REQUEST"
+  | "PROPERTY_DETAILS" | "PROJECT_DETAILS" | "DEVELOPER_DETAILS" | "INVENTORY_COUNT"
+  | "INVENTORY_AGGREGATION" | "PRICE_AGGREGATION" | "AREA_AGGREGATION"
+  | "UNIT_TYPE_AGGREGATION" | "MEDIA_REQUEST" | "BROCHURE_REQUEST" | "LOCATION_REQUEST"
+  | "DISTANCE_REQUEST" | "VIEWING_REQUEST" | "CONTACT_REQUEST" | "COMPARISON"
+  | "INVESTMENT" | "RESALE" | "RENTAL" | "PAYMENT_PLAN" | "AVAILABILITY_CHECK"
+  | "FOLLOW_UP_CONFIRMATION" | "UNKNOWN";
+export type PresentationState = {
+  searchCandidateIds?: string[];
+  selectedProjectId?: string;
+  selectedUnitId?: string;
+  presentedUnitIds?: string[];
+  lastPresentedUnitIds?: string[];
+  lastReferencedEntity?: { type: "PROJECT" | "UNIT"; id: string };
+  lastOfferedAction?: "PROPERTY_CARDS" | "PROJECT_BROCHURE" | "SEARCH_WIDEN" | "CONTACT_REQUEST";
+  awaitingConfirmation?: boolean;
+};
 export type StructuredIntent = {
   language: string;
   dialect?: "EGYPTIAN_ARABIC" | "MSA" | "ENGLISH" | "MIXED";
@@ -24,6 +42,12 @@ export type StructuredIntent = {
   contactName?: string;
   contactPhone?: string;
   budgetFlexible?: boolean;
+  priceTarget?: number;
+  priceMin?: number;
+  priceMax?: number;
+  budgetFlexibility?: "NONE" | "LOW" | "SOFT" | "HIGH";
+  explicitRejectedPriceMin?: number;
+  explicitRejectedPriceMax?: number;
   rejectedLocations?: string[];
   rejectedProjects?: string[];
   preferredDevelopers?: string[];
@@ -34,7 +58,10 @@ export type StructuredIntent = {
   builtUpAreaMax?: number;
   targetBuiltUpArea?: number;
   temporaryIntent?: "INVENTORY_AGGREGATION";
-  aggregationDimension?: "BUILT_UP_AREA" | "PRICE" | "LOCATION" | "PROJECT" | "DEVELOPER" | "UNIT_TYPE" | "DELIVERY_DATE" | "PAYMENT_DURATION" | "BEDROOM_COUNT";
+  aggregationDimension?: "COUNT" | "BUILT_UP_AREA" | "PRICE" | "LOCATION" | "PROJECT" | "DEVELOPER" | "UNIT_TYPE" | "DELIVERY_DATE" | "PAYMENT_DURATION" | "BEDROOM_COUNT";
+  turnIntent?: CustomerTurnIntent;
+  externalUnitId?: string;
+  presentation?: PresentationState;
   familyRequirements?: string[];
   investmentRequirements?: string[];
   customerConcerns?: string[];

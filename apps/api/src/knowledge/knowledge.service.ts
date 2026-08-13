@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { ApprovalStatus, DocumentType } from "@prisma/client";
 import mammoth from "mammoth";
@@ -12,6 +13,7 @@ import { PrismaService } from "../database/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AIProvider } from "../providers/ai-provider";
 import { decodeUtf8 } from "../text/unicode";
+import { ApplicationCache } from "../cache/application-cache";
 
 @Injectable()
 export class KnowledgeService {
@@ -19,6 +21,7 @@ export class KnowledgeService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     @Inject("AI_PROVIDER") private readonly ai: AIProvider,
+    @Optional() private readonly cache?: ApplicationCache,
   ) {}
   private json(value: unknown): any {
     return JSON.parse(JSON.stringify(value));
@@ -178,7 +181,7 @@ export class KnowledgeService {
     approvalStatus: ApprovalStatus | undefined,
     adminUserId: string,
   ) {
-    return this.prisma.projectKnowledgeItem.update({
+    const item = await this.prisma.projectKnowledgeItem.update({
       where: { id },
       data: {
         content,
@@ -188,6 +191,8 @@ export class KnowledgeService {
           : {}),
       },
     });
+    this.cache?.invalidateCustomerData();
+    return item;
   }
   async approve(id: string, adminUserId: string) {
     const knowledge = await this.prisma.projectKnowledge.update({
@@ -205,6 +210,7 @@ export class KnowledgeService {
         approvedAt: new Date(),
       },
     });
+    this.cache?.invalidateCustomerData();
     return knowledge;
   }
 }

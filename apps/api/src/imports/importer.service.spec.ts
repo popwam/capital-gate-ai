@@ -33,10 +33,20 @@ function fixture(options: { aiFails?: boolean; storageFails?: boolean; remembere
     project: { findUnique: async () => ({ id: "project-1", developerId: "developer-1", locationId: "location-1", developer: { slug: "developer-one" } }) },
     developer: { findUnique: async () => ({ id: "developer-1", slug: "developer-one" }) },
     location: { findUnique: async () => ({ id: "location-1" }) },
-    importMapping: { findMany: async () => options.rememberedMappings ?? [] },
-    importValueMapping: { findMany: async () => [] },
-    unit: { findMany: async () => [], count: async () => 0 },
-    paymentPlan: { count: async () => 0 },
+    importMapping: { findMany: async () => options.rememberedMappings ?? [], upsert: async () => ({}) },
+    importValueMapping: { findMany: async () => [], upsert: async () => ({}) },
+    unit: {
+      findMany: async () => [],
+      findUnique: async () => null,
+      findUniqueOrThrow: async ({ where }: any) => ({ id: where.id, externalUnitId: "READY-1", paymentPlans: [], offers: [] }),
+      create: async ({ data }: any) => ({ id: "unit-1", ...data }),
+      update: async ({ data }: any) => ({ id: "unit-1", ...data }),
+      count: async () => 0,
+    },
+    paymentPlan: { count: async () => 0, updateMany: async () => ({ count: 0 }), create: async () => ({}) },
+    offer: { updateMany: async () => ({ count: 0 }), create: async () => ({}) },
+    unitPriceHistory: { create: async () => ({}) },
+    importUnitChange: { create: async () => ({}) },
     media: { count: async () => 0 },
     document: { count: async () => 0 },
     dataImport: {
@@ -195,13 +205,98 @@ test("preview becomes ready only after blocking questions are resolved", async (
   const f = fixture({ aiFails: true });
   await f.service.analyze(
     file(workbookBuffer({ "Unit Number": "A-104", Currency: "EGP" })),
-    {},
+    { projectId: "project-1", developerId: "developer-1", locationId: "location-1" },
   );
   for (const issue of f.issues) issue.resolvedAt = new Date();
   const preview: any = await f.service.preview("import-1");
   assert.equal(preview.preview.canConfirm, true);
   assert.equal(preview.preview.valid, 1);
   assert.equal(f.record().status, "READY");
+});
+
+test("readiness counts only unresolved blocking issues and warnings never block preview", () => {
+  const f = fixture();
+  const readiness = (f.service as any).getImportReadiness({
+    status: "NEEDS_INPUT",
+    developerId: "developer-1",
+    projectId: "project-1",
+    preview: null,
+    analysis: {
+      selectedTable: { id: "table-1" },
+      mappings: { Unit: "externalUnitId", Currency: "currency" },
+      metadata: { locationId: "location-1" },
+      defaultValues: {},
+    },
+    issues: [
+      { severity: "BLOCKING", resolvedAt: null },
+      { severity: "BLOCKING", resolvedAt: new Date() },
+      { severity: "WARNING", resolvedAt: null },
+      { severity: "WARNING", resolvedAt: new Date() },
+      { severity: "INFO", resolvedAt: null },
+      { severity: "ERROR", resolvedAt: null, required: true },
+    ],
+  });
+  assert.equal(readiness.unresolvedBlockingCount, 2);
+  assert.equal(readiness.unresolvedWarningCount, 1);
+  assert.equal(readiness.canPreview, false);
+
+  const warningOnly = (f.service as any).getImportReadiness({
+    status: "NEEDS_INPUT",
+    developerId: "developer-1",
+    projectId: "project-1",
+    preview: null,
+    analysis: {
+      selectedTable: { id: "table-1" },
+      mappings: { Unit: "externalUnitId", Currency: "currency" },
+      metadata: { locationId: "location-1" },
+      defaultValues: {},
+    },
+    issues: [{ severity: "WARNING", resolvedAt: null }],
+  });
+  assert.equal(warningOnly.canPreview, true);
+  assert.equal(warningOnly.stage, "PREVIEW");
+});
+
+test("three persisted issue resolutions unlock preview and reload preserves the stage", async () => {
+  const f = fixture();
+  await f.service.analyze(
+    file(workbookBuffer({ "Unit Number": "READY-1", Currency: "EGP" })),
+    { projectId: "project-1", developerId: "developer-1", locationId: "location-1" },
+  );
+  f.issues.splice(0, f.issues.length,
+    ...["decision:a", "decision:b", "decision:c"].map((field, index) => ({
+      id: `blocking-${index}`,
+      importId: "import-1",
+      field,
+      severity: "BLOCKING",
+      resolvedAt: null,
+    })),
+  );
+  f.record().analysis.metadata = {
+    projectId: "project-1",
+    developerId: "developer-1",
+    locationId: "location-1",
+  };
+  f.record().projectId = "project-1";
+  f.record().developerId = "developer-1";
+
+  for (const [index, field] of ["decision:a", "decision:b", "decision:c"].entries()) {
+    const result: any = await f.service.resolve("import-1", field, "APPROVED");
+    assert.equal(result.workflow.unresolvedBlockingCount, 2 - index);
+    assert.equal(result.workflow.canPreview, index === 2);
+  }
+  const reloaded: any = await f.service.get("import-1");
+  assert.equal(reloaded.status, "READY");
+  assert.equal(reloaded.workflow.stage, "PREVIEW");
+  assert.equal(reloaded.workflow.previewExists, false);
+
+  const preview: any = await f.service.preview("import-1");
+  assert.equal(preview.workflow.canConfirm, true);
+  assert.equal(preview.workflow.stage, "IMPORT");
+
+  const confirmed: any = await f.service.confirm("import-1");
+  assert.equal(confirmed.import.status, "COMPLETED");
+  assert.equal(confirmed.import.workflow.stage, "COMPLETE");
 });
 
 test("real workbook shape produces typed selectors and an 8-year payment plan", async () => {

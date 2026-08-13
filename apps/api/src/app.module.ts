@@ -34,6 +34,7 @@ import {
 import { LeadCrmService } from "./admin/lead-crm.service";
 import { SystemController } from "./admin/system.controller";
 import { RealEstateController } from "./admin/real-estate.controller";
+import { ApplicationCache } from "./cache/application-cache";
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { RealEstateController } from "./admin/real-estate.controller";
     ConversationsService,
     DevicesService,
     PropertySearchService,
+    ApplicationCache,
     ImporterService,
     KnowledgeService,
     StorageService,

@@ -34,6 +34,7 @@ import { AdminAuthGuard } from "../auth/admin-auth.guard";
 import { PrismaService } from "../database/prisma.service";
 import { AuditService } from "../audit.service";
 import { StorageService } from "../storage/storage.service";
+import { ApplicationCache } from "../cache/application-cache";
 
 class DeveloperDto {
   @IsString() @MaxLength(160) name!: string;
@@ -160,6 +161,7 @@ export class CatalogController {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly storage: StorageService,
+    private readonly cache: ApplicationCache,
   ) {}
   @Get("developers") developers() {
     return this.prisma.developer.findMany({
@@ -180,6 +182,7 @@ export class CatalogController {
       "Developer",
       item.id,
     );
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Patch("developers/:id") async updateDeveloper(
@@ -198,6 +201,7 @@ export class CatalogController {
       id,
       body,
     );
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Get("projects") projects() {
@@ -239,6 +243,7 @@ export class CatalogController {
       "Project",
       item.id,
     );
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Patch("projects/:id") async updateProject(
@@ -257,6 +262,7 @@ export class CatalogController {
       id,
       body,
     );
+    this.cache.invalidateCustomerData();
     return item;
   }
 
@@ -360,6 +366,7 @@ export class CatalogController {
       priceChanged:
         body.price != null && String(prior.price ?? "") !== String(body.price),
     });
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Post("units/bulk") async bulkUnits(
@@ -407,6 +414,7 @@ export class CatalogController {
         undefined,
         { count: deleted.count },
       );
+      this.cache.invalidateCustomerData();
       return deleted;
     }
     const result = await this.prisma.unit.updateMany({
@@ -420,6 +428,7 @@ export class CatalogController {
       undefined,
       { action: body.action, count: result.count },
     );
+    this.cache.invalidateCustomerData();
     return result;
   }
 
@@ -437,6 +446,7 @@ export class CatalogController {
       "PaymentPlan",
       item.id,
     );
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Patch("payment-plans/:id") async updatePlan(
@@ -454,6 +464,7 @@ export class CatalogController {
       "PaymentPlan",
       id,
     );
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Delete("payment-plans/:id") async removePlan(
@@ -470,6 +481,7 @@ export class CatalogController {
       "PaymentPlan",
       id,
     );
+    this.cache.invalidateCustomerData();
     return { archived: true };
   }
   @Post("units/:id/offers") async offer(
@@ -486,16 +498,19 @@ export class CatalogController {
       },
     });
     await this.audit.record(req.admin.id, "OFFER_CREATED", "Offer", item.id);
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Patch("offers/:id") async updateOffer(@Param("id") id: string, @Body() body: UpdateOfferDto, @Req() req: any) {
     const item = await this.prisma.offer.update({ where: { id }, data: { ...body, startsAt: body.startsAt ? new Date(body.startsAt) : undefined, endsAt: body.endsAt ? new Date(body.endsAt) : undefined } });
     await this.audit.record(req.admin.id, "OFFER_UPDATED", "Offer", id);
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Delete("offers/:id") async removeOffer(@Param("id") id: string, @Req() req: any) {
     await this.prisma.offer.update({ where: { id }, data: { isActive: false } });
     await this.audit.record(req.admin.id, "OFFER_ARCHIVED", "Offer", id);
+    this.cache.invalidateCustomerData();
     return { archived: true };
   }
 
@@ -540,6 +555,7 @@ export class CatalogController {
       },
     });
     await this.audit.record(req.admin.id, "MEDIA_UPLOADED", "Media", item.id);
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Post("documents")
@@ -587,6 +603,7 @@ export class CatalogController {
       "Document",
       item.id,
     );
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Patch("media/:id") async updateMedia(@Param("id") id: string, @Body() body: UpdateMediaDto, @Req() req: any) {
@@ -596,16 +613,19 @@ export class CatalogController {
       return tx.media.update({ where: { id }, data: body });
     });
     await this.audit.record(req.admin.id, "MEDIA_UPDATED", "Media", id, { fields: Object.keys(body) });
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Delete("media/:id") async removeMedia(@Param("id") id: string, @Req() req: any) {
     await this.prisma.media.delete({ where: { id } });
     await this.audit.record(req.admin.id, "MEDIA_RECORD_DELETED", "Media", id, { storageObjectRetained: true });
+    this.cache.invalidateCustomerData();
     return { deleted: true, storageObjectRetained: true };
   }
   @Delete("documents/:id") async removeDocument(@Param("id") id: string, @Req() req: any) {
     await this.prisma.document.delete({ where: { id } });
     await this.audit.record(req.admin.id, "DOCUMENT_RECORD_DELETED", "Document", id, { storageObjectRetained: true });
+    this.cache.invalidateCustomerData();
     return { deleted: true, storageObjectRetained: true };
   }
 }

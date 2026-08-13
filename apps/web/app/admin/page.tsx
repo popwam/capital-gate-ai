@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { LogoMark } from "@/components/logo";
 import { adminApi, adminErrorMessage } from "@/lib/api";
+import { IMPORT_STEPS, importStepState, type ImportWorkflow } from "@/lib/import-workflow";
 
 type Issue = {
   id: string;
@@ -49,6 +50,7 @@ type ImportData = {
   preview?: any;
   issues: Issue[];
   project?: { id: string; name: string } | null;
+  workflow: ImportWorkflow;
 };
 type Location = {
   id: string;
@@ -99,8 +101,9 @@ export function ImportAssistant() {
   }, []);
   const issue = useMemo(
     () =>
-      item?.issues.find((i) => !i.resolvedAt && i.severity === "BLOCKING") ||
-      item?.issues.find((i) => !i.resolvedAt),
+      item?.issues.find(
+        (i) => !i.resolvedAt && (i.severity === "BLOCKING" || i.required === true),
+      ),
     [item],
   );
   async function upload(file?: File) {
@@ -152,6 +155,13 @@ export function ImportAssistant() {
     } finally {
       setLoading(false);
     }
+  }
+  async function chooseTable(sheetName: string, headerRow: number) {
+    if (!item) return;
+    setLoading(true); setError("");
+    try { setItem(await adminApi.post<ImportData>(`/imports/${item.id}/resolve`, { field: "workbook:selection", value: { sheetName, headerRow } })); }
+    catch (e) { setError(adminErrorMessage(e)); }
+    finally { setLoading(false); }
   }
   async function confirm() {
     if (!item) return;
@@ -271,7 +281,7 @@ export function ImportAssistant() {
             <EmptyUpload onClick={() => inputRef.current?.click()} />
           ) : (
             <>
-              <StepBar status={item.status} />
+              <StepBar workflow={item.workflow} />
               <div className="mt-5 grid gap-5 xl:grid-cols-[1fr_325px]">
                 <section className="flex min-h-[560px] flex-col overflow-hidden rounded-[22px] border border-[#dedfd9] bg-white shadow-[0_8px_30px_rgba(28,45,39,.05)]">
                   <div className="flex items-center justify-between border-b border-[#e5e6e1] px-5 py-4">
@@ -297,6 +307,7 @@ export function ImportAssistant() {
                       <Assistant
                         text={`وجدت ${item.rowsDetected} صفاً في «${item.analysis?.sheetName || "الملف"}». تم التعرف على ${Object.keys(item.analysis?.mappings || {}).length} أعمدة، وسأطلب منك فقط القرارات التي تحتاج مراجعة.`}
                       />
+                      <WorkbookReview item={item} chooseTable={chooseTable} loading={loading}/>
                       <MappingReview item={item} />
                       {issue ? (
                         <>
@@ -311,11 +322,11 @@ export function ImportAssistant() {
                             loading={loading}
                           />
                         </>
-                      ) : item.status === "COMPLETED" ? (
+                      ) : item.workflow.stage === "COMPLETE" ? (
                         <Assistant
                           text={`Import complete. ${item.rowsCreated} units were created, ${item.rowsUpdated} updated and ${item.rowsRejected} rejected. No data was inserted before confirmation.`}
                         />
-                      ) : (
+                      ) : item.workflow.canPreview && !item.workflow.previewExists ? (
                         <>
                           <Assistant text="تم حل كل الأسئلة المطلوبة. أنشئ المعاينة النهائية قبل تأكيد الاستيراد." />
                           <button
@@ -326,10 +337,10 @@ export function ImportAssistant() {
                             إنشاء المعاينة
                           </button>
                         </>
-                      )}
+                      ) : null}
                     </div>
                   </div>
-                  {item.preview?.canConfirm && item.status !== "COMPLETED" && (
+                  {item.workflow.canConfirm && item.workflow.stage !== "COMPLETE" && (
                     <div className="border-t bg-[#fbfaf7] p-4">
                       <div className="mx-auto mb-3 grid max-w-[680px] gap-2 rounded-2xl border bg-white p-4 text-[14px] sm:grid-cols-2" dir="rtl"><p><b>{item.preview.valid}</b> وحدة جاهزة للاستيراد</p><p>المشروع: <b>{item.preview.project || item.project?.name || "—"}</b></p><p>المطور: <b>{item.preview.developer || "—"}</b></p><p>العملة: <b>{item.preview.currency || "—"}</b></p><p>وحدات جديدة: <b>{item.preview.newUnits}</b></p><p>خطط سداد: <b>{item.preview.paymentPlanCount || 0}</b>{item.preview.paymentPlanDurations?.length ? ` — ${item.preview.paymentPlanDurations.join("، ")} شهر` : ""}</p><p>أخطاء: <b>{item.preview.invalidRows || 0}</b></p></div>
                       {item.preview.removedUnits > 0 && <div className="mx-auto mb-3 max-w-[680px] rounded-xl border bg-white p-3 text-[13px]"><p className="font-bold">{item.preview.removedUnits} وحدة غير موجودة في الملف الجديد. اختر السياسة قبل التأكيد:</p><div className="mt-2 flex flex-wrap gap-2">{[["LEAVE_UNCHANGED","اتركها بدون تغيير"],["MARK_UNAVAILABLE","علّمها غير متاحة"],["ARCHIVE","أرشفها"]].map(([value,label])=><button key={value} onClick={()=>missingPolicy(value)} className={`rounded-lg border px-3 py-2 ${item.preview.missingUnitPolicy===value?"bg-forest text-white":""}`}>{label}</button>)}</div></div>}
@@ -523,9 +534,11 @@ function Answer({
     </div>;
   }
   if (inputType === "CURRENCY_SELECT") return <TypedSelect value={value} setValue={setValue} submit={submit} placeholder="اختر العملة" options={[['EGP','EGP — جنيه مصري'],['USD','USD — دولار أمريكي'],['EUR','EUR — يورو'],['AED','AED — درهم إماراتي'],['SAR','SAR — ريال سعودي'],['GBP','GBP — جنيه إسترليني']]} />;
+  if (inputType === "WORKBOOK_TABLE_SELECT") return <WorkbookTableAnswer issue={issue} submit={submit} loading={loading}/>;
   if (inputType === "CANONICAL_FIELD_SELECT") {
     const sourceHeaders = issue.options?.sourceHeaders as string[] | undefined;
     const fields = issue.options?.fields as Array<{ value: string; group: string; labelAr: string; labelEn: string }> | undefined;
+    if (Boolean(sourceHeaders)) return <ColumnPicker columns={issue.options?.detectedColumns || (sourceHeaders ?? []).map((header: string) => ({ key: header, originalHeader: header, samples: [] }))} submit={submit}/>;
     if (sourceHeaders) return <TypedSelect value={value} setValue={setValue} submit={submit} placeholder="اختر عمود كود الوحدة" options={sourceHeaders.map((header) => [header, header])} />;
     const selected = value || issue.options?.suggestedValue || "";
     return <div className="ms-0 space-y-2 sm:ms-11"><select value={selected} onChange={(event) => setValue(event.target.value)} className="h-12 w-full rounded-xl border bg-white px-3 text-[16px]"><option value="">اختر معنى العمود</option>{[...new Set((fields || []).map((field) => field.group))].map((group) => <optgroup key={group} label={group}>{(fields || []).filter((field) => field.group === group).map((field) => <option key={field.value} value={field.value}>{field.labelAr} — {field.labelEn}</option>)}</optgroup>)}<optgroup label="معلومات إضافية"><option value="METADATA">الاحتفاظ كمعلومة إضافية</option><option value="IGNORE">تجاهل هذا العمود</option></optgroup></select><button disabled={!selected || loading} onClick={() => submit(selected)} className="rounded-xl bg-forest px-4 py-3 text-[14px] font-bold text-white disabled:opacity-40">تأكيد المعنى</button></div>;
@@ -580,6 +593,33 @@ function Answer({
     </div>
   );
 }
+type DetectedColumnOption = { key: string; originalHeader: string; normalizedHeader?: string; samples?: unknown[]; confidence?: number };
+function ColumnPicker({ columns, submit }: { columns: DetectedColumnOption[]; submit: (value?: any) => void }) {
+  const [search, setSearch] = useState("");
+  const filtered = columns.filter((column) => column.originalHeader.toLowerCase().includes(search.toLowerCase()));
+  return <div className="ms-0 space-y-2 sm:ms-11" dir="rtl">
+    <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ابحث في الأعمدة الصالحة" className="h-11 w-full rounded-xl border bg-white px-3 text-[15px] outline-none focus:border-forest"/>
+    <div className="max-h-72 space-y-2 overflow-y-auto rounded-2xl border bg-white p-2">{filtered.map((column) => <button key={column.key} onClick={() => submit(column.key)} className="block w-full rounded-xl border px-3 py-3 text-start hover:border-forest hover:bg-[#f4f8f6]">
+      <span className="block text-[14px] font-bold" dir="auto">{column.originalHeader}</span>
+      {!!column.samples?.length && <span className="mt-1 block truncate text-[12px] text-[#718078]" dir="auto">Samples: {column.samples.map(String).join(" · ")}</span>}
+    </button>)}{!filtered.length && <p className="p-4 text-center text-[13px] text-[#718078]">لا توجد أعمدة مطابقة.</p>}</div>
+  </div>;
+}
+function WorkbookTableAnswer({ issue, submit, loading }: { issue: Issue; submit: (value?: any) => void; loading: boolean }) {
+  const sheets = (issue.options?.sheets || []) as Array<any>;
+  const initial = issue.options?.selectedSheet || sheets.find((sheet) => sheet.classification === "INVENTORY")?.name || sheets[0]?.name || "";
+  const [sheetName, setSheetName] = useState(initial);
+  const sheet = sheets.find((entry) => entry.name === sheetName);
+  const suggested = issue.options?.selectedHeaderRow || sheet?.candidateTables?.[0]?.headerRow || sheet?.headerCandidates?.[0]?.row || 1;
+  const [headerRow, setHeaderRow] = useState(String(suggested));
+  useEffect(() => { const next = sheets.find((entry) => entry.name === sheetName); setHeaderRow(String(next?.candidateTables?.[0]?.headerRow || next?.headerCandidates?.[0]?.row || 1)); }, [sheetName, sheets]);
+  const rawRows = (sheet?.rawPreview || []).filter((row:any) => Math.abs(row.row - Number(headerRow)) <= 2);
+  return <div className="ms-0 space-y-4 rounded-2xl border bg-white p-4 sm:ms-11" dir="rtl">
+    <div className="grid gap-3 sm:grid-cols-2"><label className="text-[13px] font-bold">الصفحة<select value={sheetName} onChange={(event) => setSheetName(event.target.value)} className="mt-1 h-11 w-full rounded-xl border px-3 text-[15px]">{sheets.map((entry) => <option key={entry.name} value={entry.name}>{entry.name} — {entry.classification} ({entry.confidence}%)</option>)}</select></label><label className="text-[13px] font-bold">صف العناوين<input type="number" min={1} max={sheet?.rowCount || 10000} value={headerRow} onChange={(event) => setHeaderRow(event.target.value)} className="mt-1 h-11 w-full rounded-xl border px-3 text-[15px]"/></label></div>
+    <div className="overflow-x-auto rounded-xl bg-[#f7f6f2] p-3"><p className="mb-2 text-[12px] font-bold">معاينة المصدر الخام</p>{rawRows.map((row:any) => <div key={row.row} className={`mb-1 flex min-w-max gap-2 rounded-lg px-2 py-1.5 text-[12px] ${row.row === Number(headerRow) ? "bg-[#dcece4] ring-1 ring-forest" : "bg-white"}`}><b className="w-14 shrink-0">Row {row.row}</b>{row.cells.map((cell:unknown,index:number) => <span key={index} className="max-w-44 truncate border-s ps-2" dir="auto">{cell == null ? "—" : String(cell)}</span>)}</div>)}</div>
+    <button disabled={loading || !sheetName || Number(headerRow) < 1} onClick={() => submit({ sheetName, headerRow: Number(headerRow) })} className="rounded-xl bg-forest px-4 py-3 text-[14px] font-bold text-white disabled:opacity-40">اعتماد الجدول وصف العناوين</button>
+  </div>;
+}
 function TypedSelect({ value, setValue, submit, placeholder, options }: { value: string; setValue: (value: string) => void; submit: (value?: any) => void; placeholder: string; options: Array<[string, string]> }) {
   return <div className="ms-0 sm:ms-11" dir="rtl"><select value={value} onChange={(event) => { setValue(event.target.value); if (event.target.value) submit(event.target.value); }} className="h-12 w-full rounded-xl border bg-white px-3 text-[16px]"><option value="">{placeholder}</option>{options.map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></div>;
 }
@@ -595,27 +635,27 @@ function PaymentPlanAnswer({ issue, submit }: { issue: Issue; submit: (value?: a
     <button onClick={() => submit({ durationMonths: durationMonths ? Number(durationMonths) : undefined, valueType, currency })} className="rounded-xl bg-forest px-4 py-3 text-[14px] font-bold text-white">اعتماد خطة السداد</button>
   </div>;
 }
-function StepBar({ status }: { status: string }) {
-  const active = status === "COMPLETED" ? 4 : status === "READY" ? 3 : 2;
+function StepBar({ workflow }: { workflow: ImportWorkflow }) {
   return (
     <div className="overflow-x-auto rounded-2xl border bg-white px-4 py-3">
-      <div className="flex min-w-[560px] items-center">
-        {["Upload", "Analyze", "Resolve", "Preview", "Import"].map((s, i) => (
-          <div key={s} className="flex flex-1 items-center last:flex-none">
+      <ol className="flex min-w-[560px] items-center" dir="ltr" aria-label="Import progress">
+        {IMPORT_STEPS.map((s, i) => {
+          const state = importStepState(workflow, i);
+          return <li key={s} className="flex flex-1 items-center last:flex-none" aria-current={state.active ? "step" : undefined}>
             <span
-              className={`grid h-6 w-6 place-items-center rounded-full text-[8px] font-bold ${i < active ? "bg-forest text-white" : i === active ? "border-2 border-coral text-coral" : "bg-[#eee] text-[#999]"}`}
+              className={`grid h-6 min-w-6 place-items-center rounded-full px-1 text-[8px] font-bold ${state.complete ? "bg-forest text-white" : state.active ? "border-2 border-coral text-coral" : "bg-[#eee] text-[#999]"}`}
             >
-              {i < active ? <Check size={11} /> : i + 1}
+              {state.complete ? <Check size={11} /> : state.count > 0 ? state.count : i + 1}
             </span>
             <span className="ml-2 text-[8px] font-bold">{s}</span>
             {i < 4 && (
               <div
-                className={`mx-3 h-px flex-1 ${i < active ? "bg-forest" : "bg-[#ddd]"}`}
+                className={`mx-3 h-px flex-1 ${state.complete ? "bg-forest" : "bg-[#ddd]"}`}
               />
             )}
-          </div>
-        ))}
-      </div>
+          </li>;
+        })}
+      </ol>
     </div>
   );
 }
@@ -637,6 +677,14 @@ function Analysis({ item }: { item: ImportData }) {
       </div>
     </div>
   );
+}
+function WorkbookReview({ item, chooseTable, loading }: { item: ImportData; chooseTable: (sheetName: string, headerRow: number) => void; loading: boolean }) {
+  const analysis = item.analysis?.workbookAnalysis;
+  const selected = item.analysis?.selectedTable;
+  const [manualSheet, setManualSheet] = useState(analysis?.selectedSheet || analysis?.sheets?.[0]?.name || "");
+  const [manualHeader, setManualHeader] = useState(String(selected?.headerRow || 1));
+  if (!analysis?.sheets?.length) return null;
+  return <details open className="rounded-2xl border bg-white p-4" dir="rtl"><summary className="cursor-pointer text-[14px] font-bold">تحليل صفحات الملف — {analysis.sheets.length} صفحات</summary><div className="mt-3 grid gap-3 sm:grid-cols-2">{analysis.sheets.map((sheet:any) => <div key={sheet.name} className={`rounded-xl border p-3 ${analysis.selectedSheet === sheet.name ? "border-forest bg-[#f0f7f3]" : "bg-[#fbfaf7]"}`}><div className="flex items-start justify-between gap-2"><div><p className="font-bold" dir="auto">{sheet.name}</p><p className="mt-1 text-[12px] text-[#68756f]">{sheet.rowCount} rows · {sheet.columnCount} columns</p></div><span className="rounded-full bg-white px-2 py-1 text-[11px] font-bold">{sheet.classification} · {sheet.confidence}%</span></div>{sheet.candidateTables?.[0] && <><p className="mt-2 text-[12px]">Header row {sheet.candidateTables[0].headerRow} · Data rows {sheet.candidateTables[0].dataRowCount}</p><button disabled={loading || analysis.selectedTableId === sheet.candidateTables[0].id} onClick={() => chooseTable(sheet.name, sheet.candidateTables[0].headerRow)} className="mt-2 rounded-lg border px-3 py-2 text-[12px] font-bold disabled:opacity-40">{analysis.selectedTableId === sheet.candidateTables[0].id ? "Selected" : "Use this table"}</button></>}{!sheet.candidateTables?.length && <p className="mt-2 text-[12px] text-[#8f5b35]">No tabular region detected · ignored by default</p>}</div>)}</div><div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl border border-dashed p-3"><label className="text-[12px] font-bold">Manual sheet<select value={manualSheet} onChange={(event) => setManualSheet(event.target.value)} className="mt-1 block h-10 rounded-lg border px-2 text-[14px]">{analysis.sheets.map((sheet:any) => <option key={sheet.name}>{sheet.name}</option>)}</select></label><label className="text-[12px] font-bold">Header row<input value={manualHeader} onChange={(event) => setManualHeader(event.target.value)} type="number" min={1} className="mt-1 block h-10 w-28 rounded-lg border px-2 text-[14px]"/></label><button disabled={loading || !manualSheet || Number(manualHeader) < 1} onClick={() => chooseTable(manualSheet, Number(manualHeader))} className="h-10 rounded-lg bg-forest px-3 text-[12px] font-bold text-white disabled:opacity-40">Apply manual header</button></div>{selected && <div className="mt-4 overflow-x-auto rounded-xl border bg-[#f7f6f2] p-3"><p className="text-[13px] font-bold">Detected table: rows {selected.startRow} → {selected.endRow} · header row {selected.headerRow} · confidence {selected.confidence}%</p><p className="mt-1 text-[11px] text-[#68756f]">Ignored above: {selected.ignoredRowsAbove} · ignored below: {selected.ignoredRowsBelow}</p><table className="mt-3 min-w-full text-[12px]"><thead><tr>{selected.columns.map((column:any) => <th key={column.key} className="whitespace-nowrap border p-2 text-start" dir="auto">{column.originalHeader}</th>)}</tr></thead><tbody>{selected.previewRows?.slice(0,5).map((row:any,index:number) => <tr key={index}>{selected.columns.map((column:any) => <td key={column.key} className="max-w-48 truncate border p-2" dir="auto">{row[column.key] == null ? "—" : String(row[column.key])}</td>)}</tr>)}</tbody></table></div>}</details>;
 }
 function MappingReview({ item }: { item: ImportData }) {
   const fieldOptions = item.issues.flatMap((entry) => entry.options?.fields || []) as Array<{ value: string; labelAr: string; labelEn: string }>;
