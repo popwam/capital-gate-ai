@@ -1,7 +1,6 @@
 "use client";
 import { FormEvent, useEffect, useState } from "react";
 import { BookOpen, Building2, MapPin, Plus } from "lucide-react";
-import { AdminSectionNav } from "@/components/admin-section-nav";
 import { adminApi, adminErrorMessage } from "@/lib/api";
 type Developer = {
   id: string;
@@ -87,7 +86,6 @@ export default function Projects() {
           </p>
         </div>
       </header>
-      <AdminSectionNav active="المطورون والمشروعات" />
       <section className="mx-auto max-w-7xl p-5 sm:p-8">
         {error && (
           <div className="mb-4 rounded-xl bg-red-50 p-4 text-red-800">

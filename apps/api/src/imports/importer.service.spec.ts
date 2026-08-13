@@ -25,7 +25,7 @@ function file(buffer: Buffer, name = "inventory.xlsx"): Express.Multer.File {
   } as Express.Multer.File;
 }
 
-function fixture(options: { aiFails?: boolean; storageFails?: boolean } = {}) {
+function fixture(options: { aiFails?: boolean; storageFails?: boolean; rememberedMappings?: any[] } = {}) {
   const events: string[] = [];
   const issues: any[] = [];
   let record: any;
@@ -33,7 +33,7 @@ function fixture(options: { aiFails?: boolean; storageFails?: boolean } = {}) {
     project: { findUnique: async () => ({ id: "project-1", developerId: "developer-1", locationId: "location-1", developer: { slug: "developer-one" } }) },
     developer: { findUnique: async () => ({ id: "developer-1", slug: "developer-one" }) },
     location: { findUnique: async () => ({ id: "location-1" }) },
-    importMapping: { findMany: async () => [] },
+    importMapping: { findMany: async () => options.rememberedMappings ?? [] },
     importValueMapping: { findMany: async () => [] },
     unit: { findMany: async () => [] },
     dataImport: {
@@ -143,6 +143,13 @@ test("multiple worksheets select the first usable inventory sheet", async () => 
   assert.equal(result.rowsDetected, 1);
 });
 
+test("Admin-approved memory auto-applies the same critical mapping without asking again", async () => {
+  const f = fixture({ rememberedMappings: [{ developerSlug: "developer-one", normalizedColumn: "properties standard unit price", canonicalField: "price", approved: true }] });
+  const result: any = await f.service.analyze(file(workbookBuffer({ "Unit Number": "A-102M", "Properties Standard Unit Price": 9_000_000, Currency: "EGP" })), { projectId: "project-1" });
+  assert.equal(result.analysis.mappingSources["Properties Standard Unit Price"], "ADMIN_APPROVED_MEMORY");
+  assert.equal(result.issues.some((issue: any) => issue.field === "column:Properties Standard Unit Price"), false);
+});
+
 test("empty workbook returns a structured 422 validation error", async () => {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([]), "Empty");
@@ -209,6 +216,12 @@ test("real workbook shape produces typed selectors and an 8-year payment plan", 
   assert.equal(result.analysis.mappings["Properties Standard Unit Price"], "price");
   assert.equal(result.analysis.mappings["Properties Total Gross Area"], "builtUpArea");
   assert.equal(result.analysis.paymentPlanMappings["Properties Unit Price 8 Y"].durationMonths, 96);
+  for (const column of ["Properties Unit no.", "Properties Delivery Date", "Properties Standard Unit Price", "Properties Finishing", "Properties Total Gross Area"]) {
+    const confirmation = result.issues.find((issue: any) => issue.field === `column:${column}`);
+    assert.equal(confirmation?.inputType, "CANONICAL_FIELD_SELECT", column);
+    assert.equal(confirmation?.options?.suggestedValue, result.analysis.mappings[column], column);
+    assert.equal(confirmation?.required, true, column);
+  }
   assert.equal(result.issues.find((issue: any) => issue.field === "projectId")?.inputType, "PROJECT_SELECT");
   assert.equal(result.issues.find((issue: any) => issue.field === "developerId")?.inputType, "DEVELOPER_SELECT");
   assert.equal(result.issues.find((issue: any) => issue.field === "locationId")?.inputType, "LOCATION_SELECT");
@@ -245,6 +258,8 @@ test("selecting a newly created project returns to the same import and resolves 
 test("preview and confirm share typed normalization and reject an invalid date before writes", async () => {
   const f = fixture();
   const uploaded: any = await f.service.analyze(file(workbookBuffer({ "Unit Number": "BAD-DATE", Currency: "EGP", "Delivery Date": "31-02-2027" })), { projectId: "project-1", developerId: "developer-1", locationId: "location-1" });
+  for (const mappingIssue of uploaded.issues.filter((issue: any) => issue.field?.startsWith("column:") && issue.options?.suggestedValue))
+    await f.service.resolve(uploaded.id, mappingIssue.field, mappingIssue.options.suggestedValue);
   const preview: any = await f.service.preview(uploaded.id);
   assert.equal(preview.preview.invalidRows, 1);
   assert.equal(preview.preview.canConfirm, false);

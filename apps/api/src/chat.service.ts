@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import {
   ApprovalStatus,
   DocumentType,
@@ -39,6 +39,7 @@ type Prepared = {
   payload: MessagePayload;
   userMessages: AIMessage[];
   unitIds: string[];
+  trace: Record<string, unknown>;
 };
 export function leadPersistenceAction(
   existingLeadId: string | undefined,
@@ -52,6 +53,7 @@ export function leadPersistenceAction(
 
 @Injectable()
 export class ChatService {
+  private readonly logger = new Logger(ChatService.name);
   constructor(
     @Inject("AI_PROVIDER") private readonly ai: AIProvider,
     private readonly prisma: PrismaService,
@@ -68,7 +70,9 @@ export class ChatService {
     conversationId: string,
     rawToken: string,
     content: string,
+    requestId = "unknown",
   ): Promise<Prepared> {
+    const startedAt = Date.now();
     const { conversation } = await this.conversations.assertOwned(
       conversationId,
       rawToken,
@@ -92,7 +96,17 @@ export class ChatService {
       (existingState?.searchContext as StructuredIntent | null) ?? {
         language: conversation.detectedLanguage ?? "ar-EG",
       };
-    const state = await this.ai.extractIntent(messages, previous);
+    const state = await this.ai.extractIntent(messages, previous, { requestId, conversationId });
+    const trace: Record<string, unknown> = {
+      requestId,
+      conversationId,
+      inputLanguage: state.language,
+      extractedIntent: state.temporaryIntent ?? "PROPERTY_SEARCH",
+      aggregationDimension: state.aggregationDimension ?? null,
+      previousConversationState: this.safeTraceState(previous),
+      newConversationState: this.safeTraceState(state),
+      extractionDegraded: Boolean(state.extractionDegraded),
+    };
     let properties: any[] = [];
     let payload: MessagePayload = { type: "text" };
     let verifiedFacts: unknown[] = [];
@@ -149,6 +163,12 @@ export class ChatService {
         payload = { type: "map", map: this.serialize(map) };
         verifiedFacts = map ? [map] : [];
       }
+    } else if (state.temporaryIntent === "INVENTORY_AGGREGATION" && state.aggregationDimension) {
+      const aggregate = await this.search.aggregateInventory(state);
+      verifiedFacts = [this.serialize(aggregate)];
+      trace.searchOperation = `AGGREGATE_${state.aggregationDimension}`;
+      trace.databaseResultCount = aggregate.count;
+      trace.aggregateQuery = { dimension: state.aggregationDimension };
     } else {
       properties = await this.search.searchProperties(state);
       verifiedFacts = this.serialize(properties);
@@ -180,6 +200,9 @@ export class ChatService {
         });
       }
     }
+    trace.normalizedSearchFilters = await this.search.normalizedSearchFilters(state);
+    trace.searchOperation ??= "SEARCH_PROPERTIES";
+    trace.databaseResultCount ??= properties.length;
 
     if (
       state.exactRouteRequested &&
@@ -255,6 +278,8 @@ export class ChatService {
           properties,
           verifiedFacts,
           approvedKnowledge,
+          trace,
+          startedAt,
         );
       const interestedUnits = [...new Set([...priorUnitIds, ...unitIds])];
       const interestedProjects = interestedUnits.length
@@ -339,6 +364,8 @@ export class ChatService {
       properties,
       verifiedFacts,
       approvedKnowledge,
+      trace,
+      startedAt,
     );
   }
 
@@ -351,6 +378,8 @@ export class ChatService {
     properties: any[],
     verifiedFacts: unknown[],
     approvedKnowledge: unknown[],
+    trace: Record<string, unknown>,
+    startedAt: number,
   ): Promise<Prepared> {
     const unitIds = properties.map((property) => property.id);
     await this.prisma.$transaction([
@@ -385,33 +414,52 @@ export class ChatService {
         intent: state,
         verifiedFacts,
         approvedKnowledge,
+        requestId: String(trace.requestId ?? "unknown"),
+        conversationId,
       },
       state,
       payload,
       userMessages: messages,
       unitIds,
+      trace: { ...trace, latencyMs: Date.now() - startedAt },
     };
   }
 
-  async send(conversationId: string, rawToken: string, content: string) {
-    const prepared = await this.prepare(conversationId, rawToken, content);
+  async send(conversationId: string, rawToken: string, content: string, requestId = "unknown") {
+    const prepared = await this.prepare(conversationId, rawToken, content, requestId);
     const answer = await this.ai.composeAnswer(prepared.answerInput);
     const message = await this.persistAssistant(prepared, answer);
+    this.logTrace(prepared, { finalResponseProvider: "HYBRID", completed: true });
     return { message, state: prepared.state, ...prepared.payload };
   }
 
-  async *stream(conversationId: string, rawToken: string, content: string) {
-    const prepared = await this.prepare(conversationId, rawToken, content);
+  async *stream(conversationId: string, rawToken: string, content: string, requestId = "unknown") {
+    const prepared = await this.prepare(conversationId, rawToken, content, requestId);
     let answer = "";
-    for await (const chunk of this.ai.streamAnswer(prepared.answerInput)) {
-      answer += chunk;
-      yield { event: "token", data: { text: chunk } };
+    try {
+      for await (const chunk of this.ai.streamAnswer(prepared.answerInput)) {
+        answer += chunk;
+        yield { event: "token", data: { text: chunk } };
+      }
+      const message = await this.persistAssistant(prepared, answer);
+      this.logTrace(prepared, { finalResponseProvider: "HYBRID_STREAM", completed: true });
+      yield { event: "complete", data: { message, state: prepared.state, ...prepared.payload } };
+    } catch (error) {
+      this.logTrace(prepared, { finalResponseProvider: "HYBRID_STREAM", completed: false, errorCategory: this.errorCategory(error) });
+      throw error;
     }
-    const message = await this.persistAssistant(prepared, answer);
-    yield {
-      event: "complete",
-      data: { message, state: prepared.state, ...prepared.payload },
-    };
+  }
+
+  private safeTraceState(state: StructuredIntent) {
+    const { contactName: _contactName, contactPhone: _contactPhone, ...safe } = state;
+    return safe;
+  }
+  private errorCategory(error: unknown) {
+    const response = typeof (error as any)?.getResponse === "function" ? (error as any).getResponse() : undefined;
+    return response?.category ?? response?.code ?? (error as any)?.code ?? "UNKNOWN";
+  }
+  private logTrace(prepared: Prepared, completion: Record<string, unknown>) {
+    this.logger.log(`CustomerTurnTrace ${JSON.stringify({ ...prepared.trace, ...completion })}`);
   }
 
   private persistAssistant(prepared: Prepared, answer: string) {

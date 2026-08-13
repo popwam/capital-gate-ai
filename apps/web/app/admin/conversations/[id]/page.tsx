@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
 import { ArrowLeft, Bot, UserRound } from "lucide-react";
-import { AdminSectionNav } from "@/components/admin-section-nav";
 import { LogoMark } from "@/components/logo";
 import { adminApi } from "@/lib/api";
 export default function ConversationDetail({
@@ -36,7 +35,6 @@ export default function ConversationDetail({
           <ArrowLeft size={13} /> Conversations
         </a>
       </header>
-      <AdminSectionNav active="المحادثات" />
       <div className="mx-auto max-w-4xl p-5 sm:p-8">
         <p className="text-[9px] font-bold uppercase tracking-[.15em] text-coral">
           Conversation context

@@ -30,15 +30,21 @@ export type StructuredIntent = {
   preferredProjects?: string[];
   minimumArea?: number;
   maximumArea?: number;
+  builtUpAreaMin?: number;
+  builtUpAreaMax?: number;
+  targetBuiltUpArea?: number;
+  temporaryIntent?: "INVENTORY_AGGREGATION";
+  aggregationDimension?: "BUILT_UP_AREA" | "PRICE" | "LOCATION" | "PROJECT" | "DEVELOPER" | "UNIT_TYPE" | "DELIVERY_DATE" | "PAYMENT_DURATION" | "BEDROOM_COUNT";
   familyRequirements?: string[];
   investmentRequirements?: string[];
   customerConcerns?: string[];
   extractionDegraded?: boolean;
 };
-export type AnswerInput = { messages: AIMessage[]; intent: StructuredIntent; verifiedFacts: unknown[]; approvedKnowledge?: unknown[] };
+export type AnswerInput = { messages: AIMessage[]; intent: StructuredIntent; verifiedFacts: unknown[]; approvedKnowledge?: unknown[]; requestId?: string; conversationId?: string };
 export type AIHealth = { provider: string; configured: boolean; healthy: boolean; model: string | null; errorCode?: string };
+export type AITraceContext = { requestId?: string; conversationId?: string };
 export interface AIProvider {
-  extractIntent(messages: AIMessage[], previous: StructuredIntent): Promise<StructuredIntent>;
+  extractIntent(messages: AIMessage[], previous: StructuredIntent, context?: AITraceContext): Promise<StructuredIntent>;
   composeAnswer(input: AnswerInput): Promise<string>;
   streamAnswer(input: AnswerInput): AsyncIterable<string>;
   extractKnowledge(sourceText: string): Promise<Record<string, unknown>>;

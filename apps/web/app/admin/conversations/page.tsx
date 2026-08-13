@@ -1,7 +1,6 @@
 "use client";
 import { FormEvent, useEffect, useState } from "react";
 import { ArrowLeft, MessageSquareText, Search } from "lucide-react";
-import { AdminSectionNav } from "@/components/admin-section-nav";
 import { LogoMark } from "@/components/logo";
 import { adminApi } from "@/lib/api";
 type Item = {
@@ -52,7 +51,6 @@ export default function Conversations() {
           <ArrowLeft size={13} /> Admin overview
         </a>
       </header>
-      <AdminSectionNav active="المحادثات" />
       <div className="mx-auto max-w-5xl p-5 sm:p-8">
         <p className="text-[9px] font-bold uppercase tracking-[.15em] text-coral">
           Read-only context

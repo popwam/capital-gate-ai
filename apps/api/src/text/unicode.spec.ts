@@ -61,3 +61,16 @@ test("SSE declares UTF-8 and streams Arabic without corruption", async () => {
   assert.match(wireText, new RegExp(arabic));
   assert.match(wireText, new RegExp(mixed));
 });
+
+test("a provider failure after HTTP 200 emits a valid error event with request ID", async () => {
+  const chunks: string[] = [];
+  const response: any = { status: () => response, setHeader: () => undefined, flushHeaders: () => undefined, write: (chunk: string) => chunks.push(chunk), end: () => undefined };
+  const chat: any = { async *stream() { yield { event: "token", data: { text: "جزء" } }; const error: any = new Error("upstream failed"); error.code = "OPENAI_FALLBACK"; throw error; } };
+  const controller = new ConversationsController({} as any, chat);
+  await controller.stream("conversation-1", "a-valid-device-token-123", { content: arabic }, response, { requestId: "request-safe-1" });
+  const wire = chunks.join("");
+  assert.match(wire, /event: token/);
+  assert.match(wire, /event: error/);
+  assert.match(wire, /request-safe-1/);
+  assert.doesNotMatch(wire, /upstream failed/);
+});

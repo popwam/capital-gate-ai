@@ -3,7 +3,6 @@ import { FormEvent, useEffect, useState } from "react";
 import { ArrowLeft, MapPin, Plus, Route, Tags } from "lucide-react";
 import { adminApi } from "@/lib/api";
 import { LogoMark } from "@/components/logo";
-import { AdminSectionNav } from "@/components/admin-section-nav";
 
 type Location = {
   id: string;
@@ -117,7 +116,6 @@ export default function LocationsPage() {
           <ArrowLeft size={14} /> مساحة الاستيراد
         </a>
       </header>
-      <AdminSectionNav active="المناطق" />
       <div className="mx-auto max-w-6xl p-5 sm:p-8">
         <div className="mb-6">
           <p className="text-[9px] font-bold uppercase tracking-[.15em] text-coral">

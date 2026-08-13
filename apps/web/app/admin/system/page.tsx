@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Activity, CheckCircle2, XCircle } from "lucide-react";
-import { AdminSectionNav } from "@/components/admin-section-nav";
 import { adminApi, adminErrorMessage } from "@/lib/api";
 type Health = {
   provider: string;
@@ -47,7 +46,6 @@ export default function SystemPage() {
           </p>
         </div>
       </header>
-      <AdminSectionNav active="حالة النظام" />
       <section className="mx-auto max-w-6xl p-5">
         {error && (
           <div className="rounded-xl bg-red-50 p-4 text-red-800">{error}</div>

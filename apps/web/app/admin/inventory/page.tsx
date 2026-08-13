@@ -1,7 +1,6 @@
 "use client";
 import { FormEvent, useEffect, useState } from "react";
 import { Archive, CheckSquare, Edit3, Search } from "lucide-react";
-import { AdminSectionNav } from "@/components/admin-section-nav";
 import { adminApi, adminErrorMessage } from "@/lib/api";
 type Unit = {
   id: string;
@@ -99,7 +98,6 @@ export default function InventoryPage() {
           </p>
         </div>
       </header>
-      <AdminSectionNav active="المخزون" />
       <section className="mx-auto max-w-7xl p-4 sm:p-7">
         {error && (
           <div className="mb-4 rounded-xl bg-red-50 p-4 text-sm text-red-800">

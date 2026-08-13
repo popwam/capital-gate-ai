@@ -40,6 +40,11 @@ import {
 } from "./import-contract";
 
 const CANONICAL: string[] = [...CANONICAL_VALUES];
+const CRITICAL_MAPPINGS = new Set([
+  "externalUnitId", "price", "currency", "builtUpArea", "landArea", "gardenArea",
+  "unitType", "bedrooms", "bathrooms", "deliveryDate", "status", "finishingType",
+  "downPayment", "installmentYears", "installmentAmount",
+]);
 const KNOWN: Record<string, string> = {
   "unit no": "externalUnitId",
   "properties unit no.": "externalUnitId",
@@ -257,7 +262,7 @@ export class ImporterService {
         paymentPlanMappings[header] = { durationMonths: Number(duration) || undefined, valueType: valueType as PaymentPlanValueType, sourceDurationText: header, approved: true };
       } else if (field) {
         mappings[header] = field;
-        mappingSources[header] = prior ? "APPROVED_MEMORY" : "KNOWN_RULE";
+        mappingSources[header] = prior ? "ADMIN_APPROVED_MEMORY" : "KNOWN_RULE";
       } else {
         const detectedPlan = parsePaymentPlanComponentHeader(header);
         if (detectedPlan) paymentPlanMappings[header] = { ...detectedPlan, approved: false };
@@ -401,17 +406,10 @@ export class ImporterService {
             if (
               suggestion.confidence >= 0.95 &&
               CANONICAL.includes(suggestion.canonicalField) &&
-              ![
-                "price",
-                "currency",
-                "downPayment",
-                "installmentAmount",
-                "discount",
-                "status",
-              ].includes(suggestion.canonicalField)
+              !CRITICAL_MAPPINGS.has(suggestion.canonicalField)
             ) {
               mappings[suggestion.sourceColumn] = suggestion.canonicalField;
-              mappingSources[suggestion.sourceColumn] = "AI_HIGH_CONFIDENCE";
+              mappingSources[suggestion.sourceColumn] = "AI_SUGGESTION";
             }
           analysis.unknownColumns = headers.filter(
             (header) => !mappings[header],
@@ -534,6 +532,20 @@ export class ImporterService {
         options: this.json({ allowCreate: true }),
         required: true,
       });
+    for (const [column, canonical] of Object.entries(analysis.mappings)) {
+      const source = analysis.mappingSources[column];
+      if (!CRITICAL_MAPPINGS.has(canonical) || source === "ADMIN_APPROVED_MEMORY" || source === "ADMIN_APPROVED") continue;
+      const field = CANONICAL_FIELDS.find((option) => option.value === canonical);
+      issues.push({
+        importId,
+        severity: IssueSeverity.BLOCKING,
+        field: `column:${column}`,
+        message: `راجع معنى العمود «${column}». النظام يقترح «${field?.labelAr ?? canonical}» ويحتاج تأكيدك أول مرة.`,
+        inputType: "CANONICAL_FIELD_SELECT",
+        options: this.json({ sourceColumn: column, fields: CANONICAL_FIELDS, suggestedValue: canonical, mappingSource: source, requiresConfirmation: true }),
+        required: true,
+      });
+    }
     for (const [column, plan] of Object.entries(analysis.paymentPlanMappings))
       if (!plan.approved)
         issues.push({
@@ -747,7 +759,7 @@ export class ImporterService {
       analysis.metadata.developerSlug = project.developer.slug;
       if (project.locationId) analysis.metadata.locationId = project.locationId;
       const remembered = await this.prisma.importMapping.findMany({ where: { approved: true, developerSlug: { in: [project.developer.slug, "__global__"] } } });
-      for (const header of [...analysis.unknownColumns]) {
+      for (const header of analysis.headers) {
         const prior = remembered.find((mapping) => mapping.normalizedColumn === this.normalize(header));
         if (!prior) continue;
         if (prior.canonicalField.startsWith("paymentPlan:")) {
@@ -756,7 +768,7 @@ export class ImporterService {
           resolvedFields.push(`paymentPlan:${header}`);
         } else if (CANONICAL.includes(prior.canonicalField)) {
           analysis.mappings[header] = prior.canonicalField;
-          analysis.mappingSources[header] = "APPROVED_MEMORY";
+          analysis.mappingSources[header] = "ADMIN_APPROVED_MEMORY";
         }
         analysis.unknownColumns = analysis.unknownColumns.filter((column) => column !== header);
         resolvedFields.push(`column:${header}`);

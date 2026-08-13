@@ -1,7 +1,6 @@
 "use client";
 import { FormEvent, useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, Filter, Search, Users } from "lucide-react";
-import { AdminSectionNav } from "@/components/admin-section-nav";
 import { LogoMark } from "@/components/logo";
 import { adminApi } from "@/lib/api";
 
@@ -112,7 +111,6 @@ export default function LeadsPage() {
           <ArrowLeft size={13} /> Customer app
         </a>
       </header>
-      <AdminSectionNav active="العملاء المحتملون" />
       <div className="mx-auto max-w-[1450px] p-4 sm:p-7">
         <div className="flex items-end justify-between gap-4">
           <div>

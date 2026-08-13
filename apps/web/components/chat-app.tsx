@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowLeft, ArrowUp, Building2, Check, ChevronDown, Clock3, FileText,
+  ArrowUp, Building2, Check, ChevronDown, Clock3, FileText,
   Heart, Image as ImageIcon, MapPin, Menu, MessageSquareText,
   MoreHorizontal, Plus, Search, ShieldCheck, Sparkles, Trash2, X
 } from "lucide-react";
@@ -122,7 +122,6 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, onRename 
     <div className="px-5 pb-5 pt-6"><LogoMark/><button onClick={onNew} className="mt-7 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-forest text-[12px] font-bold text-white shadow-sm transition hover:-translate-y-px hover:bg-[#0e332b]"><Plus size={16}/> New conversation</button></div>
     <div className="px-4"><div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#8b958f]" size={14}/><input className="h-10 w-full rounded-xl border border-[#dcdcd6] bg-[#f8f6f1] pl-9 pr-3 text-[11px] outline-none focus:border-[#a4b9b0]" placeholder="Search conversations"/></div></div>
     <div className="scrollbar-none mt-6 flex-1 overflow-y-auto px-3"><p className="px-2 text-[9px] font-bold uppercase tracking-[.16em] text-[#89938e]">Recent</p><div className="mt-2 space-y-1">{conversations.map(c => <button key={c.id} onClick={() => onSelect(c.id)} onDoubleClick={()=>onRename(c.id,c.title)} title="Double-click to rename" className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-start transition ${activeId === c.id ? "bg-white shadow-sm" : "hover:bg-white/60"}`}><MessageSquareText size={15} className={activeId === c.id ? "text-coral" : "text-[#81908a]"}/><span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-semibold" dir="auto">{c.title}</span><span className="mt-0.5 block text-[9px] text-[#8a948f]">{c.updatedAt}</span></span><span onClick={e => {e.stopPropagation();onDelete(c.id)}} className="hidden h-7 w-7 place-items-center rounded-lg text-[#85908b] hover:bg-[#f6e3df] hover:text-[#bd553e] group-hover:grid"><Trash2 size={13}/></span></button>)}</div></div>
-    <div className="border-t border-[#dcddd7] p-4"><a href="/admin" className="flex items-center gap-3 rounded-xl p-2.5 hover:bg-white/60"><div className="grid h-8 w-8 place-items-center rounded-full bg-[#d9e6df] text-[10px] font-bold text-forest">AM</div><div className="min-w-0 flex-1"><p className="text-[10px] font-bold">Admin workspace</p><p className="text-[9px] text-[#89938e]">Manage inventory</p></div><ArrowLeft className="rotate-180 text-[#8b958f]" size={14}/></a></div>
   </>;
 }
 

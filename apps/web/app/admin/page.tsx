@@ -175,8 +175,8 @@ export default function AdminPage() {
     finally { setLoading(false); }
   }
   return (
-    <main className="flex min-h-[100dvh] bg-[#f6f5f1] text-ink">
-      <aside className="hidden w-[245px] shrink-0 border-r border-[#dfe0da] bg-[#183b33] text-white lg:flex lg:flex-col">
+    <main className="flex min-h-[calc(100dvh-7rem)] bg-[#f6f5f1] text-ink">
+      <aside className="hidden">
         <AdminNav />
       </aside>
       {drawer && (
@@ -197,7 +197,7 @@ export default function AdminPage() {
         </div>
       )}
       <section className="min-w-0 flex-1">
-        <header className="flex h-[66px] items-center justify-between border-b border-[#e0e1dc] bg-white px-4 sm:px-7">
+        <header className="hidden">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setDrawer(true)}
@@ -297,6 +297,7 @@ export default function AdminPage() {
                       <Assistant
                         text={`وجدت ${item.rowsDetected} صفاً في «${item.analysis?.sheetName || "الملف"}». تم التعرف على ${Object.keys(item.analysis?.mappings || {}).length} أعمدة، وسأطلب منك فقط القرارات التي تحتاج مراجعة.`}
                       />
+                      <MappingReview item={item} />
                       {issue ? (
                         <>
                           <Assistant text={issue.message} />
@@ -502,7 +503,8 @@ function Answer({
     const sourceHeaders = issue.options?.sourceHeaders as string[] | undefined;
     const fields = issue.options?.fields as Array<{ value: string; group: string; labelAr: string; labelEn: string }> | undefined;
     if (sourceHeaders) return <TypedSelect value={value} setValue={setValue} submit={submit} placeholder="اختر عمود كود الوحدة" options={sourceHeaders.map((header) => [header, header])} />;
-    return <div className="ms-0 sm:ms-11"><select value={value} onChange={(event) => { setValue(event.target.value); if (event.target.value) submit(event.target.value); }} className="h-12 w-full rounded-xl border bg-white px-3 text-[16px]"><option value="">اختر معنى العمود</option>{[...new Set((fields || []).map((field) => field.group))].map((group) => <optgroup key={group} label={group}>{(fields || []).filter((field) => field.group === group).map((field) => <option key={field.value} value={field.value}>{field.labelAr} — {field.labelEn}</option>)}</optgroup>)}<optgroup label="معلومات إضافية"><option value="METADATA">الاحتفاظ كمعلومة إضافية</option><option value="IGNORE">تجاهل هذا العمود</option></optgroup></select></div>;
+    const selected = value || issue.options?.suggestedValue || "";
+    return <div className="ms-0 space-y-2 sm:ms-11"><select value={selected} onChange={(event) => setValue(event.target.value)} className="h-12 w-full rounded-xl border bg-white px-3 text-[16px]"><option value="">اختر معنى العمود</option>{[...new Set((fields || []).map((field) => field.group))].map((group) => <optgroup key={group} label={group}>{(fields || []).filter((field) => field.group === group).map((field) => <option key={field.value} value={field.value}>{field.labelAr} — {field.labelEn}</option>)}</optgroup>)}<optgroup label="معلومات إضافية"><option value="METADATA">الاحتفاظ كمعلومة إضافية</option><option value="IGNORE">تجاهل هذا العمود</option></optgroup></select><button disabled={!selected || loading} onClick={() => submit(selected)} className="rounded-xl bg-forest px-4 py-3 text-[14px] font-bold text-white disabled:opacity-40">تأكيد المعنى</button></div>;
   }
   if (inputType === "PAYMENT_PLAN_MAPPING") return <PaymentPlanAnswer issue={issue} submit={submit} />;
   if (inputType === "ENUM_SELECT") return <TypedSelect value={value} setValue={setValue} submit={submit} placeholder="اختر القيمة" options={(issue.options?.values || []).map((option: string) => [option, option])} />;
@@ -611,6 +613,15 @@ function Analysis({ item }: { item: ImportData }) {
       </div>
     </div>
   );
+}
+function MappingReview({ item }: { item: ImportData }) {
+  const fieldOptions = item.issues.flatMap((entry) => entry.options?.fields || []) as Array<{ value: string; labelAr: string; labelEn: string }>;
+  const labels = new globalThis.Map(fieldOptions.map((field) => [field.value, field]));
+  const mappings = Object.entries(item.analysis?.mappings || {});
+  const plans = Object.entries(item.analysis?.paymentPlanMappings || {}) as Array<[string, any]>;
+  if (!mappings.length && !plans.length) return null;
+  const sourceLabel = (source?: string) => source === "ADMIN_APPROVED_MEMORY" ? "ذاكرة معتمدة" : source === "ADMIN_APPROVED" ? "تم تأكيده" : source === "AI_SUGGESTION" ? "اقتراح ذكي — يحتاج تأكيد" : "قاعدة موثوقة — تحتاج تأكيد أول مرة";
+  return <details className="rounded-2xl border bg-[#fbfaf7] p-4" dir="rtl"><summary className="cursor-pointer text-[14px] font-bold">مراجعة معاني أعمدة الملف</summary><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[560px] text-right text-[13px]"><thead><tr className="border-b text-[#6d7772]"><th className="p-2">عمود الملف</th><th className="p-2">المعنى في النظام</th><th className="p-2">المصدر</th></tr></thead><tbody>{mappings.map(([column, canonical]) => { const label = labels.get(String(canonical)); return <tr key={column} className="border-b last:border-0"><td className="p-2" dir="auto">{column}</td><td className="p-2">{label?.labelAr || label?.labelEn || "حقل أعمال معتمد"}</td><td className="p-2">{sourceLabel(item.analysis?.mappingSources?.[column])}</td></tr>; })}{plans.map(([column, plan]) => <tr key={column} className="border-b last:border-0"><td className="p-2" dir="auto">{column}</td><td className="p-2">سعر خطة سداد — {plan.durationMonths || "—"} شهر</td><td className="p-2">{plan.approved ? "تم تأكيده" : "يحتاج تأكيد"}</td></tr>)}</tbody></table></div></details>;
 }
 function Issues({ issues }: { issues: Issue[] }) {
   return (
