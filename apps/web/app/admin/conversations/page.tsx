@@ -80,7 +80,7 @@ export default function Conversations() {
                 <MessageSquareText size={16} />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[10px] font-bold">
+                <p className="truncate text-[10px] font-bold" dir="auto">
                   {x.title || "Untitled conversation"}
                 </p>
                 <p className="mt-1 text-[8px] text-[#7c8782]">
@@ -91,7 +91,7 @@ export default function Conversations() {
               </div>
               {x.leads[0] && (
                 <div className="hidden text-right sm:block">
-                  <p className="text-[8px] font-bold">{x.leads[0].name}</p>
+                  <p className="text-[8px] font-bold" dir="auto">{x.leads[0].name}</p>
                   <p className="text-[7px] text-[#7c8782]">
                     {x.leads[0].status} · {x.leads[0].intentScore}/100
                   </p>

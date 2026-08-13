@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 import { PrismaService } from "../database/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AIProvider } from "../providers/ai-provider";
+import { readImportWorkbook } from "./workbook-reader";
 
 const CANONICAL = ["externalUnitId", "phase", "cluster", "building", "floor", "unitType", "unitSubType", "bedrooms", "bathrooms", "builtUpArea", "landArea", "gardenArea", "roofArea", "terraceArea", "price", "currency", "status", "deliveryDate", "deliveryYears", "finishingType", "downPayment", "installmentYears", "installmentAmount", "maintenance", "clubFees", "discount", "offerText"];
 const KNOWN: Record<string, string> = {
@@ -23,7 +24,7 @@ export class ImporterService {
   private json<T>(value: T): any { return JSON.parse(JSON.stringify(value)); }
 
   async analyze(file: Express.Multer.File, metadata: Record<string, string>) {
-    const workbook = XLSX.read(file.buffer, { type: "buffer", cellDates: true });
+    const workbook = readImportWorkbook(file.buffer, file.originalname);
     if (!workbook.SheetNames.length) throw new BadRequestException("Workbook contains no sheets");
     const sheetName = workbook.SheetNames.find(name => XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 }).length > 1) ?? workbook.SheetNames[0];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], { defval: null, raw: true });

@@ -6,6 +6,7 @@ import { extname } from "node:path";
 import { PrismaService } from "../database/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AIProvider } from "../providers/ai-provider";
+import { decodeUtf8 } from "../text/unicode";
 
 @Injectable()
 export class KnowledgeService {
@@ -13,7 +14,18 @@ export class KnowledgeService {
   private json(value: unknown): any { return JSON.parse(JSON.stringify(value)); }
   private async text(file: Express.Multer.File) {
     const ext = extname(file.originalname).toLowerCase();
-    if (ext === ".txt") return file.buffer.toString("utf8");
+    if (ext === ".txt") {
+      try {
+        return decodeUtf8(file.buffer);
+      } catch (error) {
+        if (error instanceof TypeError) {
+          throw new BadRequestException(
+            "TXT knowledge documents must be valid UTF-8.",
+          );
+        }
+        throw error;
+      }
+    }
     if (ext === ".pdf") return (await pdf(file.buffer)).text;
     if (ext === ".docx") return (await mammoth.extractRawText({ buffer: file.buffer })).value;
     throw new BadRequestException("Only TXT, PDF and DOCX knowledge documents are accepted");

@@ -98,7 +98,7 @@ export default function LeadDetail({
             <p className="text-[9px] font-bold uppercase tracking-[.15em] text-coral">
               Lead details
             </p>
-            <h1 className="mt-2 text-[27px] font-bold tracking-[-.04em]">
+            <h1 className="mt-2 text-[27px] font-bold tracking-[-.04em]" dir="auto">
               {lead.name}
             </h1>
             <p className="mt-1 flex items-center gap-2 text-[10px] text-[#6e7a75]">
@@ -154,7 +154,7 @@ export default function LeadDetail({
               <div className="space-y-2">
                 {lead.interestedInventory.units.map((u: any) => (
                   <div key={u.id} className="rounded-xl border p-3 text-[9px]">
-                    <div className="flex justify-between gap-3">
+                    <div className="flex justify-between gap-3" dir="auto">
                       <div>
                         <b>{u.externalUnitId}</b>
                         <p className="mt-1 text-[8px] text-[#75817c]">
@@ -295,7 +295,7 @@ export default function LeadDetail({
               <div className="mt-4 space-y-3">
                 {lead.notes.map((n: any) => (
                   <div key={n.id} className="border-t pt-3">
-                    <p className="text-[9px] leading-4">{n.content}</p>
+                    <p className="text-[9px] leading-4" dir="auto">{n.content}</p>
                     <p className="mt-1 text-[7px] text-[#89938e]">
                       {n.admin.name} · {fmt(n.createdAt)}
                     </p>
@@ -352,7 +352,7 @@ function Grid({ values }: { values: [string, any][] }) {
       {values.map(([k, v]) => (
         <div key={k}>
           <p className="text-[7px] font-bold uppercase text-[#909a95]">{k}</p>
-          <p className="mt-1 text-[9px] font-semibold">{String(v)}</p>
+          <p className="mt-1 text-[9px] font-semibold" dir="auto">{String(v)}</p>
         </div>
       ))}
     </div>

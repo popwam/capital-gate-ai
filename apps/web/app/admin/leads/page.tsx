@@ -361,7 +361,7 @@ function Cell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-w-0 text-[8px]">
+    <div className="min-w-0 text-[8px]" dir="auto">
       <span className="mb-1 block text-[7px] font-bold uppercase text-[#929b97] xl:hidden">
         {label}
       </span>

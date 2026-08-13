@@ -41,7 +41,7 @@ export default function ConversationDetail({
         <p className="text-[9px] font-bold uppercase tracking-[.15em] text-coral">
           Conversation context
         </p>
-        <h1 className="mt-2 text-[25px] font-bold">
+        <h1 className="mt-2 text-[25px] font-bold" dir="auto">
           {item.title || "Untitled conversation"}
         </h1>
         <p className="mt-1 text-[8px] text-[#7b8781]">
@@ -85,6 +85,7 @@ export default function ConversationDetail({
                 )}
               </div>
               <div
+                dir="auto"
                 className={`max-w-[82%] rounded-2xl px-4 py-3 text-[10px] leading-5 ${m.role === "USER" ? "rounded-tl-sm bg-white border" : "rounded-tr-sm bg-[#e4eee9]"}`}
               >
                 <p>{m.content}</p>

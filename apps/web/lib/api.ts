@@ -26,9 +26,9 @@ export const conversationsApi = {
   async stream(id: string, content: string, handlers: { token: (text: string) => void; complete: (data: any) => void }) {
     const response = await fetch(`${API_URL}/v1/conversations/${id}/messages/stream`, { method: "POST", headers: { "content-type": "application/json", "x-device-token": getDeviceToken() }, credentials: "include", body: JSON.stringify({ content }) });
     if (!response.ok || !response.body) throw new Error((await response.json().catch(() => null))?.message || "Unable to start response stream");
-    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
+    const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8", { fatal: true }); let buffer = "";
     while (true) {
-      const { done, value } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true });
+      const { done, value } = await reader.read(); if (done) { buffer += decoder.decode(); break; } buffer += decoder.decode(value, { stream: true });
       const events = buffer.split("\n\n"); buffer = events.pop() ?? "";
       for (const event of events) { const name = event.split("\n").find(x => x.startsWith("event:"))?.slice(6).trim(); const raw = event.split("\n").find(x => x.startsWith("data:"))?.slice(5).trim(); if (!raw) continue; const data = JSON.parse(raw); if (name === "token") handlers.token(data.text); else if (name === "complete") handlers.complete(data); else if (name === "error") throw new Error(data.message || "Streaming failed"); }
     }

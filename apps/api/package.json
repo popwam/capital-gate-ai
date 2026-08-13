@@ -2,7 +2,7 @@
   "name": "@maqar/api",
   "version": "0.1.0",
   "private": true,
-  "scripts": { "start:dev": "nest start --watch", "build": "nest build", "start": "node dist/main", "test:smoke": "node --test dist/providers/demo.provider.spec.js dist/admin/lead-crm.service.spec.js" },
+  "scripts": { "start:dev": "nest start --watch", "build": "nest build", "start": "node dist/main", "test:smoke": "node --test dist/providers/demo.provider.spec.js dist/admin/lead-crm.service.spec.js dist/imports/workbook-reader.spec.js dist/text/unicode.spec.js" },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.922.0", "@nestjs/common": "latest", "@nestjs/core": "latest",
     "@nestjs/jwt": "^11.0.1", "@nestjs/platform-express": "latest", "@nestjs/throttler": "^6.4.0",

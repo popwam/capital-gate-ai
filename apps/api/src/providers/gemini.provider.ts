@@ -42,9 +42,9 @@ export class GeminiProvider implements AIProvider {
   async *streamAnswer(input: AnswerInput): AsyncIterable<string> {
     const response = await fetch(this.endpoint(true), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(this.answerBody(input)), signal: AbortSignal.timeout(60_000) });
     if (!response.ok || !response.body) throw new ServiceUnavailableException(`Gemini stream failed (${response.status})`);
-    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
+    const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8", { fatal: true }); let buffer = "";
     while (true) {
-      const { done, value } = await reader.read(); if (done) break;
+      const { done, value } = await reader.read(); if (done) { buffer += decoder.decode(); break; }
       buffer += decoder.decode(value, { stream: true });
       const events = buffer.split("\n\n"); buffer = events.pop() ?? "";
       for (const event of events) {
