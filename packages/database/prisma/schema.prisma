@@ -113,6 +113,7 @@ model Location {
   distancesFrom LocationDistance[] @relation("DistanceFrom")
   distancesTo   LocationDistance[] @relation("DistanceTo")
   projects      Project[]
+  importSheets  ImportSheet[]
   portfolioProjects DeveloperProjectPortfolio[]
   projectLandmarks ProjectLandmark[]
   createdAt     DateTime           @default(now())
@@ -188,6 +189,7 @@ model Developer {
   media       Media[]
   documents   Document[]
   imports     DataImport[]
+  importSheets ImportSheet[]
   portfolioProjects DeveloperProjectPortfolio[]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
@@ -248,6 +250,8 @@ model Project {
   media               Media[]
   documents           Document[]
   imports             DataImport[]
+  importSheets        ImportSheet[]
+  paymentPlans        PaymentPlan[]
   amenities           ProjectAmenity[]
   investmentProfile   ProjectInvestmentProfile?
   landmarks           ProjectLandmark[]
@@ -333,6 +337,7 @@ model Unit {
   archivedAt            DateTime?
   sourceMetadata        Json?
   importChanges         ImportUnitChange[]
+  correctionChanges     ImportCorrectionChange[]
   availabilityUpdatedAt DateTime           @default(now())
   priceHistory          UnitPriceHistory[]
   paymentPlans          PaymentPlan[]
@@ -360,8 +365,10 @@ model UnitPriceHistory {
 
 model PaymentPlan {
   id                String   @id @default(cuid())
-  unitId            String
-  unit              Unit     @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  unitId            String?
+  unit              Unit?    @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  projectId         String?
+  project           Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name              String?
   downPayment       Decimal? @db.Decimal(16, 2)
   installmentYears  Decimal? @db.Decimal(4, 1)
@@ -383,6 +390,7 @@ model PaymentPlan {
   isActive          Boolean  @default(true)
 
   @@index([unitId, durationMonths])
+  @@index([projectId, isActive])
   @@index([sourceImportId])
 }
 
@@ -472,16 +480,100 @@ model DataImport {
   units         Unit[]
   priceHistory  UnitPriceHistory[]
   issues        ImportIssue[]
+  sheets        ImportSheet[]
+  corrections   ImportCorrection[]
   unitChanges   ImportUnitChange[]
   paymentPlans  PaymentPlan[]
 
   @@index([fileHash])
 }
 
+model ImportSheet {
+  id                    String      @id @default(cuid())
+  importId              String
+  import                DataImport  @relation(fields: [importId], references: [id], onDelete: Cascade)
+  sheetName             String
+  tableId               String?
+  classification        String
+  confidence            Int         @default(0)
+  action                String      @default("IGNORE")
+  headerRow             Int?
+  startRow              Int?
+  endRow                Int?
+  rowsDetected          Int         @default(0)
+  rowsCreated           Int         @default(0)
+  rowsUpdated           Int         @default(0)
+  projectId             String?
+  project               Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  developerId           String?
+  developer             Developer?  @relation(fields: [developerId], references: [id], onDelete: SetNull)
+  locationId            String?
+  location              Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  defaultCurrency       String?
+  defaultUnitType       String?
+  columns               Json?
+  mappings              Json?
+  mappingSources        Json?
+  sourcePreview         Json?
+  normalizedPreview     Json?
+  mappingVersion        Int         @default(1)
+  previewMappingVersion Int?
+  importedAt            DateTime?
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+  unitChanges           ImportUnitChange[]
+  corrections           ImportCorrection[]
+
+  @@unique([importId, sheetName, tableId])
+  @@index([importId, action])
+  @@index([projectId])
+}
+
+model ImportCorrection {
+  id                String       @id @default(cuid())
+  importId          String
+  import            DataImport   @relation(fields: [importId], references: [id], onDelete: Cascade)
+  importSheetId     String
+  importSheet       ImportSheet  @relation(fields: [importSheetId], references: [id], onDelete: Cascade)
+  createdByAdminId  String?
+  createdBy         AdminUser?   @relation(fields: [createdByAdminId], references: [id], onDelete: SetNull)
+  status            String       @default("DRAFT")
+  oldMappings       Json
+  proposedMappings  Json
+  preview           Json?
+  conflictDecisions Json?
+  confirmedAt       DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  changes           ImportCorrectionChange[]
+
+  @@index([importId, status])
+  @@index([importSheetId])
+}
+
+model ImportCorrectionChange {
+  id           String           @id @default(cuid())
+  correctionId String
+  correction   ImportCorrection @relation(fields: [correctionId], references: [id], onDelete: Cascade)
+  unitId       String?
+  unit         Unit?            @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  beforeData   Json
+  correctedData Json
+  currentData  Json
+  conflict     Boolean          @default(false)
+  decision     String?
+  appliedAt    DateTime?
+
+  @@index([correctionId, conflict])
+  @@index([unitId])
+}
+
 model ImportUnitChange {
   id          String              @id @default(cuid())
   importId    String
   import      DataImport          @relation(fields: [importId], references: [id], onDelete: Cascade)
+  importSheetId String?
+  importSheet ImportSheet?        @relation(fields: [importSheetId], references: [id], onDelete: SetNull)
   unitId      String?
   unit        Unit?               @relation(fields: [unitId], references: [id], onDelete: SetNull)
   operation   ImportUnitOperation
@@ -493,6 +585,7 @@ model ImportUnitChange {
 
   @@unique([importId, unitId])
   @@index([unitId, appliedAt])
+  @@index([importSheetId])
 }
 
 model ImportMapping {
@@ -652,6 +745,7 @@ model AdminUser {
   leadNotes     LeadNote[]
   leadEvents    LeadEvent[]
   imports       DataImport[]
+  importCorrections ImportCorrection[]
   approvedKnowledgeItems ProjectKnowledgeItem[]
   verifiedLocationDistances LocationDistance[]
   verifiedPortfolioProjects DeveloperProjectPortfolio[]

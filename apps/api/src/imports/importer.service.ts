@@ -43,6 +43,7 @@ import {
 } from "./import-contract";
 
 const CANONICAL: string[] = [...CANONICAL_VALUES];
+const INVENTORY_CANONICAL = CANONICAL.filter((field) => !["downPayment", "installmentYears", "installmentAmount"].includes(field));
 const CRITICAL_MAPPINGS = new Set([
   "externalUnitId", "price", "currency", "builtUpArea", "landArea", "gardenArea",
   "unitType", "bedrooms", "bathrooms", "deliveryDate", "status", "finishingType",
@@ -184,6 +185,99 @@ export class ImporterService {
     return JSON.parse(JSON.stringify(value));
   }
 
+  private deterministicSheetMappings(table: DetectedTable, remembered: Array<{ normalizedColumn: string; canonicalField: string }> = []) {
+    const mappings: Record<string, string> = {};
+    const sources: Record<string, string> = {};
+    for (const column of table.columns) {
+      const detected = column.semanticField
+        ? { field: column.semanticField, confidence: column.confidence }
+        : detectSemanticColumn(column.originalHeader);
+      const prior = remembered.find((mapping) => mapping.normalizedColumn === this.normalize(column.originalHeader));
+      const canonical = prior?.canonicalField ?? KNOWN[this.normalize(column.originalHeader)] ?? detected?.field;
+      if (!canonical) continue;
+      if (["downPayment", "installmentYears", "installmentAmount"].includes(canonical)) {
+        mappings[column.key] = "__METADATA__";
+        sources[column.key] = "PAYMENT_PLAN_MANUAL_ONLY";
+        continue;
+      }
+      if (INVENTORY_CANONICAL.includes(canonical)) {
+        mappings[column.key] = canonical;
+        sources[column.key] = prior ? "ADMIN_APPROVED_MEMORY" : "KNOWN_RULE";
+      }
+    }
+    return { mappings, sources };
+  }
+
+  private sheetIssueField(sheetId: string, field: string) {
+    return `sheet:${sheetId}:${field}`;
+  }
+
+  private async rebuildSheetIssues(sheetId: string) {
+    const sheet = await this.prisma.importSheet.findUniqueOrThrow({ where: { id: sheetId } });
+    const prefix = `sheet:${sheet.id}:`;
+    await this.prisma.importIssue.deleteMany({
+      where: { importId: sheet.importId, field: { startsWith: prefix } },
+    });
+    if (sheet.action !== "IMPORT") return;
+    const mappings = (sheet.mappings ?? {}) as Record<string, string>;
+    const columns = (sheet.columns ?? []) as Array<{ key: string; originalHeader: string; samples?: unknown[] }>;
+    const issues: Prisma.ImportIssueCreateManyInput[] = [];
+    const required = (field: string, message: string, inputType: string, options?: unknown) =>
+      issues.push({ importId: sheet.importId, severity: IssueSeverity.BLOCKING, field: this.sheetIssueField(sheet.id, field), message, inputType, options: options == null ? undefined : this.json(options), required: true });
+    if (!sheet.headerRow || !columns.length) required("header", "اختر صف العناوين الصحيح لهذا الجدول.", "WORKBOOK_TABLE_SELECT");
+    if (!sheet.projectId) required("projectId", "اختر المشروع الخاص بهذا الجدول.", "PROJECT_SELECT", { allowCreate: true });
+    if (!sheet.developerId) required("developerId", "اختر المطور الخاص بهذا الجدول.", "DEVELOPER_SELECT", { allowCreate: true });
+    if (!sheet.locationId) required("locationId", "اختر موقع المشروع الخاص بهذا الجدول.", "LOCATION_SELECT", { allowCreate: true });
+    if (!sheet.defaultCurrency && !Object.values(mappings).includes("currency")) required("currency", "حدد عملة أسعار هذا الجدول.", "CURRENCY_SELECT", SUPPORTED_CURRENCIES);
+    if (!Object.values(mappings).includes("externalUnitId")) required("mapping:externalUnitId", "اختر عمود كود الوحدة.", "CANONICAL_FIELD_SELECT", { sourceHeaders: columns.map((column) => column.key), detectedColumns: columns });
+    for (const column of columns) {
+      if (mappings[column.key]) continue;
+      required(`column:${column.key}`, `راجع معنى العمود «${column.originalHeader}».`, "CANONICAL_FIELD_SELECT", { sourceColumn: column.key, fields: CANONICAL_FIELDS.filter((field) => INVENTORY_CANONICAL.includes(field.value)), samples: column.samples ?? [], actions: ["METADATA", "IGNORE"] });
+    }
+    if (issues.length) await this.prisma.importIssue.createMany({ data: issues });
+  }
+
+  private async initializeImportSheets(importId: string, workbookAnalysis: WorkbookAnalysis, metadata: Record<string, string>) {
+    const developerSlug = metadata.developerSlug || "__global__";
+    const remembered = await this.prisma.importMapping.findMany({ where: { approved: true, developerSlug: { in: [developerSlug, "__global__"] } } });
+    for (const sheet of workbookAnalysis.sheets) {
+      const tables = sheet.candidateTables.length ? sheet.candidateTables : [undefined];
+      for (const table of tables) {
+        const deterministic = table ? this.deterministicSheetMappings(table, remembered) : { mappings: {}, sources: {} };
+        const action = sheet.classification === "INVENTORY" && table ? "IMPORT" : "IGNORE";
+        const created = await this.prisma.importSheet.create({
+          data: {
+            importId,
+            sheetName: sheet.name,
+            tableId: table?.id,
+            classification: sheet.classification,
+            confidence: table?.confidence ?? sheet.confidence,
+            action,
+            headerRow: table?.headerRow,
+            startRow: table?.startRow,
+            endRow: table?.endRow,
+            rowsDetected: table?.dataRowCount ?? 0,
+            projectId: metadata.projectId || undefined,
+            developerId: metadata.developerId || undefined,
+            locationId: metadata.locationId || undefined,
+            defaultCurrency: metadata.currency || undefined,
+            defaultUnitType: metadata.unitType || undefined,
+            columns: table ? this.json(table.columns) : undefined,
+            mappings: this.json(deterministic.mappings),
+            mappingSources: this.json(deterministic.sources),
+            sourcePreview: table ? this.json(table.previewRows) : undefined,
+          },
+        });
+        await this.rebuildSheetIssues(created.id);
+      }
+    }
+    await this.prisma.dataImport.update({
+      where: { id: importId },
+      data: { status: ImportStatus.NEEDS_INPUT, preview: Prisma.DbNull, rowsDetected: workbookAnalysis.sheets.filter((sheet) => sheet.classification === "INVENTORY").reduce((total, sheet) => total + sheet.candidateTables.reduce((sum, table) => sum + table.dataRowCount, 0), 0) },
+    });
+    return this.refreshImportReadiness(importId);
+  }
+
   private getImportReadiness(item: {
     status: ImportStatus;
     issues: Array<{ severity: IssueSeverity; resolvedAt: Date | null; required?: boolean }>;
@@ -191,6 +285,17 @@ export class ImporterService {
     preview: unknown;
     developerId: string | null;
     projectId: string | null;
+    sheets?: Array<{
+      action: string;
+      headerRow: number | null;
+      projectId: string | null;
+      developerId: string | null;
+      locationId: string | null;
+      defaultCurrency: string | null;
+      mappings: unknown;
+      mappingVersion: number;
+      previewMappingVersion: number | null;
+    }>;
   }): ImportReadiness {
     const analysis = (item.analysis ?? {}) as Partial<Analysis>;
     const unresolved = item.issues.filter((issue) => !issue.resolvedAt);
@@ -219,7 +324,19 @@ export class ImporterService {
         (item.developerId || metadata.developerId) &&
         metadata.locationId,
     );
-    const canPreview = unresolvedBlockingCount === 0 && contextValid;
+    const selectedSheets = item.sheets?.filter((sheet) => sheet.action === "IMPORT") ?? [];
+    const sheetsValid = selectedSheets.length > 0 && selectedSheets.every((sheet) => {
+      const sheetMappings = (sheet.mappings ?? {}) as Record<string, string>;
+      return Boolean(
+        sheet.headerRow &&
+        sheet.projectId &&
+        sheet.developerId &&
+        sheet.locationId &&
+        (sheet.defaultCurrency || Object.values(sheetMappings).includes("currency")) &&
+        Object.values(sheetMappings).includes("externalUnitId"),
+      );
+    });
+    const canPreview = unresolvedBlockingCount === 0 && (item.sheets?.length ? sheetsValid : contextValid);
     const preview = item.preview as Record<string, unknown> | null;
     const previewExists = Boolean(preview);
     const canConfirm = canPreview && previewExists && preview?.canConfirm === true;
@@ -263,6 +380,7 @@ export class ImporterService {
     preview: unknown;
     developerId: string | null;
     projectId: string | null;
+    sheets?: any[];
   }>(item: T): T & { workflow: ImportReadiness } {
     return { ...item, workflow: this.getImportReadiness(item) };
   }
@@ -518,52 +636,7 @@ export class ImporterService {
         );
       }
 
-      let aiIssue = false;
-      if (unknown.length) {
-        try {
-          const suggestions = await this.ai.mapColumns(
-            unknown,
-            rows.slice(0, 5).map((row) => unknown.map((h) => row[h])),
-            CANONICAL,
-          );
-          analysis.aiSuggestions = suggestions;
-          analysis.aiMapping = { status: "COMPLETED" };
-          for (const suggestion of suggestions)
-            if (
-              suggestion.confidence >= 0.95 &&
-              CANONICAL.includes(suggestion.canonicalField) &&
-              !CRITICAL_MAPPINGS.has(suggestion.canonicalField)
-            ) {
-              mappings[suggestion.sourceColumn] = suggestion.canonicalField;
-              mappingSources[suggestion.sourceColumn] = "AI_SUGGESTION";
-            }
-          analysis.unknownColumns = headers.filter(
-            (header) => !mappings[header],
-          );
-        } catch (error) {
-          const details = importErrorDetails(error);
-          analysis.aiMapping = {
-            status: "UNAVAILABLE",
-            code: String(details.category ?? details.code ?? "AI_UNAVAILABLE"),
-          };
-          aiIssue = true;
-          this.logger.warn(
-            `ImportAIMappingUnavailable requestId=${context.requestId ?? "unknown"} adminUserId=${context.adminUserId ?? "unknown"} importId=${dataImport.id} filename=${JSON.stringify(safeFileName)} stage=ai-mapping code=${analysis.aiMapping.code} upstreamStatus=${details.upstreamStatus ?? "none"}`,
-          );
-        }
-      }
-      await this.prisma.$transaction(async (tx) => {
-        await tx.dataImport.update({
-          where: { id: dataImport.id },
-          data: {
-            status: ImportStatus.NEEDS_INPUT,
-            analysis: this.json(analysis),
-            mappingConfig: this.json({ mappings, mappingSources }),
-          },
-        });
-        await this.createIssues(dataImport.id, analysis, tx, aiIssue);
-      });
-      return this.get(dataImport.id);
+      return this.initializeImportSheets(dataImport.id, workbookAnalysis, metadata);
     } catch (error) {
       if (error instanceof ImportHttpException) throw error;
       diagnostic("database", "IMPORT_DATABASE_FAILED", dataImport.id, error);
@@ -778,6 +851,11 @@ export class ImporterService {
             conflictReason: true,
           },
         },
+        sheets: {
+          orderBy: [{ sheetName: "asc" }, { startRow: "asc" }],
+          include: { project: true, developer: true, location: true, corrections: { orderBy: { createdAt: "desc" }, take: 5 } },
+        },
+        corrections: { orderBy: { createdAt: "desc" }, take: 20 },
       },
     });
     if (!item) throw new NotFoundException("Import not found");
@@ -810,6 +888,7 @@ export class ImporterService {
           developer: true,
           project: true,
           uploadedBy: { select: { id: true, name: true } },
+          sheets: { select: { id: true, sheetName: true, action: true, classification: true, rowsCreated: true, rowsUpdated: true, project: { select: { name: true } } }, orderBy: { sheetName: "asc" } },
           _count: { select: { issues: true, unitChanges: true } },
         },
       }),
@@ -840,6 +919,174 @@ export class ImporterService {
     const staticOptions: Record<string, unknown> = { currencies: SUPPORTED_CURRENCIES, unitTypes: UNIT_TYPES, finishingTypes: FINISHING_TYPES, availability: AVAILABILITY_TYPES, canonicalFields: CANONICAL_FIELDS };
     if (type in staticOptions) return { items: staticOptions[type], total: (staticOptions[type] as readonly unknown[]).length, page: 1, pageSize: 100 };
     throw new BadRequestException("نوع الخيارات غير مدعوم.");
+  }
+
+  async updateImportSheet(importId: string, sheetId: string, body: Record<string, unknown>) {
+    const sheet = await this.prisma.importSheet.findFirst({ where: { id: sheetId, importId } });
+    if (!sheet) throw new NotFoundException("Import sheet not found");
+    if ((await this.prisma.dataImport.findUniqueOrThrow({ where: { id: importId }, select: { status: true } })).status === ImportStatus.COMPLETED)
+      throw new BadRequestException("Use the correction workflow for a confirmed import.");
+    const data: Prisma.ImportSheetUncheckedUpdateInput = {};
+    if (body.action != null) {
+      if (!["IMPORT", "IGNORE"].includes(String(body.action))) throw new BadRequestException("Invalid sheet action");
+      data.action = String(body.action);
+    }
+    if (body.projectId != null) {
+      const project = await this.prisma.project.findUnique({ where: { id: String(body.projectId) }, select: { id: true, developerId: true, locationId: true } });
+      if (!project) throw new BadRequestException("اختر مشروعاً موجوداً.");
+      data.projectId = project.id;
+      data.developerId = project.developerId;
+      data.locationId = project.locationId;
+    }
+    if (body.developerId != null) data.developerId = String(body.developerId);
+    if (body.locationId != null) data.locationId = String(body.locationId);
+    if (body.defaultCurrency != null) {
+      const currency = String(body.defaultCurrency).toUpperCase();
+      if (!SUPPORTED_CURRENCIES.includes(currency as any)) throw new BadRequestException("اختر عملة مدعومة.");
+      data.defaultCurrency = currency;
+    }
+    if (body.defaultUnitType !== undefined) data.defaultUnitType = body.defaultUnitType ? normalizeUnitType(body.defaultUnitType) : null;
+    if (body.headerRow != null) {
+      const headerRow = Number(body.headerRow);
+      if (!Number.isInteger(headerRow) || headerRow < 1) throw new BadRequestException("اختر صف عناوين صحيحاً.");
+      const item = await this.prisma.dataImport.findUniqueOrThrow({ where: { id: importId }, select: { analysis: true } });
+      const analysis = item.analysis as unknown as Analysis;
+      if (!analysis.fileKey) throw new BadRequestException("Source workbook is unavailable.");
+      const workbook = readImportWorkbook(await this.storage.get(analysis.fileKey), analysis.workbookAnalysis.workbookName);
+      const sourceSheet = workbook.Sheets[sheet.sheetName];
+      if (!sourceSheet) throw new BadRequestException("Worksheet no longer exists in the source workbook.");
+      const table = detectTableAt(rawSheetMatrix(sourceSheet), sheet.sheetName, headerRow, .5);
+      if (!table) throw new BadRequestException("لم يتم العثور على جدول صالح تحت صف العناوين المحدد.");
+      const deterministic = this.deterministicSheetMappings(table);
+      Object.assign(data, {
+        tableId: table.id,
+        headerRow: table.headerRow,
+        startRow: table.startRow,
+        endRow: table.endRow,
+        rowsDetected: table.dataRowCount,
+        columns: this.json(table.columns),
+        mappings: this.json(deterministic.mappings),
+        mappingSources: this.json(deterministic.sources),
+        sourcePreview: this.json(table.previewRows),
+      });
+    }
+    data.mappingVersion = { increment: 1 };
+    data.previewMappingVersion = null;
+    data.normalizedPreview = Prisma.DbNull;
+    await this.prisma.importSheet.update({ where: { id: sheetId }, data });
+    await this.rebuildSheetIssues(sheetId);
+    return this.refreshImportReadiness(importId);
+  }
+
+  async updateSelectedSheets(importId: string, body: Record<string, unknown>) {
+    const sheets = await this.prisma.importSheet.findMany({ where: { importId, action: "IMPORT" }, select: { id: true } });
+    for (const sheet of sheets) await this.updateImportSheet(importId, sheet.id, body);
+    return this.get(importId);
+  }
+
+  async updateImportSheetMapping(importId: string, sheetId: string, sourceColumn: string, canonicalField: string) {
+    const sheet = await this.prisma.importSheet.findFirst({ where: { id: sheetId, importId } });
+    if (!sheet) throw new NotFoundException("Import sheet not found");
+    const item = await this.prisma.dataImport.findUniqueOrThrow({ where: { id: importId }, select: { status: true } });
+    if (item.status === ImportStatus.COMPLETED) throw new BadRequestException("Use the correction workflow for a confirmed import.");
+    const columns = (sheet.columns ?? []) as Array<{ key: string }>;
+    if (!columns.some((column) => column.key === sourceColumn)) throw new BadRequestException("اختر عموداً موجوداً في الجدول.");
+    const target = canonicalField === "METADATA" ? "__METADATA__" : canonicalField === "IGNORE" ? "__IGNORE__" : canonicalField;
+    if (![...INVENTORY_CANONICAL, "__METADATA__", "__IGNORE__"].includes(target)) throw new BadRequestException("اختر معنى مدعوماً للعمود.");
+    const mappings = { ...((sheet.mappings ?? {}) as Record<string, string>), [sourceColumn]: target };
+    const sources = { ...((sheet.mappingSources ?? {}) as Record<string, string>), [sourceColumn]: "ADMIN_APPROVED" };
+    await this.prisma.importSheet.update({
+      where: { id: sheetId },
+      data: { mappings: this.json(mappings), mappingSources: this.json(sources), mappingVersion: { increment: 1 }, previewMappingVersion: null, normalizedPreview: Prisma.DbNull },
+    });
+    await this.rebuildSheetIssues(sheetId);
+    return this.refreshImportReadiness(importId);
+  }
+
+  async createCorrection(importId: string, sheetId: string, sourceColumn: string, canonicalField: string, adminUserId?: string) {
+    const item = await this.prisma.dataImport.findUniqueOrThrow({ where: { id: importId }, select: { status: true } });
+    if (item.status !== ImportStatus.COMPLETED) throw new BadRequestException("Corrections are only required after a confirmed import.");
+    const sheet = await this.prisma.importSheet.findFirst({ where: { id: sheetId, importId } });
+    if (!sheet) throw new NotFoundException("Import sheet not found");
+    const columns = (sheet.columns ?? []) as Array<{ key: string }>;
+    if (!columns.some((column) => column.key === sourceColumn)) throw new BadRequestException("اختر عموداً موجوداً.");
+    const target = canonicalField === "METADATA" ? "__METADATA__" : canonicalField === "IGNORE" ? "__IGNORE__" : canonicalField;
+    if (![...INVENTORY_CANONICAL, "__METADATA__", "__IGNORE__"].includes(target)) throw new BadRequestException("اختر معنى مدعوماً.");
+    const oldMappings = (sheet.mappings ?? {}) as Record<string, string>;
+    if (oldMappings[sourceColumn] === "externalUnitId" || target === "externalUnitId") throw new BadRequestException("تصحيح كود الهوية يحتاج استيراد تحديث جديداً لتجنب دمج وحدات مختلفة.");
+    const proposedMappings = { ...oldMappings, [sourceColumn]: target };
+    return this.prisma.importCorrection.create({ data: { importId, importSheetId: sheetId, createdByAdminId: adminUserId, oldMappings: this.json(oldMappings), proposedMappings: this.json(proposedMappings) } });
+  }
+
+  async previewCorrection(importId: string, correctionId: string) {
+    const correction = await this.prisma.importCorrection.findFirst({ where: { id: correctionId, importId }, include: { import: true, importSheet: true } });
+    if (!correction) throw new NotFoundException("Correction not found");
+    const analysis = correction.import.analysis as unknown as Analysis;
+    if (!analysis.fileKey) throw new BadRequestException("Source workbook is unavailable.");
+    const workbook = readImportWorkbook(await this.storage.get(analysis.fileKey), analysis.workbookAnalysis.workbookName);
+    const sheet = correction.importSheet;
+    const rows = recordsForTable(workbook, this.persistedTable(sheet));
+    const oldMappings = correction.oldMappings as Record<string, string>;
+    const proposedMappings = correction.proposedMappings as Record<string, string>;
+    const changedSources = [...new Set([...Object.keys(oldMappings), ...Object.keys(proposedMappings)])].filter((source) => oldMappings[source] !== proposedMappings[source]);
+    const affectedFields = [...new Set(changedSources.flatMap((source) => [oldMappings[source], proposedMappings[source]]).filter((field) => INVENTORY_CANONICAL.includes(field) && field !== "externalUnitId"))];
+    const changes = await this.prisma.importUnitChange.findMany({ where: { importId, importSheetId: sheet.id }, include: { unit: true } });
+    await this.prisma.importCorrectionChange.deleteMany({ where: { correctionId } });
+    let affected = 0, conflicts = 0, unchanged = 0;
+    const previewChanges: Array<{ unitId: string; externalUnitId: string; conflict: boolean; current: Record<string, unknown>; corrected: Record<string, unknown> }> = [];
+    for (const change of changes) {
+      if (!change.unit) continue;
+      const row = rows.find((candidate) => {
+        const identitySource = Object.entries(proposedMappings).find(([, target]) => target === "externalUnitId")?.[0];
+        return identitySource && String(candidate[identitySource] ?? "").trim() === change.unit!.externalUnitId;
+      });
+      if (!row) continue;
+      const proposedSheet = { ...sheet, mappings: proposedMappings };
+      const normalized = this.valuesForSheet(row, proposedSheet).values;
+      const corrected: Record<string, unknown> = {};
+      for (const field of affectedFields) corrected[field] = normalized[field] == null || normalized[field] === "" ? null : (this.unitData({ [field]: normalized[field] }, false) as any)[field] ?? normalized[field];
+      const imported = ((change.afterData as any)?.unit ?? {}) as Record<string, unknown>;
+      const current = change.unit as unknown as Record<string, unknown>;
+      const conflict = affectedFields.some((field) => !this.sameValue(current[field], imported[field]));
+      const changed = affectedFields.some((field) => !this.sameValue(current[field], corrected[field]));
+      if (!changed) { unchanged++; continue; }
+      affected++;
+      if (conflict) conflicts++;
+      previewChanges.push({ unitId: change.unit.id, externalUnitId: change.unit.externalUnitId, conflict, current: Object.fromEntries(affectedFields.map((field) => [field, current[field]])), corrected });
+      await this.prisma.importCorrectionChange.create({ data: { correctionId, unitId: change.unit.id, beforeData: this.json(imported), correctedData: this.json(corrected), currentData: this.json(Object.fromEntries(affectedFields.map((field) => [field, current[field]]))), conflict } });
+    }
+    const preview = { affected, conflicts, unchanged, affectedFields, canConfirm: affected > 0 };
+    await this.prisma.importCorrection.update({ where: { id: correctionId }, data: { status: "PREVIEW_READY", preview: this.json(preview) } });
+    return { correctionId, ...preview, changes: previewChanges };
+  }
+
+  async confirmCorrection(importId: string, correctionId: string, decisions: Record<string, string> = {}) {
+    const correction = await this.prisma.importCorrection.findFirst({ where: { id: correctionId, importId }, include: { importSheet: true, changes: true } });
+    if (!correction || correction.status !== "PREVIEW_READY") throw new BadRequestException("Generate a correction preview first.");
+    const result = await this.prisma.$transaction(async (tx) => {
+      let applied = 0, conflictsKept = 0, skipped = 0;
+      for (const change of correction.changes) {
+        const decision = decisions[change.unitId ?? ""] ?? (change.conflict ? "KEEP_CURRENT" : "APPLY_CORRECTED");
+        if (decision !== "APPLY_CORRECTED") {
+          decision === "KEEP_CURRENT" ? conflictsKept++ : skipped++;
+          await tx.importCorrectionChange.update({ where: { id: change.id }, data: { decision } });
+          continue;
+        }
+        if (change.unitId) await tx.unit.update({ where: { id: change.unitId }, data: change.correctedData as Prisma.UnitUncheckedUpdateInput });
+        await tx.importCorrectionChange.update({ where: { id: change.id }, data: { decision, appliedAt: new Date() } });
+        applied++;
+      }
+      const proposedMappings = correction.proposedMappings as Record<string, string>;
+      const sources = { ...((correction.importSheet.mappingSources ?? {}) as Record<string, string>) };
+      for (const source of Object.keys(proposedMappings)) sources[source] = "ADMIN_CORRECTION";
+      await tx.importSheet.update({ where: { id: correction.importSheetId }, data: { mappings: this.json(proposedMappings), mappingSources: this.json(sources), mappingVersion: { increment: 1 } } });
+      const developer = correction.importSheet.developerId ? await tx.developer.findUnique({ where: { id: correction.importSheet.developerId }, select: { slug: true } }) : null;
+      if (developer) for (const [sourceColumn, canonicalField] of Object.entries(proposedMappings)) if (INVENTORY_CANONICAL.includes(canonicalField)) await tx.importMapping.upsert({ where: { developerSlug_normalizedColumn: { developerSlug: developer.slug, normalizedColumn: this.normalize(sourceColumn) } }, create: { developerSlug: developer.slug, sourceColumn, normalizedColumn: this.normalize(sourceColumn), canonicalField, approved: true, confidence: 1 }, update: { canonicalField, approved: true, confidence: 1 } });
+      await tx.importCorrection.update({ where: { id: correctionId }, data: { status: "CONFIRMED", conflictDecisions: this.json(decisions), confirmedAt: new Date() } });
+      return { applied, conflictsKept, skipped, conflicts: correction.changes.filter((change) => change.conflict).length };
+    });
+    this.cache?.invalidateCustomerData();
+    return result;
   }
 
   private async reselectWorkbookTable(id: string, analysis: Analysis, value: unknown) {
@@ -1039,8 +1286,113 @@ export class ImporterService {
     return this.refreshImportReadiness(id);
   }
 
+  private persistedTable(sheet: any): DetectedTable {
+    const columns = (sheet.columns ?? []) as DetectedTable["columns"];
+    return {
+      id: sheet.tableId ?? `${sheet.sheetName}:${sheet.headerRow}:persisted`,
+      sheetName: sheet.sheetName,
+      headerRow: sheet.headerRow,
+      startRow: sheet.startRow ?? sheet.headerRow,
+      endRow: sheet.endRow,
+      startColumn: Math.min(...columns.map((column) => column.columnIndex)) + 1,
+      endColumn: Math.max(...columns.map((column) => column.columnIndex)) + 1,
+      dataRowCount: sheet.rowsDetected,
+      confidence: sheet.confidence,
+      columns,
+      previewRows: (sheet.sourcePreview ?? []) as Record<string, any>[],
+      ignoredRowsAbove: Math.max(0, sheet.headerRow - 1),
+      ignoredRowsBelow: 0,
+      warnings: [],
+    };
+  }
+
+  private valuesForSheet(row: Record<string, unknown>, sheet: any) {
+    const values: Record<string, unknown> = {};
+    if (sheet.defaultCurrency) values.currency = sheet.defaultCurrency;
+    if (sheet.defaultUnitType) values.unitType = sheet.defaultUnitType;
+    const metadata: Record<string, unknown> = {};
+    for (const [source, target] of Object.entries((sheet.mappings ?? {}) as Record<string, string>)) {
+      const raw = row[source];
+      if (raw == null || raw === "" || target === "__IGNORE__") continue;
+      if (target === "__METADATA__") metadata[source] = raw;
+      else values[target] = raw;
+    }
+    return { values, metadata };
+  }
+
+  private sheetValueErrors(values: Record<string, unknown>) {
+    const errors: string[] = [];
+    if (!String(values.externalUnitId ?? "").trim()) errors.push("externalUnitId");
+    for (const field of ["bedrooms", "bathrooms", "builtUpArea", "landArea", "gardenArea", "roofArea", "terraceArea", "price", "maintenance", "clubFees", "discount"])
+      if (values[field] != null && values[field] !== "" && this.number(values[field]) == null) errors.push(field);
+    if (values.deliveryDate != null && values.deliveryDate !== "" && !parseImportDate(values.deliveryDate)) errors.push("deliveryDate");
+    if (values.currency && !SUPPORTED_CURRENCIES.includes(String(values.currency).toUpperCase() as any)) errors.push("currency");
+    return errors;
+  }
+
+  private async previewSheets(item: any) {
+    if (!item.workflow.canPreview)
+      throw new ImportHttpException(HttpStatus.UNPROCESSABLE_ENTITY, "IMPORT_VALIDATION_ISSUES", "راجع كل الجداول المختارة وأكمل البيانات المطلوبة قبل إنشاء المعاينة.", "validation", item.id);
+    const analysis = item.analysis as Analysis;
+    if (!analysis.fileKey) throw new ImportHttpException(HttpStatus.UNPROCESSABLE_ENTITY, "IMPORT_VALIDATION_ISSUES", "Source workbook is unavailable.", "validation", item.id);
+    const workbook = readImportWorkbook(await this.storage.get(analysis.fileKey), analysis.workbookAnalysis.workbookName);
+    const selected = item.sheets.filter((sheet: any) => sheet.action === "IMPORT");
+    const summaries: any[] = [];
+    let totalValid = 0, totalInvalid = 0, totalNew = 0, totalExisting = 0;
+    const seen = new Set<string>();
+    for (const sheet of selected) {
+      const rows = recordsForTable(workbook, this.persistedTable(sheet));
+      const normalized = rows.map((row) => this.valuesForSheet(row, sheet));
+      const validRows = normalized.filter(({ values }) => this.sheetValueErrors(values).length === 0);
+      const invalidRows = normalized.length - validRows.length;
+      let duplicates = 0;
+      for (const { values } of validRows) {
+        const key = `${sheet.projectId}:${String(values.externalUnitId).trim()}`;
+        if (seen.has(key)) duplicates++;
+        seen.add(key);
+      }
+      const identifiers = validRows.map(({ values }) => String(values.externalUnitId).trim());
+      const existing = await this.prisma.unit.count({ where: { projectId: sheet.projectId!, developerId: sheet.developerId!, externalUnitId: { in: identifiers } } });
+      const summary = {
+        sheetId: sheet.id,
+        sheetName: sheet.sheetName,
+        projectId: sheet.projectId,
+        project: sheet.project?.name,
+        rowsFound: rows.length,
+        valid: validRows.length,
+        invalidRows,
+        duplicates,
+        newUnits: validRows.length - existing,
+        existingUnits: existing,
+        mappingVersion: sheet.mappingVersion,
+        sourcePreview: sheet.sourcePreview,
+        normalizedRows: validRows.slice(0, 10).map(({ values }) => values),
+      };
+      summaries.push(summary);
+      totalValid += validRows.length;
+      totalInvalid += invalidRows + duplicates;
+      totalNew += validRows.length - existing;
+      totalExisting += existing;
+      await this.prisma.importSheet.update({ where: { id: sheet.id }, data: { normalizedPreview: this.json(summary), previewMappingVersion: sheet.mappingVersion } });
+    }
+    const preview = {
+      sheets: summaries,
+      selectedSheetCount: selected.length,
+      valid: totalValid,
+      invalidRows: totalInvalid,
+      newUnits: totalNew,
+      existingUnits: totalExisting,
+      paymentPlanCount: 0,
+      blockingIssues: 0,
+      canConfirm: totalInvalid === 0 && selected.length > 0,
+    };
+    await this.prisma.dataImport.update({ where: { id: item.id }, data: { preview: this.json(preview), status: preview.canConfirm ? ImportStatus.READY : ImportStatus.NEEDS_INPUT } });
+    return this.get(item.id);
+  }
+
   async preview(id: string) {
     const item = await this.get(id);
+    if (item.sheets.length) return this.previewSheets(item);
     if (!item.workflow.canPreview)
       throw new ImportHttpException(
         HttpStatus.UNPROCESSABLE_ENTITY,
@@ -1106,7 +1458,7 @@ export class ImporterService {
         const values = this.valuesForRow(row, analysis);
         const updateData = this.unitData(values, false);
         const changedFields = this.changedUnitFields(prior, updateData);
-        const incomingPlans = this.paymentPlansForRow(row, analysis, rowIndex + 2);
+        const incomingPlans: Array<Record<string, any>> = [];
         const planChanged = incomingPlans.some((incoming) => {
           const priorPlan = prior.paymentPlans.find((plan) => (plan.durationMonths ?? undefined) === incoming.durationMonths && plan.isActive);
           return !priorPlan || !this.sameValue(priorPlan.totalPrice, incoming.totalPrice) || !this.sameValue(priorPlan.installmentAmount, incoming.installmentAmount) || !this.sameValue(priorPlan.downPaymentAmount ?? priorPlan.downPayment, incoming.downPaymentAmount ?? incoming.downPayment);
@@ -1164,7 +1516,7 @@ export class ImporterService {
       missingUnitPolicy: item.missingUnitPolicy,
       changeExamples,
       blockingIssues: blocking + (duplicateIdentifiers ? 1 : 0),
-      paymentPlanCount: analysis.rows.reduce((total, row, index) => total + this.paymentPlansForRow(row, analysis, index + 2).length, 0),
+      paymentPlanCount: 0,
       paymentPlanDurations: [...new Set(Object.values(analysis.paymentPlanMappings ?? {}).filter((plan) => plan.approved).map((plan) => plan.durationMonths))],
       currency: String(analysis.defaultValues.currency ?? ""),
       canConfirm: blocking === 0 && duplicateIdentifiers === 0 && invalidRows === 0,
@@ -1352,8 +1704,79 @@ export class ImporterService {
       .map(([field]) => field);
   }
 
+  private async confirmSheets(item: any) {
+    const selected = item.sheets.filter((sheet: any) => sheet.action === "IMPORT");
+    const stale = selected.some((sheet: any) => sheet.previewMappingVersion !== sheet.mappingVersion);
+    if (!item.workflow.canConfirm || stale)
+      throw new ImportHttpException(HttpStatus.UNPROCESSABLE_ENTITY, "IMPORT_PREVIEW_REQUIRED", "أنشئ معاينة حديثة بعد آخر تعديل قبل تأكيد الاستيراد.", "validation", item.id);
+    const analysis = item.analysis as Analysis;
+    if (!analysis.fileKey) throw new ImportHttpException(HttpStatus.UNPROCESSABLE_ENTITY, "IMPORT_VALIDATION_ISSUES", "Source workbook is unavailable.", "validation", item.id);
+    const workbook = readImportWorkbook(await this.storage.get(analysis.fileKey), analysis.workbookAnalysis.workbookName);
+    await this.prisma.dataImport.update({ where: { id: item.id }, data: { status: ImportStatus.IMPORTING } });
+    try {
+      const result = await this.prisma.$transaction(async (tx) => {
+        let created = 0, updated = 0, rejected = 0, skipped = 0;
+        for (const sheet of selected) {
+          let sheetCreated = 0, sheetUpdated = 0;
+          const rows = recordsForTable(workbook, this.persistedTable(sheet));
+          for (const [index, row] of rows.entries()) {
+            const { values, metadata } = this.valuesForSheet(row, sheet);
+            const externalUnitId = String(values.externalUnitId ?? "").trim();
+            if (!externalUnitId) { rejected++; continue; }
+            const existing = await tx.unit.findUnique({
+              where: { developerId_projectId_externalUnitId: { developerId: sheet.developerId!, projectId: sheet.projectId!, externalUnitId } },
+              include: { paymentPlans: true, offers: true },
+            });
+            const updateData = this.unitData(values, false);
+            updateData.sourceMetadata = this.json({
+              ...metadata,
+              _provenance: {
+                importId: item.id,
+                importSheetId: sheet.id,
+                filename: item.fileName,
+                sheet: sheet.sheetName,
+                row: (sheet.headerRow ?? 1) + index + 1,
+                mappingVersion: sheet.mappingVersion,
+                mappings: sheet.mappings,
+              },
+            });
+            if (existing && !this.changedUnitFields(existing, updateData).length) { skipped++; continue; }
+            const before = existing ? this.json({ unit: this.comparable(existing), paymentPlans: existing.paymentPlans, offers: existing.offers }) : undefined;
+            const unit = existing
+              ? await tx.unit.update({ where: { id: existing.id }, data: updateData })
+              : await tx.unit.create({ data: { ...updateData, externalUnitId, developerId: sheet.developerId!, projectId: sheet.projectId!, sourceImportId: item.id } as Prisma.UnitUncheckedCreateInput });
+            existing ? (updated++, sheetUpdated++) : (created++, sheetCreated++);
+            if (updateData.price != null && (!existing?.price || existing.price.toString() !== String(updateData.price)))
+              await tx.unitPriceHistory.create({ data: { unitId: unit.id, price: updateData.price as any, currency: String(updateData.currency || existing?.currency || sheet.defaultCurrency || "EGP"), importId: item.id } });
+            const after = await tx.unit.findUniqueOrThrow({ where: { id: unit.id }, include: { paymentPlans: true, offers: true } });
+            await tx.importUnitChange.create({ data: { importId: item.id, importSheetId: sheet.id, unitId: unit.id, operation: existing ? ImportUnitOperation.UPDATED : ImportUnitOperation.CREATED, beforeData: before, afterData: this.json({ unit: this.comparable(after), paymentPlans: after.paymentPlans, offers: after.offers }) } });
+          }
+          await tx.importSheet.update({ where: { id: sheet.id }, data: { rowsCreated: sheetCreated, rowsUpdated: sheetUpdated, importedAt: new Date() } });
+          for (const [sourceColumn, canonicalField] of Object.entries(sheet.mappings as Record<string, string>)) {
+            if (!INVENTORY_CANONICAL.includes(canonicalField)) continue;
+            const developer = await tx.developer.findUnique({ where: { id: sheet.developerId! }, select: { slug: true } });
+            const developerSlug = developer?.slug ?? `developer:${sheet.developerId}`;
+            await tx.importMapping.upsert({
+              where: { developerSlug_normalizedColumn: { developerSlug, normalizedColumn: this.normalize(sourceColumn) } },
+              create: { developerSlug, sourceColumn, normalizedColumn: this.normalize(sourceColumn), canonicalField, approved: true, confidence: 1 },
+              update: { canonicalField, approved: true, confidence: 1 },
+            });
+          }
+        }
+        await tx.dataImport.update({ where: { id: item.id }, data: { status: ImportStatus.COMPLETED, rowsCreated: created, rowsUpdated: updated, rowsRejected: rejected, rowsSkipped: skipped, rowsFailed: rejected, completedAt: new Date() } });
+        return { created, updated, rejected, skipped, selectedSheets: selected.length, paymentPlansCreated: 0 };
+      }, { timeout: 120_000 });
+      this.cache?.invalidateCustomerData();
+      return { import: await this.get(item.id), result };
+    } catch (error) {
+      await this.prisma.dataImport.update({ where: { id: item.id }, data: { status: ImportStatus.READY } });
+      throw error;
+    }
+  }
+
   async confirm(id: string) {
     const item = await this.get(id);
+    if (item.sheets.length) return this.confirmSheets(item);
     const unresolved = item.issues.filter(
       (i) => i.severity === IssueSeverity.BLOCKING && !i.resolvedAt,
     );
@@ -1447,13 +1870,7 @@ export class ImporterService {
             const activePlan = existing?.paymentPlans.find(
               (plan) => plan.isActive,
             );
-            const incomingPlans = this.paymentPlansForRow(
-              row,
-              analysis,
-              rowIndex + 2,
-              id,
-              item.fileName,
-            );
+            const incomingPlans: Array<Record<string, any>> = [];
             const activeOffer = existing?.offers.find(
               (offer) => offer.isActive,
             );

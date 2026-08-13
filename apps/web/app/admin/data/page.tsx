@@ -26,6 +26,7 @@ type Batch = {
   developer?: { name: string } | null;
   project?: { name: string } | null;
   uploadedBy?: { name: string } | null;
+  sheets?: Array<{id:string;sheetName:string;action:string;classification:string;rowsCreated:number;rowsUpdated:number;project?:{name:string}|null}>;
   _count: { issues: number; unitChanges: number };
 };
 type Page = { items: Batch[]; page: number; pageSize: number; total: number };
@@ -162,6 +163,7 @@ export default function DataPage() {
                     <p className="mt-1 text-xs text-[#84908a]" dir="auto">
                       {batch.fileName}
                     </p>
+                    {!!batch.sheets?.length&&<p className="mt-2 text-xs text-[#65736d]">مختار: {batch.sheets.filter(sheet=>sheet.action==="IMPORT").length} من {batch.sheets.length} · متجاهل: {batch.sheets.filter(sheet=>sheet.action==="IGNORE").length}</p>}
                   </td>
                   <td className="px-4 py-4">
                     <span dir="auto">{batch.developer?.name || "—"}</span>

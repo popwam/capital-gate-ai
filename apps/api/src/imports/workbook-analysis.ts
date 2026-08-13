@@ -13,8 +13,8 @@ export interface SheetAnalysis { name: string; rowCount: number; columnCount: nu
 export interface WorkbookAnalysis { workbookName: string; sheets: SheetAnalysis[]; selectedSheet?: string; selectedTableId?: string; inventorySheetCount: number; warnings: string[]; }
 
 const artifacts = /^(?:_*empty(?:_+\d+)?_*|__empty(?:_\d+)?|unnamed:\s*\d+|column\s*\d+)$/iu;
-const summaryLabels = /^(?:num(?:ber)? of units|value|total|grand total|total units|count|average|summary)\s*:?$/iu;
-const totalRow = /^(?:total|grand total|total units|average|count|summary|الإجمالي|الاجمالي|المجموع)\b/iu;
+const summaryLabels = /^(?:num(?:ber)? of units|total no\.? of units|total price of units|total value|value|total|grand total|total units|count|average|summary|totals|الإجمالي|عدد الوحدات|القيمة الإجمالية)\s*:?$/iu;
+const totalRow = /^(?:total(?:\s+(?:no\.?\s+of\s+units|price\s+of\s+units|value|units))?|grand total|totals?|average|count|summary|الإجمالي|الاجمالي|المجموع|عدد الوحدات|القيمة الإجمالية)\b/iu;
 
 export function normalizeHeader(value: string) {
   return value.normalize("NFKC").trim().replace(/[\r\n\t]+/g, " ").replace(/[_-]+/g, " ").replace(/\s+/g, " ").replace(/^[:;|]+|[:;|]+$/g, "").toLowerCase();
@@ -78,7 +78,8 @@ function headerCandidate(rows: CellValue[][], rowIndex: number, merges: XLSX.Ran
   const dataRows = rows.slice(rowIndex + 1, rowIndex + 7).filter((candidate) => filled(candidate) >= Math.max(2, Math.floor(valid.length * .4)));
   const density = valid.length ? dataRows.reduce((sum, candidate) => sum + Math.min(1, filled(candidate) / valid.length), 0) / Math.max(1, dataRows.length) : 0;
   const mergedAcross = merges.some((merge) => merge.s.r === rowIndex && merge.e.c > merge.s.c);
-  const score = Math.max(0, Math.min(1, domainMatches * .16 + valid.length * .045 + density * .28 + Math.min(dataRows.length, 4) * .04 + (unique === valid.length && valid.length > 1 ? .08 : 0) - rejected.length * .06 - (mergedAcross ? .25 : 0)));
+  const numericRatio = populated.length ? rejected.filter((entry) => entry.reason === "DATA_VALUE").length / populated.length : 0;
+  const score = Math.max(0, Math.min(1, domainMatches * .16 + valid.length * .045 + density * .28 + Math.min(dataRows.length, 4) * .04 + (unique === valid.length && valid.length > 1 ? .08 : 0) - rejected.length * .08 - numericRatio * .45 - (mergedAcross ? .25 : 0)));
   return { row: rowIndex + 1, confidence: Math.round(score * 100), score, validHeaderCount: valid.length, domainMatches, rejected };
 }
 
@@ -125,9 +126,10 @@ function classify(name: string, rows: CellValue[][], tables: DetectedTable[]) {
   const fields = new Set(tables.flatMap((table) => table.columns.map((column) => column.semanticField).filter(Boolean)));
   const keyValuePlanRows = rows.filter((row) => filled(row) === 2 && /(?:down payment|installment|maintenance|delivery|مقدم|تقسيط|صيانه|تسليم)/iu.test(String(row.find((cell) => cell != null) ?? ""))).length;
   const inventorySignals = ["externalUnitId", "unitType", "builtUpArea", "price", "status"].filter((field) => fields.has(field as SemanticField)).length;
+  if (/payment|installment|plan|5\s*years?|8\s*years?|10\s*years?|سداد|تقسيط|خطط السداد/iu.test(normalizedName)) return { role: "PAYMENT_PLAN" as const, confidence: Math.min(96, 72 + keyValuePlanRows * 7) };
   if (inventorySignals >= 3 || (fields.has("externalUnitId") && fields.has("price"))) return { role: "INVENTORY" as const, confidence: Math.min(99, 60 + inventorySignals * 8) };
   if (fields.has("externalUnitId") || (/inventory|units?|availability|مخزون|وحدات/iu.test(normalizedName) && tables.length)) return { role: "INVENTORY" as const, confidence: Math.max(64, 56 + inventorySignals * 8) };
-  if (keyValuePlanRows >= 2 || /payment|installment|plan|سداد|تقسيط/iu.test(normalizedName)) return { role: "PAYMENT_PLAN" as const, confidence: Math.min(96, 65 + keyValuePlanRows * 7) };
+  if (keyValuePlanRows >= 2) return { role: "PAYMENT_PLAN" as const, confidence: Math.min(96, 65 + keyValuePlanRows * 7) };
   if (/price list|prices|الاسعار|الأسعار/iu.test(normalizedName) || fields.has("price")) return { role: "PRICE_LIST" as const, confidence: 72 };
   if (/availability|available|اتاحه|إتاحة|متاح/iu.test(normalizedName) || fields.has("status")) return { role: "AVAILABILITY" as const, confidence: 70 };
   if (/amenit|facilit|خدمات|مرافق/iu.test(normalizedName)) return { role: "AMENITIES" as const, confidence: 82 };

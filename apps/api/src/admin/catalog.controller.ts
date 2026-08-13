@@ -226,6 +226,7 @@ export class CatalogController {
         investmentProfile: true,
         landmarks: true,
         competitorsFrom: { include: { competitorProject: true } },
+        paymentPlans: { where: { isActive: true }, orderBy: [{ durationMonths: "asc" }, { name: "asc" }] },
         _count: { select: { units: true, knowledgeItems: true } },
       },
     });
@@ -446,6 +447,19 @@ export class CatalogController {
       "PaymentPlan",
       item.id,
     );
+    this.cache.invalidateCustomerData();
+    return item;
+  }
+  @Post("projects/:id/payment-plans") async projectPaymentPlan(
+    @Param("id") projectId: string,
+    @Body() body: PaymentPlanDto,
+    @Req() req: any,
+  ) {
+    await this.prisma.project.findUniqueOrThrow({ where: { id: projectId }, select: { id: true } });
+    const item = await this.prisma.paymentPlan.create({
+      data: { ...body, validFrom: body.validFrom ? new Date(body.validFrom) : undefined, validTo: body.validTo ? new Date(body.validTo) : undefined, projectId },
+    });
+    await this.audit.record(req.admin.id, "PROJECT_PAYMENT_PLAN_CREATED", "PaymentPlan", item.id, { projectId });
     this.cache.invalidateCustomerData();
     return item;
   }

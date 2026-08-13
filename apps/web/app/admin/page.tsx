@@ -51,7 +51,9 @@ type ImportData = {
   issues: Issue[];
   project?: { id: string; name: string } | null;
   workflow: ImportWorkflow;
+  sheets: ImportSheetData[];
 };
+type ImportSheetData = { id:string; sheetName:string; tableId?:string|null; classification:string; confidence:number; action:"IMPORT"|"IGNORE"; headerRow?:number|null; startRow?:number|null; endRow?:number|null; rowsDetected:number; projectId?:string|null; developerId?:string|null; locationId?:string|null; defaultCurrency?:string|null; defaultUnitType?:string|null; columns?:Array<{key:string;originalHeader:string;samples?:unknown[]}>; mappings?:Record<string,string>; mappingSources?:Record<string,string>; sourcePreview?:Array<Record<string,unknown>>; mappingVersion:number; previewMappingVersion?:number|null; project?:{name:string}|null };
 type Location = {
   id: string;
   name: string;
@@ -102,7 +104,7 @@ export function ImportAssistant() {
   const issue = useMemo(
     () =>
       item?.issues.find(
-        (i) => !i.resolvedAt && (i.severity === "BLOCKING" || i.required === true),
+        (i) => !i.field?.startsWith("sheet:") && !i.resolvedAt && (i.severity === "BLOCKING" || i.required === true),
       ),
     [item],
   );
@@ -163,6 +165,9 @@ export function ImportAssistant() {
     catch (e) { setError(adminErrorMessage(e)); }
     finally { setLoading(false); }
   }
+  async function updateSheet(sheetId:string,data:Record<string,unknown>){if(!item)return;setLoading(true);setError("");try{setItem(await adminApi.patch<ImportData>(`/imports/${item.id}/sheets/${sheetId}`,data))}catch(e){setError(adminErrorMessage(e))}finally{setLoading(false)}}
+  async function updateAllSheets(data:Record<string,unknown>){if(!item)return;setLoading(true);setError("");try{setItem(await adminApi.patch<ImportData>(`/imports/${item.id}/sheets`,data))}catch(e){setError(adminErrorMessage(e))}finally{setLoading(false)}}
+  async function updateSheetMapping(sheetId:string,sourceColumn:string,canonicalField:string){if(!item)return;setLoading(true);setError("");try{if(item.status==="COMPLETED"){const correction=await adminApi.post<{id:string}>(`/imports/${item.id}/sheets/${sheetId}/corrections`,{sourceColumn,canonicalField});const preview=await adminApi.post<{affected:number;conflicts:number;unchanged:number;changes:Array<{unitId:string;externalUnitId:string;conflict:boolean}>}>(`/imports/${item.id}/corrections/${correction.id}/preview`);const decisions:Record<string,string>={};for(const change of preview.changes.filter(change=>change.conflict)){const decision=globalThis.prompt(`تعارض في الوحدة ${change.externalUnitId}. اكتب APPLY لتطبيق القيمة المصححة، KEEP للاحتفاظ بالقيمة الحالية، أو SKIP لتخطي السجل.`,"KEEP")?.toUpperCase();decisions[change.unitId]=decision==="APPLY"?"APPLY_CORRECTED":decision==="SKIP"?"SKIP":"KEEP_CURRENT"}if(globalThis.confirm(`معاينة التصحيح: ${preview.affected} وحدة ستتأثر، ${preview.conflicts} تعارضات، ${preview.unchanged} بلا تغيير. هل تريد تطبيق القرارات؟`)){await adminApi.post(`/imports/${item.id}/corrections/${correction.id}/confirm`,{decisions});setItem(await adminApi.get<ImportData>(`/imports/${item.id}`))}}else setItem(await adminApi.patch<ImportData>(`/imports/${item.id}/sheets/${sheetId}/mapping`,{sourceColumn,canonicalField}))}catch(e){setError(adminErrorMessage(e))}finally{setLoading(false)}}
   async function confirm() {
     if (!item) return;
     setLoading(true);
@@ -307,8 +312,14 @@ export function ImportAssistant() {
                       <Assistant
                         text={`وجدت ${item.rowsDetected} صفاً في «${item.analysis?.sheetName || "الملف"}». تم التعرف على ${Object.keys(item.analysis?.mappings || {}).length} أعمدة، وسأطلب منك فقط القرارات التي تحتاج مراجعة.`}
                       />
-                      <WorkbookReview item={item} chooseTable={chooseTable} loading={loading}/>
-                      <MappingReview item={item} />
+                      {!!item.sheets?.length && (
+                        <SheetReview item={item} projects={selectorOptions.projects} updateSheet={updateSheet} updateAll={updateAllSheets} updateMapping={updateSheetMapping} loading={loading}/>
+                      )}
+                      {item.status!=="COMPLETED"&&item.sheets?.some(sheet=>sheet.action==="IMPORT"&&sheet.projectId)&&<button type="button" disabled={loading} onClick={()=>{const source=item.sheets.find(sheet=>sheet.action==="IMPORT"&&sheet.projectId)!;updateAllSheets({projectId:source.projectId,defaultCurrency:source.defaultCurrency,defaultUnitType:source.defaultUnitType})}} className="rounded-xl border border-forest px-4 py-2 text-sm font-bold text-forest">تطبيق سياق أول جدول على كل الجداول المختارة</button>}
+                      {!item.sheets?.length && (
+                        <WorkbookReview item={item} chooseTable={chooseTable} loading={loading}/>
+                      )}
+                      {!item.sheets?.length && <MappingReview item={item} />}
                       {issue ? (
                         <>
                           <Assistant text={issue.message} />
@@ -678,6 +689,11 @@ function Analysis({ item }: { item: ImportData }) {
     </div>
   );
 }
+const IMPORT_FIELD_LABELS:Record<string,string>={externalUnitId:"كود الوحدة",phase:"المرحلة",cluster:"المجموعة",building:"المبنى",floor:"الدور",unitType:"نوع الوحدة",unitSubType:"النوع الفرعي",bedrooms:"غرف النوم",bathrooms:"الحمامات",builtUpArea:"المساحة المبنية",landArea:"مساحة الأرض",gardenArea:"مساحة الحديقة",roofArea:"مساحة السطح",terraceArea:"مساحة التراس",price:"السعر الرسمي",currency:"العملة",status:"حالة الوحدة",deliveryDate:"تاريخ التسليم",deliveryYears:"سنوات التسليم",finishingType:"نوع التشطيب",maintenance:"الصيانة",clubFees:"رسوم النادي",discount:"الخصم",offerText:"العرض",METADATA:"معلومة إضافية",IGNORE:"تجاهل العمود",__METADATA__:"معلومة إضافية",__IGNORE__:"تجاهل العمود"};
+const IMPORT_FIELDS=Object.entries(IMPORT_FIELD_LABELS).filter(([value])=>!value.startsWith("__") && !["METADATA","IGNORE"].includes(value));
+function SheetReview({item,projects,updateSheet,updateAll,updateMapping,loading}:{item:ImportData;projects:SelectorItem[];updateSheet:(id:string,data:Record<string,unknown>)=>void;updateAll:(data:Record<string,unknown>)=>void;updateMapping:(id:string,column:string,target:string)=>void;loading:boolean}){
+  return <section className="space-y-3 rounded-2xl border bg-[#fbfaf7] p-4" dir="rtl"><div><h3 className="font-bold">مراجعة الشيتات</h3><p className="mt-1 text-xs text-[#68756f]">اختر الجداول التي تريد استيرادها. الشيتات المتجاهلة لا تنشئ أسئلة أو وحدات أو خطط سداد.</p></div>{item.sheets.map(sheet=><details key={sheet.id} open={sheet.action==="IMPORT"} className="rounded-xl border bg-white p-3"><summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3"><span><b dir="auto">{sheet.sheetName}</b>{sheet.tableId&&<small className="ms-2 text-[#748079]">صفوف {sheet.startRow}–{sheet.endRow}</small>}<small className="mt-1 block text-[#748079]">{sheet.classification} · ثقة {sheet.confidence}% · {sheet.rowsDetected} صف</small></span><span className="flex rounded-lg border p-1"><button type="button" disabled={loading} onClick={event=>{event.preventDefault();updateSheet(sheet.id,{action:"IMPORT"})}} className={`rounded-md px-3 py-2 text-xs font-bold ${sheet.action==="IMPORT"?"bg-forest text-white":""}`}>استيراد</button><button type="button" disabled={loading} onClick={event=>{event.preventDefault();updateSheet(sheet.id,{action:"IGNORE"})}} className={`rounded-md px-3 py-2 text-xs font-bold ${sheet.action==="IGNORE"?"bg-[#ece9e1]":""}`}>تجاهل</button></span></summary>{sheet.action==="IMPORT"&&<div className="mt-4 space-y-4 border-t pt-4"><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4"><label className="text-xs font-bold">المشروع<select value={sheet.projectId||""} onChange={event=>updateSheet(sheet.id,{projectId:event.target.value})} className="mt-1 h-11 w-full rounded-xl border px-2"><option value="">اختر المشروع</option>{projects.map(project=><option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="text-xs font-bold">العملة<select value={sheet.defaultCurrency||""} onChange={event=>updateSheet(sheet.id,{defaultCurrency:event.target.value})} className="mt-1 h-11 w-full rounded-xl border px-2"><option value="">من عمود الملف</option>{["EGP","USD","EUR","AED","SAR","GBP"].map(value=><option key={value}>{value}</option>)}</select></label><label className="text-xs font-bold">نوع الوحدة الافتراضي<select value={sheet.defaultUnitType||""} onChange={event=>updateSheet(sheet.id,{defaultUnitType:event.target.value})} className="mt-1 h-11 w-full rounded-xl border px-2"><option value="">بدون افتراض</option>{["APARTMENT","VILLA","TOWNHOUSE","TWIN_HOUSE","CHALET","OFFICE","CLINIC","RETAIL","COMMERCIAL","ADMINISTRATIVE","MEDICAL","OTHER"].map(value=><option key={value}>{value}</option>)}</select></label><label className="text-xs font-bold">صف العناوين<div className="mt-1 flex gap-1"><input id={`header-${sheet.id}`} type="number" min="1" defaultValue={sheet.headerRow||1} className="h-11 min-w-0 flex-1 rounded-xl border px-2"/><button type="button" onClick={()=>{const input=document.getElementById(`header-${sheet.id}`) as HTMLInputElement;updateSheet(sheet.id,{headerRow:Number(input.value)})}} className="rounded-xl border px-3">تطبيق</button></div></label></div><div><h4 className="text-sm font-bold">معاينة المصدر</h4><div className="mt-2 overflow-x-auto"><table className="min-w-full text-xs"><thead><tr>{(sheet.columns||[]).map(column=><th key={column.key} className="whitespace-nowrap border p-2 text-start" dir="auto">{column.originalHeader}</th>)}</tr></thead><tbody>{(sheet.sourcePreview||[]).slice(0,5).map((row,index)=><tr key={index}>{(sheet.columns||[]).map(column=><td key={column.key} className="max-w-44 truncate border p-2" dir="auto">{row[column.key]==null?"—":String(row[column.key])}</td>)}</tr>)}</tbody></table></div></div><div><h4 className="text-sm font-bold">مراجعة الأعمدة</h4><div className="mt-2 space-y-2">{(sheet.columns||[]).map(column=><div key={column.key} className="grid items-center gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_1fr_220px]"><div><b dir="auto">{column.originalHeader}</b><small className="mt-1 block truncate text-[#748079]" dir="auto">{(column.samples||[]).map(String).join(" · ")||"لا توجد عينات"}</small></div><span className="text-xs">{IMPORT_FIELD_LABELS[sheet.mappings?.[column.key]||""]||"يحتاج مراجعة"}<small className="block text-[#748079]">{sheet.mappingSources?.[column.key]||"غير محدد"}</small></span><select value={(sheet.mappings?.[column.key]||"").replace(/^__|__$/g,"")} onChange={event=>updateMapping(sheet.id,column.key,event.target.value)} className="h-10 rounded-lg border px-2 text-sm"><option value="">تعديل المعنى</option>{IMPORT_FIELDS.map(([value,label])=><option key={value} value={value}>{label}</option>)}<option value="METADATA">معلومة إضافية</option><option value="IGNORE">تجاهل العمود</option></select></div>)}</div></div>{sheet.previewMappingVersion!=null&&sheet.previewMappingVersion!==sheet.mappingVersion&&<p className="rounded-lg bg-amber-50 p-3 text-xs font-bold text-amber-800">تم تعديل التفسير. يجب إنشاء المعاينة مرة أخرى.</p>}</div>}</details>)}</section>;
+}
 function WorkbookReview({ item, chooseTable, loading }: { item: ImportData; chooseTable: (sheetName: string, headerRow: number) => void; loading: boolean }) {
   const analysis = item.analysis?.workbookAnalysis;
   const selected = item.analysis?.selectedTable;
@@ -707,7 +723,7 @@ function Issues({ issues }: { issues: Issue[] }) {
                 className={`mt-1 h-2 w-2 rounded-full ${i.resolvedAt ? "bg-[#3d8c6c]" : i.severity === "BLOCKING" ? "bg-coral" : "bg-[#e3ad52]"}`}
               />
               <div>
-                <p className="text-[8px] font-bold">{i.field}</p>
+                <p className="text-[8px] font-bold">{i.message}</p>
                 <p className="text-[7px] text-[#8b958f]">
                   {i.resolvedAt ? "Resolved" : i.severity}
                 </p>

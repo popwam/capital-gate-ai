@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpStatus, Logger, Param, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpStatus, Logger, Param, Patch, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { Allow, IsIn, IsNotEmpty, IsString } from "class-validator";
 import { extname } from "node:path";
@@ -8,6 +8,10 @@ import { ImporterService } from "./importer.service";
 import { ImportHttpException, importErrorDetails } from "./import-errors";
 
 class ResolutionDto { @IsString() @IsNotEmpty() field!: string; @Allow() value!: unknown; }
+class SheetUpdateDto { @Allow() action?: unknown; @Allow() headerRow?: unknown; @Allow() projectId?: unknown; @Allow() developerId?: unknown; @Allow() locationId?: unknown; @Allow() defaultCurrency?: unknown; @Allow() defaultUnitType?: unknown; }
+class SheetMappingDto { @IsString() @IsNotEmpty() sourceColumn!: string; @IsString() @IsNotEmpty() canonicalField!: string; }
+class CorrectionDto extends SheetMappingDto {}
+class CorrectionDecisionDto { @Allow() decisions?: Record<string,string>; }
 class RemoveBatchDto { @IsIn(["DELETE_UNFINISHED", "DELETE_SOURCE_RECORD", "DELETE_EXCLUSIVE_RECORDS", "ROLLBACK_SAFE"]) mode!: "DELETE_UNFINISHED" | "DELETE_SOURCE_RECORD" | "DELETE_EXCLUSIVE_RECORDS" | "ROLLBACK_SAFE"; }
 @UseGuards(AdminAuthGuard)
 @Controller("admin/imports")
@@ -37,6 +41,12 @@ export class ImportsController {
     }
   }
   @Post(":id/resolve") resolve(@Param("id") id: string, @Body() body: ResolutionDto) { return this.imports.resolve(id, body.field, body.value); }
+  @Patch(":id/sheets") updateSelectedSheets(@Param("id") id:string,@Body() body:SheetUpdateDto){return this.imports.updateSelectedSheets(id,body as Record<string,unknown>);}
+  @Patch(":id/sheets/:sheetId") updateSheet(@Param("id") id: string, @Param("sheetId") sheetId: string, @Body() body: SheetUpdateDto) { return this.imports.updateImportSheet(id, sheetId, body as Record<string, unknown>); }
+  @Patch(":id/sheets/:sheetId/mapping") updateSheetMapping(@Param("id") id: string, @Param("sheetId") sheetId: string, @Body() body: SheetMappingDto) { return this.imports.updateImportSheetMapping(id, sheetId, body.sourceColumn, body.canonicalField); }
+  @Post(":id/sheets/:sheetId/corrections") async createCorrection(@Param("id") id:string,@Param("sheetId") sheetId:string,@Body() body:CorrectionDto,@Req() req:any){const result=await this.imports.createCorrection(id,sheetId,body.sourceColumn,body.canonicalField,req.admin.id);await this.audit.record(req.admin.id,"IMPORT_CORRECTION_CREATED","DataImport",id,{correctionId:result.id,sheetId,sourceColumn:body.sourceColumn,canonicalField:body.canonicalField});return result;}
+  @Post(":id/corrections/:correctionId/preview") previewCorrection(@Param("id") id:string,@Param("correctionId") correctionId:string){return this.imports.previewCorrection(id,correctionId);}
+  @Post(":id/corrections/:correctionId/confirm") async confirmCorrection(@Param("id") id:string,@Param("correctionId") correctionId:string,@Body() body:CorrectionDecisionDto,@Req() req:any){const result=await this.imports.confirmCorrection(id,correctionId,body.decisions);await this.audit.record(req.admin.id,"IMPORT_CORRECTION_CONFIRMED","DataImport",id,{correctionId,...result});return result;}
   @Post(":id/preview") preview(@Param("id") id: string) { return this.imports.preview(id); }
   @Post(":id/confirm") async confirm(@Param("id") id: string, @Req() req: any) { const result = await this.imports.confirm(id); await this.audit.record(req.admin.id, "IMPORT_CONFIRMED", "DataImport", id, result.result); return result; }
   @Delete(":id") async remove(@Param("id") id: string, @Body() body: RemoveBatchDto, @Req() req: any) { const result = await this.imports.removeBatch(id, body.mode); await this.audit.record(req.admin.id, "IMPORT_BATCH_REMOVED", "DataImport", id, { mode: body.mode, affected: result.affected, conflicts: result.conflicts, sourceObjectDeleted: result.sourceObjectDeleted, sourceObjectRetained: result.sourceObjectRetained, storageCleanupFailed: result.storageCleanupFailed }); return result; }
