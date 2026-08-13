@@ -2,6 +2,7 @@
   "name": "maqar-ai-platform",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "npm@11.12.1",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev": "npm run dev -w @maqar/web",

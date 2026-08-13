@@ -48,14 +48,26 @@ export class ChatService {
       }
     }
 
+    const unitIds = properties.map(p => p.id);
     if ((state.purchaseIntent ?? 0) >= 80 && !state.contactPhone) payload = { ...payload, type: "lead_prompt" };
     if (state.contactPhone) {
       const existingLead = await this.prisma.lead.findFirst({ where: { conversationId }, orderBy: { createdAt: "desc" } });
-      const lead = existingLead ?? await this.prisma.lead.create({ data: { conversationId, name: state.contactName || "Anonymous customer", phone: state.contactPhone, intent: "PURCHASE", intentScore: state.purchaseIntent ?? 80, payload: this.serialize({ requirements: state, interestedUnits: priorUnitIds }), source: "WEB_AI", events: { create: { type: "LEAD_CREATED", payload: { channel: "WEB" } } } } });
+      const interestedUnits = [...new Set([...priorUnitIds, ...unitIds])];
+      const interestedProjects = interestedUnits.length ? (await this.prisma.unit.findMany({ where: { id: { in: interestedUnits } }, select: { projectId: true } })).map(item => item.projectId) : [];
+      const conversationSummary = { customerGoal: state.purpose, budget: { min: state.budgetMin, max: state.budgetMax, currency: state.currency }, preferredLocations: state.locations ?? [], propertyTypes: state.propertyTypes ?? [], bedrooms: state.bedrooms, hardRequirements: state.hardRequirements ?? [], softPreferences: state.softPreferences ?? [], intentScore: state.purchaseIntent ?? 80, recentConversation: messages.slice(-8) };
+      const leadPayload = this.serialize({ requirements: state, interestedUnits, interestedProjects: [...new Set(interestedProjects)], conversationSummary });
+      const lead = existingLead
+        ? await this.prisma.lead.update({
+            where: { id: existingLead.id },
+            data: { name: state.contactName || existingLead.name, phone: state.contactPhone, intentScore: state.purchaseIntent ?? existingLead.intentScore, payload: leadPayload, events: { create: { type: "LEAD_UPDATED", payload: { channel: "WEB" } } } }
+          })
+        : await this.prisma.lead.create({
+            data: { conversationId, name: state.contactName || "Anonymous customer", phone: state.contactPhone, intent: "PURCHASE", intentScore: state.purchaseIntent ?? 80, payload: leadPayload, source: "WEB_AI", events: { create: { type: "LEAD_CREATED", payload: { channel: "WEB" } } } }
+          });
+      await this.prisma.conversationState.upsert({ where: { conversationId }, create: { conversationId, searchContext: this.serialize(state), suggestedUnitIds: interestedUnits, rejectedUnitIds: [], likedUnitIds: [], intentScore: state.purchaseIntent ?? 80, summary: this.serialize(conversationSummary) }, update: { summary: this.serialize(conversationSummary) } });
       payload = { type: "lead_created", leadId: lead.id };
     }
 
-    const unitIds = properties.map(p => p.id);
     await this.prisma.$transaction([
       this.prisma.conversation.update({ where: { id: conversationId }, data: { detectedLanguage: state.language, updatedAt: new Date() } }),
       this.prisma.conversationState.upsert({ where: { conversationId }, create: { conversationId, searchContext: this.serialize(state), suggestedUnitIds: unitIds, rejectedUnitIds: [], likedUnitIds: [], intentScore: state.purchaseIntent ?? 0 }, update: { searchContext: this.serialize(state), suggestedUnitIds: unitIds.length ? unitIds : undefined, intentScore: state.purchaseIntent ?? 0 } })
