@@ -368,6 +368,14 @@ export function ImportAssistant() {
                 <aside className="space-y-4">
                   <Analysis item={item} />
                   <Issues issues={item.issues} />
+                  {!item.workflow.canPreview && item.workflow.blockingReasons.length > 0 && (
+                    <div className="rounded-[18px] border border-amber-200 bg-amber-50 p-4" dir="rtl">
+                      <p className="text-[10px] font-bold">المطلوب قبل المعاينة</p>
+                      <ul className="mt-3 list-disc space-y-1 ps-4 text-[9px] text-amber-900">
+                        {item.workflow.blockingReasons.map((reason, index) => <li key={`${reason}-${index}`} dir="auto">{reason}</li>)}
+                      </ul>
+                    </div>
+                  )}
                   <div className="rounded-[18px] border border-[#dedfd9] bg-[#e7f0eb] p-4">
                     <p className="text-[10px] font-bold">Safe by default</p>
                     <p className="mt-1 text-[9px] leading-4 text-[#66736d]">

@@ -161,11 +161,24 @@ type ImportWorkflowStage =
   | "FAILED";
 type ImportReadiness = {
   stage: ImportWorkflowStage;
+  selectedSheetCount: number;
+  ignoredSheetCount: number;
+  selectedSheets: string[];
+  ignoredSheets: string[];
+  activeTableCount: number;
+  activeIssueCount: number;
   unresolvedBlockingCount: number;
   unresolvedWarningCount: number;
+  missingCriticalMappings: string[];
+  missingContext: string[];
   canPreview: boolean;
   canConfirm: boolean;
   previewExists: boolean;
+  previewValid: boolean;
+  previewRequired: boolean;
+  legacyStateDetected: boolean;
+  blockingReasons: string[];
+  status: ImportStatus;
   nextRequiredAction: "RESOLVE_ISSUES" | "GENERATE_PREVIEW" | "CONFIRM_IMPORT" | "NONE";
 };
 
@@ -237,14 +250,22 @@ export class ImporterService {
     if (issues.length) await this.prisma.importIssue.createMany({ data: issues });
   }
 
-  private async initializeImportSheets(importId: string, workbookAnalysis: WorkbookAnalysis, metadata: Record<string, string>) {
+  private async initializeImportSheets(importId: string, workbookAnalysis: WorkbookAnalysis, metadata: Record<string, string>, legacyMappings?: Record<string, string>) {
     const developerSlug = metadata.developerSlug || "__global__";
     const remembered = await this.prisma.importMapping.findMany({ where: { approved: true, developerSlug: { in: [developerSlug, "__global__"] } } });
     for (const sheet of workbookAnalysis.sheets) {
       const tables = sheet.candidateTables.length ? sheet.candidateTables : [undefined];
       for (const table of tables) {
         const deterministic = table ? this.deterministicSheetMappings(table, remembered) : { mappings: {}, sources: {} };
-        const action = sheet.classification === "INVENTORY" && table ? "IMPORT" : "IGNORE";
+        if (table && legacyMappings) for (const column of table.columns) {
+          const legacy = legacyMappings[column.key];
+          if (legacy && INVENTORY_CANONICAL.includes(legacy)) {
+            deterministic.mappings[column.key] = legacy;
+            deterministic.sources[column.key] = "ADMIN_APPROVED";
+          }
+        }
+        const isLegacySelected = !legacyMappings || (sheet.name === workbookAnalysis.selectedSheet && table?.id === workbookAnalysis.selectedTableId);
+        const action = sheet.classification === "INVENTORY" && table && isLegacySelected ? "IMPORT" : "IGNORE";
         const created = await this.prisma.importSheet.create({
           data: {
             importId,
@@ -280,12 +301,14 @@ export class ImporterService {
 
   private getImportReadiness(item: {
     status: ImportStatus;
-    issues: Array<{ severity: IssueSeverity; resolvedAt: Date | null; required?: boolean }>;
+    issues: Array<{ field?: string | null; message?: string; severity: IssueSeverity; resolvedAt: Date | null; required?: boolean }>;
     analysis: unknown;
     preview: unknown;
     developerId: string | null;
     projectId: string | null;
     sheets?: Array<{
+      id: string;
+      sheetName: string;
       action: string;
       headerRow: number | null;
       projectId: string | null;
@@ -298,7 +321,15 @@ export class ImporterService {
     }>;
   }): ImportReadiness {
     const analysis = (item.analysis ?? {}) as Partial<Analysis>;
-    const unresolved = item.issues.filter((issue) => !issue.resolvedAt);
+    const selectedSheets = item.sheets?.filter((sheet) => sheet.action === "IMPORT") ?? [];
+    const selectedIds = new Set(selectedSheets.map((sheet: any) => sheet.id));
+    const activeIssues = item.sheets?.length
+      ? item.issues.filter((issue) => {
+          const match = String(issue.field ?? "").match(/^sheet:([^:]+):/);
+          return Boolean(match && selectedIds.has(match[1]));
+        })
+      : item.issues;
+    const unresolved = activeIssues.filter((issue) => !issue.resolvedAt);
     const unresolvedBlockingCount = unresolved.filter(
       (issue) => issue.severity === IssueSeverity.BLOCKING || issue.required === true,
     ).length;
@@ -324,7 +355,26 @@ export class ImporterService {
         (item.developerId || metadata.developerId) &&
         metadata.locationId,
     );
-    const selectedSheets = item.sheets?.filter((sheet) => sheet.action === "IMPORT") ?? [];
+    const missingCriticalMappings: string[] = [];
+    const missingContext: string[] = [];
+    for (const sheet of selectedSheets as any[]) {
+      const values = Object.values((sheet.mappings ?? {}) as Record<string, string>);
+      if (!values.includes("externalUnitId")) missingCriticalMappings.push(`${sheet.sheetName}:externalUnitId`);
+      if (!sheet.headerRow) missingContext.push(`${sheet.sheetName}:headerRow`);
+      if (!sheet.projectId) missingContext.push(`${sheet.sheetName}:projectId`);
+      if (!sheet.developerId) missingContext.push(`${sheet.sheetName}:developerId`);
+      if (!sheet.locationId) missingContext.push(`${sheet.sheetName}:locationId`);
+      if (!sheet.defaultCurrency && !values.includes("currency")) missingContext.push(`${sheet.sheetName}:currency`);
+    }
+    if (item.sheets?.length && selectedSheets.length === 0) missingContext.push("workbook:selectedSheet");
+    if (!item.sheets?.length) {
+      if (!analysis.selectedTable) missingContext.push("workbook:headerRow");
+      if (!hasIdentity) missingCriticalMappings.push("workbook:externalUnitId");
+      if (!hasCurrency) missingContext.push("workbook:currency");
+      if (!(item.projectId || metadata.projectId)) missingContext.push("workbook:projectId");
+      if (!(item.developerId || metadata.developerId)) missingContext.push("workbook:developerId");
+      if (!metadata.locationId) missingContext.push("workbook:locationId");
+    }
     const sheetsValid = selectedSheets.length > 0 && selectedSheets.every((sheet) => {
       const sheetMappings = (sheet.mappings ?? {}) as Record<string, string>;
       return Boolean(
@@ -336,10 +386,13 @@ export class ImporterService {
         Object.values(sheetMappings).includes("externalUnitId"),
       );
     });
-    const canPreview = unresolvedBlockingCount === 0 && (item.sheets?.length ? sheetsValid : contextValid);
+    const canPreview = unresolvedBlockingCount === 0 && missingCriticalMappings.length === 0 && missingContext.length === 0 && (item.sheets?.length ? sheetsValid : contextValid);
     const preview = item.preview as Record<string, unknown> | null;
     const previewExists = Boolean(preview);
-    const canConfirm = canPreview && previewExists && preview?.canConfirm === true;
+    const previewValid = previewExists && (item.sheets?.length
+      ? selectedSheets.every((sheet) => sheet.previewMappingVersion === sheet.mappingVersion)
+      : true);
+    const canConfirm = canPreview && previewValid && preview?.canConfirm === true;
     const terminal = item.status === ImportStatus.COMPLETED;
     const failed =
       item.status === ImportStatus.FAILED ||
@@ -356,13 +409,32 @@ export class ImporterService {
             : !previewExists || !canConfirm
               ? "PREVIEW"
               : "IMPORT";
+    const derivedStatus = terminal || failed ? item.status : canPreview ? ImportStatus.READY : ImportStatus.NEEDS_INPUT;
+    const blockingReasons = [
+      ...unresolved.filter((issue) => issue.severity === IssueSeverity.BLOCKING || issue.required === true).map((issue) => issue.message || issue.field || "Unresolved import requirement"),
+      ...missingCriticalMappings.map((field) => `Missing critical mapping: ${field}`),
+      ...missingContext.map((field) => `Missing context: ${field}`),
+    ];
     return {
       stage,
+      selectedSheetCount: selectedSheets.length,
+      ignoredSheetCount: item.sheets?.filter((sheet) => sheet.action === "IGNORE").length ?? 0,
+      selectedSheets: selectedSheets.map((sheet: any) => sheet.sheetName),
+      ignoredSheets: item.sheets?.filter((sheet) => sheet.action === "IGNORE").map((sheet: any) => sheet.sheetName) ?? [],
+      activeTableCount: selectedSheets.filter((sheet: any) => Boolean(sheet.headerRow)).length,
+      activeIssueCount: activeIssues.length,
       unresolvedBlockingCount,
       unresolvedWarningCount,
+      missingCriticalMappings,
+      missingContext,
       canPreview,
       canConfirm,
       previewExists,
+      previewValid,
+      previewRequired: canPreview && !previewValid,
+      legacyStateDetected: Boolean((analysis as any).legacyStateDetected),
+      blockingReasons,
+      status: derivedStatus,
       nextRequiredAction: terminal || failed
         ? "NONE"
         : !canPreview
@@ -834,7 +906,7 @@ export class ImporterService {
     if (issues.length) await prisma.importIssue.createMany({ data: issues });
   }
 
-  async get(id: string) {
+  async get(id: string): Promise<any> {
     const item = await this.prisma.dataImport.findUnique({
       where: { id },
       include: {
@@ -859,14 +931,67 @@ export class ImporterService {
       },
     });
     if (!item) throw new NotFoundException("Import not found");
-    return this.withImportReadiness(item);
+    const unfinished = !([ImportStatus.COMPLETED, ImportStatus.FAILED, ImportStatus.CANCELLED, ImportStatus.ROLLED_BACK] as ImportStatus[]).includes(item.status);
+    const analysis = (item.analysis ?? {}) as Partial<Analysis> & { legacyStateDetected?: boolean; reconciledAt?: string };
+
+    // Imports created before per-sheet persistence can be recovered from their source object.
+    // Only unfinished batches are eligible; confirmed inventory is never rewritten here.
+    if (unfinished && !item.sheets.length && analysis.fileKey) {
+      const source = await this.storage.get(analysis.fileKey);
+      const workbook = readImportWorkbook(source, item.fileName);
+      const currentWorkbookAnalysis = analyzeWorkbook(workbook, item.fileName);
+      const legacyMetadata = {
+        ...(analysis.metadata ?? {}),
+        projectId: item.projectId ?? analysis.metadata?.projectId ?? "",
+        developerId: item.developerId ?? analysis.metadata?.developerId ?? "",
+        locationId: analysis.metadata?.locationId ?? "",
+        currency: String(analysis.defaultValues?.currency ?? ""),
+      } as Record<string, string>;
+      await this.prisma.dataImport.update({
+        where: { id },
+        data: {
+          analysis: this.json({ ...analysis, workbookAnalysis: currentWorkbookAnalysis, legacyStateDetected: true, reconciledAt: new Date().toISOString() }),
+          preview: Prisma.DbNull,
+        },
+      });
+      return this.initializeImportSheets(id, currentWorkbookAnalysis, legacyMetadata, analysis.mappings ?? {});
+    }
+
+    if (unfinished && item.sheets.length) {
+      const selectedIds = new Set(item.sheets.filter((sheet) => sheet.action === "IMPORT").map((sheet) => sheet.id));
+      const staleIssues = item.issues.filter((issue) => {
+        const match = String(issue.field ?? "").match(/^sheet:([^:]+):/);
+        return !match || !selectedIds.has(match[1]);
+      });
+      if (staleIssues.length) {
+        await this.prisma.importIssue.deleteMany({ where: { id: { in: staleIssues.map((issue) => issue.id) } } });
+        for (const sheetId of selectedIds) await this.rebuildSheetIssues(sheetId);
+        await this.prisma.dataImport.update({
+          where: { id },
+          data: {
+            analysis: this.json({ ...analysis, legacyStateDetected: true, reconciledAt: new Date().toISOString() }),
+            preview: Prisma.DbNull,
+          },
+        });
+        return this.get(id);
+      }
+    }
+
+    const result = this.withImportReadiness(item);
+    if (unfinished && item.preview && !result.workflow.previewValid) {
+      await this.prisma.dataImport.update({ where: { id }, data: { preview: Prisma.DbNull } });
+      return this.get(id);
+    }
+    if (unfinished && item.status !== result.workflow.status) {
+      await this.prisma.dataImport.update({ where: { id }, data: { status: result.workflow.status } });
+      return this.get(id);
+    }
+    return result;
   }
 
   private async refreshImportReadiness(id: string) {
     const refreshed = await this.get(id);
-    const status = refreshed.workflow.canPreview
-      ? ImportStatus.READY
-      : ImportStatus.NEEDS_INPUT;
+    const status = refreshed.workflow.status;
     await this.prisma.dataImport.update({
       where: { id },
       data: {
@@ -1403,7 +1528,7 @@ export class ImporterService {
       );
     const analysis = item.analysis as unknown as Analysis;
     const blocking = item.issues.filter(
-      (i) => i.severity === IssueSeverity.BLOCKING && !i.resolvedAt,
+      (i: any) => i.severity === IssueSeverity.BLOCKING && !i.resolvedAt,
     ).length;
     const externalHeader = Object.entries(analysis.mappings).find(
       ([, v]) => v === "externalUnitId",
@@ -1778,7 +1903,7 @@ export class ImporterService {
     const item = await this.get(id);
     if (item.sheets.length) return this.confirmSheets(item);
     const unresolved = item.issues.filter(
-      (i) => i.severity === IssueSeverity.BLOCKING && !i.resolvedAt,
+      (i: any) => i.severity === IssueSeverity.BLOCKING && !i.resolvedAt,
     );
     if (unresolved.length)
       throw new ImportHttpException(

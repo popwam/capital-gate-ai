@@ -1,10 +1,23 @@
 export type ImportWorkflow = {
   stage: "UPLOAD" | "ANALYZE" | "RESOLVE" | "PREVIEW" | "IMPORT" | "COMPLETE" | "FAILED";
+  selectedSheetCount: number;
+  ignoredSheetCount: number;
+  selectedSheets: string[];
+  ignoredSheets: string[];
+  activeTableCount: number;
+  activeIssueCount: number;
   unresolvedBlockingCount: number;
   unresolvedWarningCount: number;
+  missingCriticalMappings: string[];
+  missingContext: string[];
   canPreview: boolean;
   canConfirm: boolean;
   previewExists: boolean;
+  previewValid: boolean;
+  previewRequired: boolean;
+  legacyStateDetected: boolean;
+  blockingReasons: string[];
+  status: string;
   nextRequiredAction: "RESOLVE_ISSUES" | "GENERATE_PREVIEW" | "CONFIRM_IMPORT" | "NONE";
 };
 

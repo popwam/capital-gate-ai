@@ -103,7 +103,7 @@ function fixture(options: { aiFails?: boolean; storageFails?: boolean; remembere
           if (issue.importId === where.importId && (where.field?.in ? where.field.in.includes(issue.field) : issue.field === where.field)) Object.assign(issue, data);
         return { count: issues.length };
       },
-      deleteMany: async ({ where }: any = {}) => { const before=issues.length;for(let i=issues.length-1;i>=0;i--)if((!where?.importId||issues[i].importId===where.importId)&&(!where?.field?.startsWith||String(issues[i].field||"").startsWith(where.field.startsWith)))issues.splice(i,1);return {count:before-issues.length}; },
+      deleteMany: async ({ where }: any = {}) => { const before=issues.length;for(let i=issues.length-1;i>=0;i--){const matchesId=!where?.id?.in||where.id.in.includes(issues[i].id);const matchesImport=!where?.importId||issues[i].importId===where.importId;const matchesField=!where?.field?.startsWith||String(issues[i].field||"").startsWith(where.field.startsWith);if(matchesId&&matchesImport&&matchesField)issues.splice(i,1);}return {count:before-issues.length}; },
       create: async ({ data }: any) => { const issue = { id: `issue-${issues.length}`, resolvedAt: null, ...data }; issues.push(issue); return issue; },
     },
     importSheet: {
@@ -290,11 +290,12 @@ test("three persisted issue resolutions unlock preview and reload preserves the 
     file(workbookBuffer({ "Unit Number": "READY-1", Currency: "EGP" })),
     { projectId: "project-1", developerId: "developer-1", locationId: "location-1" },
   );
+  const activeSheetId = f.importSheets[0].id;
   f.issues.splice(0, f.issues.length,
     ...["decision:a", "decision:b", "decision:c"].map((field, index) => ({
       id: `blocking-${index}`,
       importId: "import-1",
-      field,
+      field: `sheet:${activeSheetId}:${field}`,
       severity: "BLOCKING",
       resolvedAt: null,
     })),
@@ -307,7 +308,7 @@ test("three persisted issue resolutions unlock preview and reload preserves the 
   f.record().projectId = "project-1";
   f.record().developerId = "developer-1";
 
-  for (const [index, field] of ["decision:a", "decision:b", "decision:c"].entries()) {
+  for (const [index, field] of ["decision:a", "decision:b", "decision:c"].map((field) => `sheet:${activeSheetId}:${field}`).entries()) {
     const result: any = await f.service.resolve("import-1", field, "APPROVED");
     assert.equal(result.workflow.unresolvedBlockingCount, 2 - index);
     assert.equal(result.workflow.canPreview, index === 2);
@@ -478,4 +479,78 @@ test("post-confirm correction previews changes and protects a later manual edit"
   assert.equal(f.units[0].builtUpArea,undefined);
   assert.equal(f.units[1].landArea,null);
   assert.equal(f.units[1].builtUpArea,350);
+});
+
+test("seven-sheet readiness excludes six ignored sheets and every stale legacy blocker", async () => {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([{ Code: "AVL-1", Currency: "EGP" }]), "Availability");
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([{ Code: "APT-1", Currency: "EGP" }]), "Apartments");
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["Payment Plan", "8 Years"], ["Down Payment", 10]]), "Payment Plan");
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["Total No. of units", 2]]), "Summary");
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["Notes"], ["Internal only"]]), "Notes");
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["Project", "Demo"]]), "Project Info");
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["Location", "New Cairo"]]), "Locations");
+  const f = fixture();
+  let result: any = await f.service.analyze(file(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }), "seven-sheets.xlsx"), { projectId: "project-1", developerId: "developer-1", locationId: "location-1" });
+  const availability = result.sheets.find((sheet: any) => sheet.sheetName === "Availability");
+  const apartments = result.sheets.find((sheet: any) => sheet.sheetName === "Apartments");
+  assert.equal(availability.action, "IMPORT");
+  assert.equal(apartments.action, "IMPORT");
+  f.issues.push(
+    { id: "legacy-empty", importId: result.id, field: "column:__EMPTY_20", severity: "BLOCKING", required: true, resolvedAt: null, message: "legacy empty" },
+    { id: "legacy-plan", importId: result.id, field: "paymentPlan:8 Years", severity: "BLOCKING", required: true, resolvedAt: null, message: "legacy plan" },
+    { id: "ignored-column", importId: result.id, field: `sheet:${apartments.id}:column:__EMPTY`, severity: "BLOCKING", required: true, resolvedAt: null, message: "ignored column" },
+  );
+  result = await f.service.updateImportSheet(result.id, apartments.id, { action: "IGNORE" });
+  assert.equal(result.workflow.selectedSheetCount, 1);
+  assert.equal(result.workflow.ignoredSheetCount, 6);
+  assert.equal(result.workflow.activeIssueCount, 0);
+  assert.equal(result.workflow.unresolvedBlockingCount, 0);
+  assert.deepEqual(result.workflow.missingCriticalMappings, []);
+  assert.deepEqual(result.workflow.missingContext, []);
+  assert.equal(result.workflow.canPreview, true);
+  assert.equal(result.status, "READY");
+  assert.equal(result.issues.length, 0);
+});
+
+test("unfinished legacy import is reconciled from stored source without re-upload", async () => {
+  const f = fixture();
+  let result: any = await f.service.analyze(file(workbookBuffer({ "Unit Number": "LEGACY-1", Currency: "EGP" })), { projectId: "project-1", developerId: "developer-1", locationId: "location-1" });
+  f.importSheets.splice(0, f.importSheets.length);
+  f.issues.push(
+    { id: "legacy-empty-1", importId: result.id, field: "column:__EMPTY", severity: "BLOCKING", required: true, resolvedAt: null, message: "legacy empty" },
+    { id: "legacy-empty-2", importId: result.id, field: "column:__EMPTY_1", severity: "BLOCKING", required: true, resolvedAt: null, message: "legacy empty" },
+    { id: "legacy-project", importId: result.id, field: "projectId", severity: "BLOCKING", required: true, resolvedAt: null, message: "old project" },
+  );
+  f.record().status = "NEEDS_INPUT";
+  f.record().preview = { canConfirm: true, stale: true };
+  result = await f.service.get(result.id);
+  assert.equal(result.workflow.legacyStateDetected, true);
+  assert.equal(result.sheets.length, 1);
+  assert.equal(result.sheets[0].projectId, "project-1");
+  assert.equal(result.sheets[0].developerId, "developer-1");
+  assert.equal(result.sheets[0].locationId, "location-1");
+  assert.equal(result.preview, null);
+  assert.equal(result.issues.some((issue: any) => !issue.field.startsWith("sheet:")), false);
+  assert.equal(result.workflow.unresolvedBlockingCount, 0);
+  assert.equal(result.workflow.canPreview, true);
+});
+
+test("canonical readiness cannot report NEEDS_INPUT without an explicit blocker", () => {
+  const f = fixture();
+  const readiness = (f.service as any).getImportReadiness({
+    status: "NEEDS_INPUT",
+    developerId: null,
+    projectId: null,
+    preview: null,
+    analysis: {},
+    issues: [],
+    sheets: [{ id: "sheet-active", sheetName: "Availability", action: "IMPORT", headerRow: 1, projectId: "project-1", developerId: "developer-1", locationId: "location-1", defaultCurrency: null, mappings: { Code: "externalUnitId", Currency: "currency" }, mappingVersion: 1, previewMappingVersion: null }],
+  });
+  assert.equal(readiness.unresolvedBlockingCount, 0);
+  assert.deepEqual(readiness.missingCriticalMappings, []);
+  assert.deepEqual(readiness.missingContext, []);
+  assert.equal(readiness.canPreview, true);
+  assert.equal(readiness.status, "READY");
+  assert.equal(readiness.blockingReasons.length, 0);
 });
