@@ -21,6 +21,12 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, stopAtFirstError: true }));
   app.useGlobalFilters(new SafeHttpExceptionFilter());
   app.enableShutdownHooks();
-  await app.listen(process.env.PORT ?? 4000, "0.0.0.0");
+
+  const port = Number(process.env.PORT ?? 8080);
+
+  await app.listen(port, "0.0.0.0");
+
+  console.log(`API listening on 0.0.0.0:${port}`);
 }
+
 bootstrap();
