@@ -19,6 +19,7 @@ import {
 } from "./deterministic-intent";
 import { AIUsageService } from "./ai-usage.service";
 import { normalizeRealEstateSemantics } from "./real-estate-semantics";
+import { compactAnswerInput } from "./ai-context";
 
 @Injectable()
 export class HybridAIProvider implements AIProvider {
@@ -127,9 +128,10 @@ export class HybridAIProvider implements AIProvider {
 
   private shouldFallback(error: unknown) {
     return error instanceof AIUpstreamError
-      ? error.retryable || !error.status
+      ? error.status === 413 || error.retryable || !error.status
       : true;
   }
+  private is413(error:unknown){return error instanceof AIUpstreamError&&(error.status===413||error.code==="HTTP_413");}
   private traceFailure(input: AnswerInput, provider: string, model: string, stage: string, error: unknown, fallbackAttempted: boolean, fallbackSucceeded?: boolean) {
     const upstream = error instanceof AIUpstreamError ? error : undefined;
     this.logger.warn(`AIProviderTrace ${JSON.stringify({ requestId: input.requestId ?? "unknown", conversationId: input.conversationId ?? "unknown", provider, model, stage, upstreamStatus: upstream?.status ?? null, errorCategory: upstream?.code ?? "UNKNOWN", fallbackAttempted, fallbackSucceeded: fallbackSucceeded ?? null })}`);
@@ -151,7 +153,8 @@ export class HybridAIProvider implements AIProvider {
         success: true,
       });
       return result;
-    } catch (groqError) {
+    } catch (initialGroqError) {
+      let groqError = initialGroqError;
       this.traceFailure(input, "groq", process.env.GROQ_MODEL || "openai/gpt-oss-120b", "GROQ_GENERATION", groqError, true);
       await this.usage?.record({
         provider: "groq",
@@ -162,11 +165,18 @@ export class HybridAIProvider implements AIProvider {
         errorCode:
           groqError instanceof AIUpstreamError ? groqError.code : "UNKNOWN",
       });
+      let fallbackInput = compactAnswerInput(input, "normal");
+      if (this.is413(groqError)) {
+        fallbackInput = compactAnswerInput(input, "aggressive");
+        this.logger.warn(`AIProviderTrace ${JSON.stringify({requestId:input.requestId??"unknown",conversationId:input.conversationId??"unknown",provider:"groq",model:process.env.GROQ_MODEL||"openai/gpt-oss-120b",stage:"CONTEXT_COMPACTION",attempt:2,compacted:true})}`);
+        try { return await this.groq.composeAnswer(fallbackInput); }
+        catch (retryError) { groqError=retryError; this.traceFailure(fallbackInput,"groq",process.env.GROQ_MODEL||"openai/gpt-oss-120b","GROQ_GENERATION_RETRY",retryError,true,false); }
+      }
       if (!this.shouldFallback(groqError)) unavailable("groq", groqError);
       this.logger.warn("Groq generation unavailable; using OpenAI fallback");
       started = Date.now();
       try {
-        const result = await this.openai.composeAnswer(input);
+        const result = await this.openai.composeAnswer(fallbackInput);
         this.logger.log(`AIProviderTrace ${JSON.stringify({ requestId: input.requestId ?? "unknown", conversationId: input.conversationId ?? "unknown", provider: "openai", stage: "OPENAI_FALLBACK", fallbackSucceeded: true })}`);
         await this.usage?.record({
           provider: "openai",
@@ -183,10 +193,10 @@ export class HybridAIProvider implements AIProvider {
           "OpenAI generation unavailable; using Workers AI compatibility fallback",
         );
         try {
-          return await this.workers.composeAnswer(input);
+          return await this.workers.composeAnswer(fallbackInput);
         } catch (workersError) {
-          this.traceFailure(input, "workers", this.workers.primaryModel, "WORKERS_RESPONSE_FALLBACK", workersError, false, false);
-          return this.temporaryAnswer(input);
+          this.traceFailure(fallbackInput, "workers", this.workers.primaryModel, "WORKERS_RESPONSE_FALLBACK", workersError, false, false);
+          unavailable("workers", workersError);
         }
       }
     }
@@ -205,7 +215,8 @@ export class HybridAIProvider implements AIProvider {
         success: true,
       });
       return;
-    } catch (groqError) {
+    } catch (initialGroqError) {
+      let groqError=initialGroqError;
       this.traceFailure(input, "groq", process.env.GROQ_MODEL || "openai/gpt-oss-120b", "GROQ_GENERATION", groqError, !emitted);
       await this.usage?.record({
         provider: "groq",
@@ -216,8 +227,15 @@ export class HybridAIProvider implements AIProvider {
         errorCode:
           groqError instanceof AIUpstreamError ? groqError.code : "UNKNOWN",
       });
+      let fallbackInput=compactAnswerInput(input,"normal");
+      if(!emitted&&this.is413(groqError)){
+        fallbackInput=compactAnswerInput(input,"aggressive");
+        this.logger.warn(`AIProviderTrace ${JSON.stringify({requestId:input.requestId??"unknown",conversationId:input.conversationId??"unknown",provider:"groq",model:process.env.GROQ_MODEL||"openai/gpt-oss-120b",stage:"CONTEXT_COMPACTION",attempt:2,compacted:true})}`);
+        try{for await(const chunk of this.groq.streamAnswer(fallbackInput)){emitted=true;yield chunk}return;}catch(retryError){groqError=retryError;this.traceFailure(fallbackInput,"groq",process.env.GROQ_MODEL||"openai/gpt-oss-120b","GROQ_GENERATION_RETRY",retryError,!emitted,false);}
+      }
       if (emitted || !this.shouldFallback(groqError)) unavailable("groq", groqError);
       this.logger.warn("Groq stream unavailable; using OpenAI stream fallback");
+      input=fallbackInput;
     }
     started = Date.now();
     try {
@@ -241,7 +259,7 @@ export class HybridAIProvider implements AIProvider {
         yield await this.workers.composeAnswer(input);
       } catch (workersError) {
         this.traceFailure(input, "workers", this.workers.primaryModel, "WORKERS_RESPONSE_FALLBACK", workersError, false, false);
-        yield this.temporaryAnswer(input);
+        unavailable("workers", workersError);
       }
     }
   }

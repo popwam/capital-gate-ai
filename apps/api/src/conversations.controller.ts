@@ -7,6 +7,7 @@ import { ChatService } from "./chat.service";
 class CreateConversationDto { @IsOptional() @IsString() @MaxLength(80) title?: string; }
 class RenameConversationDto { @IsString() @MinLength(1) @MaxLength(80) title!: string; }
 class SendMessageDto { @IsString() @IsNotEmpty() @MaxLength(8_000) content!: string; }
+export function upstreamErrorCategory(error: any) { const response = typeof error?.getResponse === "function" ? error.getResponse() : undefined; return response?.category ?? response?.code ?? error?.code ?? "UNKNOWN"; }
 
 @Controller("conversations")
 export class ConversationsController {
@@ -23,7 +24,7 @@ export class ConversationsController {
   @Post(":id/messages/stream") async stream(@Param("id") id: string, @Headers("x-device-token") token: string | undefined, @Body() body: SendMessageDto, @Res() response: Response, @Req() request: any = {}) {
     response.status(200); response.setHeader("Content-Type", "text/event-stream; charset=utf-8"); response.setHeader("Cache-Control", "no-cache, no-transform"); response.setHeader("Connection", "keep-alive"); response.flushHeaders();
     try { for await (const item of this.chat.stream(id, this.token(token), body.content, request.requestId ?? "unknown")) response.write(`event: ${item.event}\ndata: ${JSON.stringify(item.data)}\n\n`); }
-    catch (error) { this.logger.error(`CustomerStreamFailure requestId=${request.requestId ?? "unknown"} conversationId=${id} stage=SSE errorCategory=${(error as any)?.code ?? "UNKNOWN"}`); response.write(`event: error\ndata: ${JSON.stringify({ message: "تعذر إكمال الرد حاليًا. حاول مرة أخرى بعد قليل.", requestId: request.requestId ?? "unknown" })}\n\n`); }
+    catch (error) { this.logger.error(`CustomerStreamFailure requestId=${request.requestId ?? "unknown"} conversationId=${id} stage=AI_PROVIDER errorCategory=${upstreamErrorCategory(error)}`); response.write(`event: error\ndata: ${JSON.stringify({ message: "تعذر إكمال الرد حاليًا. حاول مرة أخرى بعد قليل.", requestId: request.requestId ?? "unknown" })}\n\n`); }
     finally { response.end(); }
   }
 }

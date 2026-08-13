@@ -24,6 +24,7 @@
     "smoke:real-estate-data": "node scripts/real-estate-data-smoke.mjs",
     "smoke:r2-storage": "node scripts/r2-storage-smoke.mjs",
     "smoke:maps": "node scripts/maps-live-smoke.mjs",
+    "smoke:groq-context": "node scripts/groq-context-live-smoke.mjs",
     "smoke:ai-search": "node scripts/ai-search-live-smoke.mjs",
     "admin:path:generate": "node scripts/generate-admin-path.mjs"
   },

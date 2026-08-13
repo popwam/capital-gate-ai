@@ -1,6 +1,7 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
-import { ConversationsController } from "../conversations.controller";
+import { ConversationsController, upstreamErrorCategory } from "../conversations.controller";
+import { ServiceUnavailableException } from "@nestjs/common";
 import { ConversationsService } from "../conversations.service";
 import { decodeUtf8 } from "./unicode";
 
@@ -74,3 +75,5 @@ test("a provider failure after HTTP 200 emits a valid error event with request I
   assert.match(wire, /request-safe-1/);
   assert.doesNotMatch(wire, /upstream failed/);
 });
+
+test("SSE diagnostics preserve the terminal provider category",()=>{const error=new ServiceUnavailableException({code:"AI_TEMPORARILY_UNAVAILABLE",provider:"workers",category:"HTTP_503",safe:true});assert.equal(upstreamErrorCategory(error),"HTTP_503");});

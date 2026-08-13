@@ -1,7 +1,10 @@
+import { Logger } from "@nestjs/common";
 import { AIHealth, AIMessage, AnswerInput } from "./ai-provider";
-import { AIUpstreamError, advisorMessages, checkedJson, parseJsonArray, parseJsonObject, ProviderName } from "./provider-utils";
+import { AIUpstreamError, checkedJson, parseJsonArray, parseJsonObject, ProviderName } from "./provider-utils";
+import { answerContextMetrics } from "./ai-context";
 
 export abstract class OpenAICompatibleProvider {
+  private readonly logger = new Logger(OpenAICompatibleProvider.name);
   protected abstract readonly providerName: ProviderName;
   protected abstract readonly apiKey: string;
   protected abstract readonly model: string;
@@ -28,19 +31,23 @@ export abstract class OpenAICompatibleProvider {
   }
 
   async composeAnswer(input: AnswerInput) {
-    const body = await this.request(advisorMessages(input), { max_tokens: 1000 });
+    const metrics = answerContextMetrics(input, this.model);
+    this.traceContext(input, metrics, false);
+    const body = await this.request(metrics.messages, { max_tokens: 1000 });
     const text = body.choices?.[0]?.message?.content;
     if (typeof text !== "string" || !text.trim()) throw new AIUpstreamError(this.providerName, "EMPTY_RESPONSE", 502);
     return text.trim();
   }
 
   async *streamAnswer(input: AnswerInput): AsyncIterable<string> {
+    const metrics = answerContextMetrics(input, this.model, true);
+    this.traceContext(input, metrics, true);
     let response: Response;
     try {
       response = await fetch(this.endpoint, {
         method: "POST",
         headers: { authorization: `Bearer ${this.apiKey}`, "content-type": "application/json" },
-        body: JSON.stringify({ model: this.model, messages: advisorMessages(input), temperature: 0.2, max_tokens: 1000, stream: true }),
+        body: JSON.stringify({ model: this.model, messages: metrics.messages, temperature: 0.2, max_tokens: 1000, stream: true }),
         signal: AbortSignal.timeout(60_000),
       });
     } catch { throw new AIUpstreamError(this.providerName, "NETWORK", undefined, true); }
@@ -61,6 +68,8 @@ export abstract class OpenAICompatibleProvider {
       if (done) break;
     }
   }
+
+  private traceContext(input:AnswerInput,metrics:ReturnType<typeof answerContextMetrics>,stream:boolean){this.logger.log(`GroqPayloadTrace ${JSON.stringify({requestId:input.requestId??"unknown",conversationId:input.conversationId??"unknown",provider:this.providerName,model:this.model,attempt:input.compactionLevel==="aggressive"?2:1,compacted:input.compactionLevel==="aggressive",stream,messageCount:metrics.messageCount,bodyBytes:metrics.bodyBytes,estimatedInputTokens:metrics.estimatedInputTokens,recentHistoryCount:metrics.recentHistoryCount,resultCount:metrics.resultCount,candidatesBeforeRanking:input.candidatesBeforeRanking??metrics.resultCount,verifiedContextBytes:metrics.verifiedContextBytes})}`);}
 
   protected async structuredObject(system: string, prompt: string) {
     const body = await this.request([{ role: "system", content: `${system} Return one valid JSON object only.` }, { role: "user", content: prompt }], { temperature: 0.05, response_format: { type: "json_object" } });

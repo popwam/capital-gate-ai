@@ -1,6 +1,5 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import {
-  ApprovalStatus,
   DocumentType,
   LeadStatus,
   MessageRole,
@@ -10,10 +9,12 @@ import { PrismaService } from "./database/prisma.service";
 import { ConversationsService } from "./conversations.service";
 import {
   AIMessage,
+  AIContextKind,
   AIProvider,
   AnswerInput,
   StructuredIntent,
 } from "./providers/ai-provider";
+import { answerContextMetrics, compactAnswerInput } from "./providers/ai-context";
 import { PropertySearchService } from "./property-search.service";
 import { MapsService } from "./maps.service";
 
@@ -111,9 +112,11 @@ export class ChatService {
     let payload: MessagePayload = { type: "text" };
     let verifiedFacts: unknown[] = [];
     let approvedKnowledge: unknown[] = [];
+    let contextKind: AIContextKind = "PROPERTY_SEARCH";
     const priorUnitIds = existingState?.suggestedUnitIds ?? [];
 
     if (state.requestedMedia) {
+      contextKind = state.requestedMedia === "IMAGES" ? "MEDIA_REQUEST" : state.requestedMedia === "BROCHURE" ? "BROCHURE_REQUEST" : "DISTANCE";
       let projectId: string | undefined;
       if (state.requestedProject)
         projectId = (
@@ -164,12 +167,14 @@ export class ChatService {
         verifiedFacts = map ? [map] : [];
       }
     } else if (state.preferredDevelopers?.length === 1 && /(?:المطور|سابقة|سلم|تاريخ|developer|track\s*record|portfolio)/iu.test(content)) {
+      contextKind = "DEVELOPER_HISTORY";
       const developerName = state.preferredDevelopers[0];
       const developer = await this.prisma.developer.findFirst({ where: { OR: [{ name: { contains: developerName, mode: "insensitive" } }, { canonicalName: { contains: developerName, mode: "insensitive" } }, { nameAr: { contains: developerName, mode: "insensitive" } }, { nameEn: { contains: developerName, mode: "insensitive" } }] }, select: { id: true } });
       if (developer) verifiedFacts = [this.serialize(await this.search.getDeveloper(developer.id))];
       trace.searchOperation = "GET_DEVELOPER_STRUCTURED_FACTS";
       trace.databaseResultCount = developer ? 1 : 0;
     } else if (state.requestedProject) {
+      contextKind = /(?:إعادة\s*البيع|اعادة\s*البيع|resale)/iu.test(content) ? "RESALE" : /(?:إيجار|ايجار|rental|yield)/iu.test(content) ? "RENTAL" : /(?:استثمار|investment|عائد)/iu.test(content) ? "INVESTMENT" : /(?:خدمات|مرافق|amenities|facilities)/iu.test(content) ? "AMENITIES" : "PROJECT_DETAILS";
       const match = await this.search.findProjectByName(state.requestedProject);
       if (match) {
         const project = await this.search.getProject(match.id);
@@ -182,6 +187,7 @@ export class ChatService {
         trace.databaseResultCount = 0;
       }
     } else if (state.temporaryIntent === "INVENTORY_AGGREGATION" && state.aggregationDimension) {
+      contextKind = "AGGREGATION";
       const aggregate = await this.search.aggregateInventory(state);
       verifiedFacts = [this.serialize(aggregate)];
       trace.searchOperation = `AGGREGATE_${state.aggregationDimension}`;
@@ -201,21 +207,8 @@ export class ChatService {
       if (properties.length) {
         payload = {
           type: "properties",
-          properties: verifiedFacts as unknown[],
+          properties: this.serialize(properties),
         };
-        const projectIds = [...new Set(properties.map((p) => p.projectId))];
-        approvedKnowledge = await this.prisma.projectKnowledgeItem.findMany({
-          where: {
-            projectId: { in: projectIds },
-            approvalStatus: ApprovalStatus.APPROVED,
-          },
-          select: {
-            projectId: true,
-            category: true,
-            content: true,
-            sourceText: true,
-          },
-        });
       }
     }
     trace.normalizedSearchFilters = await this.search.normalizedSearchFilters(state);
@@ -260,7 +253,8 @@ export class ChatService {
               )) as object),
             }
           : { source: "UNAVAILABLE" };
-      verifiedFacts = [...verifiedFacts, this.serialize(route)];
+      contextKind = "DISTANCE";
+      verifiedFacts = [this.serialize(route)];
       payload = {
         ...payload,
         map: {
@@ -296,6 +290,8 @@ export class ChatService {
           properties,
           verifiedFacts,
           approvedKnowledge,
+          existingState?.summary,
+          contextKind,
           trace,
           startedAt,
         );
@@ -382,6 +378,8 @@ export class ChatService {
       properties,
       verifiedFacts,
       approvedKnowledge,
+      existingState?.summary,
+      contextKind,
       trace,
       startedAt,
     );
@@ -396,6 +394,8 @@ export class ChatService {
     properties: any[],
     verifiedFacts: unknown[],
     approvedKnowledge: unknown[],
+    conversationSummary: unknown,
+    contextKind: AIContextKind,
     trace: Record<string, unknown>,
     startedAt: number,
   ): Promise<Prepared> {
@@ -425,16 +425,22 @@ export class ChatService {
         },
       }),
     ]);
+    const answerInput = compactAnswerInput({
+      messages,
+      intent: state,
+      verifiedFacts,
+      approvedKnowledge,
+      conversationSummary,
+      contextKind,
+      candidatesBeforeRanking: properties.length || verifiedFacts.length,
+      requestId: String(trace.requestId ?? "unknown"),
+      conversationId,
+    });
+    const contextMetrics = answerContextMetrics(answerInput);
+    this.logger.log(`AIContextTrace ${JSON.stringify({requestId:answerInput.requestId,conversationId,intent:contextKind,candidatesBeforeRanking:properties.length||verifiedFacts.length,candidatesSent:contextMetrics.resultCount,historyMessagesSent:contextMetrics.recentHistoryCount,contextBytes:contextMetrics.contextBytes,estimatedTokens:contextMetrics.estimatedInputTokens})}`);
     return {
       conversationId,
-      answerInput: {
-        messages,
-        intent: state,
-        verifiedFacts,
-        approvedKnowledge,
-        requestId: String(trace.requestId ?? "unknown"),
-        conversationId,
-      },
+      answerInput,
       state,
       payload,
       userMessages: messages,
