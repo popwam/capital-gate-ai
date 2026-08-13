@@ -75,6 +75,17 @@ enum LeadIntent {
   RESERVATION
 }
 
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  FOLLOW_UP
+  VIEWING_REQUESTED
+  NEGOTIATING
+  WON
+  LOST
+}
+
 model Location {
   id            String             @id @default(cuid())
   type          LocationType
@@ -431,38 +442,68 @@ model ConversationState {
 }
 
 model Lead {
-  id             String       @id @default(cuid())
-  conversationId String
-  conversation   Conversation @relation(fields: [conversationId], references: [id])
-  name           String
-  phone          String
-  intent         LeadIntent
-  intentScore    Int
-  payload        Json
-  source         String       @default("WEB_AI")
-  events         LeadEvent[]
-  createdAt      DateTime     @default(now())
+  id                String       @id @default(cuid())
+  conversationId    String
+  conversation      Conversation @relation(fields: [conversationId], references: [id])
+  name              String
+  phone             String
+  intent            LeadIntent
+  intentScore       Int
+  status            LeadStatus   @default(NEW)
+  payload           Json
+  source            String       @default("WEB_AI")
+  assignedToAdminId String?
+  assignedTo        AdminUser?   @relation("LeadAssignment", fields: [assignedToAdminId], references: [id], onDelete: SetNull)
+  followUpAt        DateTime?
+  events            LeadEvent[]
+  notes             LeadNote[]
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([status, createdAt])
+  @@index([assignedToAdminId, followUpAt])
+  @@index([intentScore])
 }
 
 model LeadEvent {
-  id          String    @id @default(cuid())
+  id          String     @id @default(cuid())
   leadId      String
-  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  lead        Lead       @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  adminUserId String?
+  adminUser   AdminUser? @relation(fields: [adminUserId], references: [id], onDelete: SetNull)
   type        String
   payload     Json?
   deliveredAt DateTime?
+  createdAt   DateTime   @default(now())
+
+  @@index([leadId, createdAt])
+}
+
+model LeadNote {
+  id          String    @id @default(cuid())
+  leadId      String
+  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  adminUserId String
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id])
+  content     String
   createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([leadId, createdAt])
 }
 
 model AdminUser {
-  id           String     @id @default(cuid())
-  email        String     @unique
-  passwordHash String
-  name         String
-  role         String     @default("ADMIN")
-  active       Boolean    @default(true)
-  createdAt    DateTime   @default(now())
-  auditLogs    AuditLog[]
+  id            String      @id @default(cuid())
+  email         String      @unique
+  passwordHash  String
+  name          String
+  role          String      @default("ADMIN")
+  active        Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  auditLogs     AuditLog[]
+  assignedLeads Lead[]      @relation("LeadAssignment")
+  leadNotes     LeadNote[]
+  leadEvents    LeadEvent[]
 }
 
 model AuditLog {

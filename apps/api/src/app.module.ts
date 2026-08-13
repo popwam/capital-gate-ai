@@ -23,10 +23,49 @@ import { DemoAIProvider } from "./providers/demo.provider";
 import { GeminiProvider } from "./providers/gemini.provider";
 import { createAIProvider } from "./providers/ai-provider.factory";
 import { MapsService } from "./maps.service";
+import {
+  AdminConversationsController,
+  LeadCrmController,
+} from "./admin/lead-crm.controller";
+import { LeadCrmService } from "./admin/lead-crm.service";
 
 @Module({
-  imports: [DatabaseModule, AuthModule, ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }])],
-  controllers: [HealthController, ConversationsController, LocationsController, CatalogController, ImportsController, KnowledgeController, MapsController, StorageController],
-  providers: [ChatService, ConversationsService, DevicesService, PropertySearchService, ImporterService, KnowledgeService, StorageService, MapsService, AuditService, DemoAIProvider, GeminiProvider, { provide: "AI_PROVIDER", inject: [GeminiProvider, DemoAIProvider], useFactory: createAIProvider }, { provide: APP_GUARD, useClass: ThrottlerGuard }]
+  imports: [
+    DatabaseModule,
+    AuthModule,
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
+  ],
+  controllers: [
+    HealthController,
+    ConversationsController,
+    LocationsController,
+    CatalogController,
+    ImportsController,
+    KnowledgeController,
+    MapsController,
+    StorageController,
+    LeadCrmController,
+    AdminConversationsController,
+  ],
+  providers: [
+    ChatService,
+    ConversationsService,
+    DevicesService,
+    PropertySearchService,
+    ImporterService,
+    KnowledgeService,
+    StorageService,
+    MapsService,
+    AuditService,
+    LeadCrmService,
+    DemoAIProvider,
+    GeminiProvider,
+    {
+      provide: "AI_PROVIDER",
+      inject: [GeminiProvider, DemoAIProvider],
+      useFactory: createAIProvider,
+    },
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
 })
 export class AppModule {}

@@ -1,30 +1,569 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, Building2, Check, CheckCircle2, ChevronDown, FileSpreadsheet, Files, LayoutDashboard, Map, Menu, MessageSquareText, Plus, Settings, Sparkles, UploadCloud, Users, WandSparkles, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  BookOpen,
+  Building2,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  FileSpreadsheet,
+  Files,
+  LayoutDashboard,
+  Map,
+  Menu,
+  MessageSquareText,
+  Plus,
+  Settings,
+  Sparkles,
+  UploadCloud,
+  Users,
+  WandSparkles,
+  X,
+} from "lucide-react";
 import { LogoMark } from "@/components/logo";
 import { adminApi } from "@/lib/api";
 
-type Issue={id:string;field?:string;message:string;severity:"INFO"|"WARNING"|"ERROR"|"BLOCKING";resolvedAt?:string|null};
-type ImportData={id:string;fileName:string;rowsDetected:number;rowsCreated:number;rowsUpdated:number;rowsRejected:number;status:string;analysis?:any;preview?:any;issues:Issue[];project?:{id:string;name:string}|null};
-type Location={id:string;name:string;type:string;parent?:{name:string}|null};
-const nav=[[LayoutDashboard,"Overview","/admin"],[Map,"Locations","/admin/locations"],[Building2,"Projects","/admin/projects"],[Files,"Inventory","/admin"],[UploadCloud,"Imports","/admin"],[BookOpen,"AI knowledge","/admin/projects"],[MessageSquareText,"Conversations","/admin"],[Users,"Leads","/admin"]] as const;
+type Issue = {
+  id: string;
+  field?: string;
+  message: string;
+  severity: "INFO" | "WARNING" | "ERROR" | "BLOCKING";
+  resolvedAt?: string | null;
+};
+type ImportData = {
+  id: string;
+  fileName: string;
+  rowsDetected: number;
+  rowsCreated: number;
+  rowsUpdated: number;
+  rowsRejected: number;
+  status: string;
+  analysis?: any;
+  preview?: any;
+  issues: Issue[];
+  project?: { id: string; name: string } | null;
+};
+type Location = {
+  id: string;
+  name: string;
+  type: string;
+  parent?: { name: string } | null;
+};
+const nav = [
+  [LayoutDashboard, "Overview", "/admin"],
+  [Map, "Locations", "/admin/locations"],
+  [Building2, "Projects", "/admin/projects"],
+  [Files, "Inventory", "/admin"],
+  [UploadCloud, "Imports", "/admin"],
+  [BookOpen, "AI knowledge", "/admin/projects"],
+  [MessageSquareText, "Conversations", "/admin/conversations"],
+  [Users, "Leads", "/admin/leads"],
+] as const;
 
-export default function AdminPage(){
-  const [drawer,setDrawer]=useState(false);const [item,setItem]=useState<ImportData|null>(null);const [locations,setLocations]=useState<Location[]>([]);const [answer,setAnswer]=useState("");const [loading,setLoading]=useState(false);const [error,setError]=useState("");const inputRef=useRef<HTMLInputElement>(null);
-  useEffect(()=>{adminApi.get<Location[]>("/locations").then(setLocations).catch(e=>setError(e.message));},[]);
-  const issue=useMemo(()=>item?.issues.find(i=>!i.resolvedAt&&i.severity==="BLOCKING")||item?.issues.find(i=>!i.resolvedAt),[item]);
-  async function upload(file?:File){if(!file)return;setLoading(true);setError("");try{const form=new FormData();form.append("file",file);setItem(await adminApi.upload<ImportData>("/imports/upload",form));}catch(e){setError(e instanceof Error?e.message:"Upload failed");}finally{setLoading(false);}}
-  async function resolve(value=answer){if(!item||!issue||!String(value).trim())return;setLoading(true);try{setItem(await adminApi.post<ImportData>(`/imports/${item.id}/resolve`,{field:issue.field,value}));setAnswer("");}catch(e){setError(e instanceof Error?e.message:"Could not save answer");}finally{setLoading(false);}}
-  async function preview(){if(!item)return;setLoading(true);try{setItem(await adminApi.post<ImportData>(`/imports/${item.id}/preview`));}catch(e){setError(e instanceof Error?e.message:"Preview failed");}finally{setLoading(false);}}
-  async function confirm(){if(!item)return;setLoading(true);try{const result=await adminApi.post<{import:ImportData}>(`/imports/${item.id}/confirm`);setItem(result.import);}catch(e){setError(e instanceof Error?e.message:"Import failed");}finally{setLoading(false);}}
-  return <main className="flex min-h-[100dvh] bg-[#f6f5f1] text-ink"><aside className="hidden w-[245px] shrink-0 border-r border-[#dfe0da] bg-[#183b33] text-white lg:flex lg:flex-col"><AdminNav/></aside>{drawer&&<div className="fixed inset-0 z-50 lg:hidden"><button className="absolute inset-0 bg-black/30" onClick={()=>setDrawer(false)}/><aside className="relative flex h-full w-[270px] flex-col bg-[#183b33] text-white"><button onClick={()=>setDrawer(false)} className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-white/10"><X size={17}/></button><AdminNav/></aside></div>}<section className="min-w-0 flex-1"><header className="flex h-[66px] items-center justify-between border-b border-[#e0e1dc] bg-white px-4 sm:px-7"><div className="flex items-center gap-3"><button onClick={()=>setDrawer(true)} className="grid h-9 w-9 place-items-center rounded-lg border lg:hidden"><Menu size={17}/></button><div><h1 className="text-[14px] font-bold">Inventory import</h1><p className="text-[9px] text-[#83908a]">Upload data and answer only what could not be verified</p></div></div><a href="/" className="flex items-center gap-1 text-[10px] font-bold text-[#61706a]"><ArrowLeft size={13}/> Customer app</a></header><div className="mx-auto max-w-[1250px] p-4 sm:p-7"><div className="mb-5 flex flex-wrap items-end justify-between gap-3"><div><div className="mb-2 flex items-center gap-2 text-[9px] font-bold uppercase tracking-[.14em] text-coral"><Sparkles size={12}/> AI Import Assistant</div><h2 className="text-[22px] font-bold tracking-[-.035em] sm:text-[28px]">{item?"Review your inventory":"Import verified inventory"}</h2></div><input ref={inputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e=>upload(e.target.files?.[0])}/><button onClick={()=>inputRef.current?.click()} disabled={loading} className="flex h-10 items-center gap-2 rounded-xl bg-forest px-4 text-[9px] font-bold text-white"><UploadCloud size={14}/>{loading?"Working…":item?"Upload another file":"Choose Excel or CSV"}</button></div>{error&&<div className="mb-4 rounded-xl border border-[#efc7be] bg-[#fbe9e5] px-4 py-3 text-[10px] font-semibold text-[#8f3f30]">{error}</div>}{!item?<EmptyUpload onClick={()=>inputRef.current?.click()}/>:<><StepBar status={item.status}/><div className="mt-5 grid gap-5 xl:grid-cols-[1fr_325px]"><section className="flex min-h-[560px] flex-col overflow-hidden rounded-[22px] border border-[#dedfd9] bg-white shadow-[0_8px_30px_rgba(28,45,39,.05)]"><div className="flex items-center justify-between border-b border-[#e5e6e1] px-5 py-4"><div className="flex items-center gap-3"><div className="grid h-9 w-9 place-items-center rounded-xl bg-forest text-white"><WandSparkles size={16}/></div><div><p className="text-[11px] font-bold">Import assistant</p><p className="mt-0.5 text-[8px] font-semibold text-[#749087]">{item.fileName}</p></div></div><span className="rounded-full bg-[#f1f0eb] px-2.5 py-1 text-[8px] font-bold">{item.status}</span></div><div className="flex-1 p-5 sm:p-7"><div className="mx-auto max-w-[680px] space-y-5"><Assistant text={`I found ${item.rowsDetected} rows in “${item.analysis?.sheetName||"the workbook"}”. I mapped ${Object.keys(item.analysis?.mappings||{}).length} columns using approved memory, known rules and reviewed AI suggestions.`}/>{issue?<><Assistant text={issue.message}/><Answer issue={issue} value={answer} setValue={setAnswer} locations={locations} submit={resolve} loading={loading}/></>:item.status==="COMPLETED"?<Assistant text={`Import complete. ${item.rowsCreated} units were created, ${item.rowsUpdated} updated and ${item.rowsRejected} rejected. No data was inserted before confirmation.`}/>:<><Assistant text="All blocking questions are resolved. Generate the database preview before confirmation."/><button onClick={preview} disabled={loading} className="ml-11 rounded-xl bg-forest px-5 py-3 text-[9px] font-bold text-white">Generate preview</button></>}</div></div>{item.preview?.canConfirm&&item.status!=="COMPLETED"&&<div className="border-t bg-[#fbfaf7] p-4"><button onClick={confirm} disabled={loading} className="mx-auto flex h-11 w-full max-w-[680px] items-center justify-center gap-2 rounded-xl bg-coral text-[10px] font-bold text-white"><CheckCircle2 size={15}/> Confirm transactional import</button></div>}</section><aside className="space-y-4"><Analysis item={item}/><Issues issues={item.issues}/><div className="rounded-[18px] border border-[#dedfd9] bg-[#e7f0eb] p-4"><p className="text-[10px] font-bold">Safe by default</p><p className="mt-1 text-[9px] leading-4 text-[#66736d]">Blocking issues prevent confirmation. Source files and every import decision remain auditable.</p></div></aside></div></>}</div></section></main>;
+export default function AdminPage() {
+  const [drawer, setDrawer] = useState(false);
+  const [item, setItem] = useState<ImportData | null>(null);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [leadSummary, setLeadSummary] = useState({
+    newLeads: 0,
+    highIntent: 0,
+    followUpsDue: 0,
+    thisWeek: 0,
+  });
+  const [answer, setAnswer] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    adminApi
+      .get<Location[]>("/locations")
+      .then(setLocations)
+      .catch((e) => setError(e.message));
+    adminApi
+      .get<typeof leadSummary>("/leads/summary")
+      .then(setLeadSummary)
+      .catch(() => undefined);
+  }, []);
+  const issue = useMemo(
+    () =>
+      item?.issues.find((i) => !i.resolvedAt && i.severity === "BLOCKING") ||
+      item?.issues.find((i) => !i.resolvedAt),
+    [item],
+  );
+  async function upload(file?: File) {
+    if (!file) return;
+    setLoading(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      setItem(await adminApi.upload<ImportData>("/imports/upload", form));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function resolve(value = answer) {
+    if (!item || !issue || !String(value).trim()) return;
+    setLoading(true);
+    try {
+      setItem(
+        await adminApi.post<ImportData>(`/imports/${item.id}/resolve`, {
+          field: issue.field,
+          value,
+        }),
+      );
+      setAnswer("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save answer");
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function preview() {
+    if (!item) return;
+    setLoading(true);
+    try {
+      setItem(await adminApi.post<ImportData>(`/imports/${item.id}/preview`));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Preview failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function confirm() {
+    if (!item) return;
+    setLoading(true);
+    try {
+      const result = await adminApi.post<{ import: ImportData }>(
+        `/imports/${item.id}/confirm`,
+      );
+      setItem(result.import);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Import failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+  return (
+    <main className="flex min-h-[100dvh] bg-[#f6f5f1] text-ink">
+      <aside className="hidden w-[245px] shrink-0 border-r border-[#dfe0da] bg-[#183b33] text-white lg:flex lg:flex-col">
+        <AdminNav />
+      </aside>
+      {drawer && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <button
+            className="absolute inset-0 bg-black/30"
+            onClick={() => setDrawer(false)}
+          />
+          <aside className="relative flex h-full w-[270px] flex-col bg-[#183b33] text-white">
+            <button
+              onClick={() => setDrawer(false)}
+              className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-white/10"
+            >
+              <X size={17} />
+            </button>
+            <AdminNav />
+          </aside>
+        </div>
+      )}
+      <section className="min-w-0 flex-1">
+        <header className="flex h-[66px] items-center justify-between border-b border-[#e0e1dc] bg-white px-4 sm:px-7">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setDrawer(true)}
+              className="grid h-9 w-9 place-items-center rounded-lg border lg:hidden"
+            >
+              <Menu size={17} />
+            </button>
+            <div>
+              <h1 className="text-[14px] font-bold">Inventory import</h1>
+              <p className="text-[9px] text-[#83908a]">
+                Upload data and answer only what could not be verified
+              </p>
+            </div>
+          </div>
+          <a
+            href="/"
+            className="flex items-center gap-1 text-[10px] font-bold text-[#61706a]"
+          >
+            <ArrowLeft size={13} /> Customer app
+          </a>
+        </header>
+        <div className="mx-auto max-w-[1250px] p-4 sm:p-7">
+          <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {[
+              ["New Leads", leadSummary.newLeads],
+              ["High Intent", leadSummary.highIntent],
+              ["Follow-ups Due", leadSummary.followUpsDue],
+              ["Leads This Week", leadSummary.thisWeek],
+            ].map(([label, value]) => (
+              <a href="/admin/leads" key={label} className="rounded-[16px] border bg-white p-4">
+                <p className="text-[7px] font-bold uppercase tracking-wide text-[#89938e]">{label}</p>
+                <p className="mt-2 text-[20px] font-bold">{value}</p>
+              </a>
+            ))}
+          </div>
+          <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-[9px] font-bold uppercase tracking-[.14em] text-coral">
+                <Sparkles size={12} /> AI Import Assistant
+              </div>
+              <h2 className="text-[22px] font-bold tracking-[-.035em] sm:text-[28px]">
+                {item ? "Review your inventory" : "Import verified inventory"}
+              </h2>
+            </div>
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={(e) => upload(e.target.files?.[0])}
+            />
+            <button
+              onClick={() => inputRef.current?.click()}
+              disabled={loading}
+              className="flex h-10 items-center gap-2 rounded-xl bg-forest px-4 text-[9px] font-bold text-white"
+            >
+              <UploadCloud size={14} />
+              {loading
+                ? "Working…"
+                : item
+                  ? "Upload another file"
+                  : "Choose Excel or CSV"}
+            </button>
+          </div>
+          {error && (
+            <div className="mb-4 rounded-xl border border-[#efc7be] bg-[#fbe9e5] px-4 py-3 text-[10px] font-semibold text-[#8f3f30]">
+              {error}
+            </div>
+          )}
+          {!item ? (
+            <EmptyUpload onClick={() => inputRef.current?.click()} />
+          ) : (
+            <>
+              <StepBar status={item.status} />
+              <div className="mt-5 grid gap-5 xl:grid-cols-[1fr_325px]">
+                <section className="flex min-h-[560px] flex-col overflow-hidden rounded-[22px] border border-[#dedfd9] bg-white shadow-[0_8px_30px_rgba(28,45,39,.05)]">
+                  <div className="flex items-center justify-between border-b border-[#e5e6e1] px-5 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="grid h-9 w-9 place-items-center rounded-xl bg-forest text-white">
+                        <WandSparkles size={16} />
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-bold">
+                          Import assistant
+                        </p>
+                        <p className="mt-0.5 text-[8px] font-semibold text-[#749087]">
+                          {item.fileName}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="rounded-full bg-[#f1f0eb] px-2.5 py-1 text-[8px] font-bold">
+                      {item.status}
+                    </span>
+                  </div>
+                  <div className="flex-1 p-5 sm:p-7">
+                    <div className="mx-auto max-w-[680px] space-y-5">
+                      <Assistant
+                        text={`I found ${item.rowsDetected} rows in “${item.analysis?.sheetName || "the workbook"}”. I mapped ${Object.keys(item.analysis?.mappings || {}).length} columns using approved memory, known rules and reviewed AI suggestions.`}
+                      />
+                      {issue ? (
+                        <>
+                          <Assistant text={issue.message} />
+                          <Answer
+                            issue={issue}
+                            value={answer}
+                            setValue={setAnswer}
+                            locations={locations}
+                            submit={resolve}
+                            loading={loading}
+                          />
+                        </>
+                      ) : item.status === "COMPLETED" ? (
+                        <Assistant
+                          text={`Import complete. ${item.rowsCreated} units were created, ${item.rowsUpdated} updated and ${item.rowsRejected} rejected. No data was inserted before confirmation.`}
+                        />
+                      ) : (
+                        <>
+                          <Assistant text="All blocking questions are resolved. Generate the database preview before confirmation." />
+                          <button
+                            onClick={preview}
+                            disabled={loading}
+                            className="ml-11 rounded-xl bg-forest px-5 py-3 text-[9px] font-bold text-white"
+                          >
+                            Generate preview
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {item.preview?.canConfirm && item.status !== "COMPLETED" && (
+                    <div className="border-t bg-[#fbfaf7] p-4">
+                      <button
+                        onClick={confirm}
+                        disabled={loading}
+                        className="mx-auto flex h-11 w-full max-w-[680px] items-center justify-center gap-2 rounded-xl bg-coral text-[10px] font-bold text-white"
+                      >
+                        <CheckCircle2 size={15} /> Confirm transactional import
+                      </button>
+                    </div>
+                  )}
+                </section>
+                <aside className="space-y-4">
+                  <Analysis item={item} />
+                  <Issues issues={item.issues} />
+                  <div className="rounded-[18px] border border-[#dedfd9] bg-[#e7f0eb] p-4">
+                    <p className="text-[10px] font-bold">Safe by default</p>
+                    <p className="mt-1 text-[9px] leading-4 text-[#66736d]">
+                      Blocking issues prevent confirmation. Source files and
+                      every import decision remain auditable.
+                    </p>
+                  </div>
+                </aside>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+    </main>
+  );
 }
 
-function AdminNav(){return <><div className="px-5 py-6"><LogoMark/></div><nav className="flex-1 px-3">{nav.map(([Icon,label,href])=><a key={label} href={href} className={`mb-1 flex h-10 w-full items-center gap-3 rounded-xl px-3 text-[10px] font-semibold ${label==="Imports"?"bg-white text-forest":"text-white/65 hover:bg-white/10 hover:text-white"}`}><Icon size={15}/>{label}</a>)}</nav><div className="border-t border-white/10 p-3"><button onClick={async()=>{await adminApi.logout();location.href="/admin/login"}} className="flex h-10 w-full items-center gap-3 rounded-xl px-3 text-[10px] text-white/65"><Settings size={15}/> Sign out</button></div></>}
-function EmptyUpload({onClick}:{onClick:()=>void}){return <button onClick={onClick} className="grid min-h-[460px] w-full place-items-center rounded-[24px] border-2 border-dashed border-[#cdd2cd] bg-white/60 p-8 text-center"><div><div className="mx-auto grid h-16 w-16 place-items-center rounded-[22px] bg-[#e3eee8] text-forest"><FileSpreadsheet size={27}/></div><h3 className="mt-5 text-[16px] font-bold">Upload an availability workbook</h3><p className="mx-auto mt-2 max-w-sm text-[10px] leading-5 text-[#7b8781]">XLSX, legacy XLS and CSV are supported. Maximum 20 MB and 10,000 rows.</p></div></button>}
-function Assistant({text}:{text:string}){return <div className="flex gap-3"><div className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-forest text-white"><Sparkles size={13}/></div><div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-[#f1f0eb] px-4 py-3 text-[11px] leading-5">{text}</div></div>}
-function Answer({issue,value,setValue,locations,submit,loading}:{issue:Issue;value:string;setValue:(v:string)=>void;locations:Location[];submit:(v?:string)=>void;loading:boolean}){if(issue.field==="locationId")return <div className="ml-11 grid gap-2 sm:grid-cols-2">{locations.filter(x=>["AREA","SUBAREA","CITY"].includes(x.type)).map(x=><button key={x.id} onClick={()=>submit(x.id)} className="rounded-xl border p-3 text-left text-[9px] font-bold hover:border-forest">{x.name}<span className="mt-1 block text-[8px] font-normal text-[#87918d]">{x.parent?.name||x.type}</span></button>)}<a href="/admin/locations" className="flex items-center gap-2 rounded-xl border border-dashed p-3 text-[9px] font-bold"><Plus size={14}/> Add a missing location</a></div>;return <div className="ml-11"><div className="flex gap-2 rounded-xl border bg-white p-2"><input value={value} onChange={e=>setValue(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} className="min-w-0 flex-1 px-2 text-[10px] outline-none" placeholder={issue.field?.startsWith("column:")?"Canonical field or IGNORE":issue.field?.startsWith("value:")?"Canonical value or IGNORE":"Enter a default value"}/><button onClick={()=>submit()} disabled={loading} className="grid h-8 w-8 place-items-center rounded-lg bg-forest text-white"><ArrowRight size={14}/></button></div>{issue.field==="currency"&&<button onClick={()=>submit("EGP")} className="mt-2 rounded-full border px-3 py-1.5 text-[8px] font-bold">All prices are EGP</button>}{issue.severity!=="BLOCKING"&&!issue.field?.startsWith("column:")&&!issue.field?.startsWith("value:")&&<div className="mt-2 flex flex-wrap gap-1.5"><button onClick={()=>submit("LEAVE_EMPTY")} className="rounded-full border px-3 py-1.5 text-[8px] font-bold">Leave empty</button><button onClick={()=>submit("EXCLUDE_ROWS")} className="rounded-full border px-3 py-1.5 text-[8px] font-bold">Exclude affected rows</button><button onClick={()=>submit("CONTACT_SALES")} className="rounded-full border px-3 py-1.5 text-[8px] font-bold">Mark Contact Sales</button></div>}</div>}
-function StepBar({status}:{status:string}){const active=status==="COMPLETED"?4:status==="READY"?3:2;return <div className="overflow-x-auto rounded-2xl border bg-white px-4 py-3"><div className="flex min-w-[560px] items-center">{["Upload","Analyze","Resolve","Preview","Import"].map((s,i)=><div key={s} className="flex flex-1 items-center last:flex-none"><span className={`grid h-6 w-6 place-items-center rounded-full text-[8px] font-bold ${i<active?"bg-forest text-white":i===active?"border-2 border-coral text-coral":"bg-[#eee] text-[#999]"}`}>{i<active?<Check size={11}/>:i+1}</span><span className="ml-2 text-[8px] font-bold">{s}</span>{i<4&&<div className={`mx-3 h-px flex-1 ${i<active?"bg-forest":"bg-[#ddd]"}`}/>}</div>)}</div></div>}
-function Analysis({item}:{item:ImportData}){return <div className="rounded-[18px] border bg-white p-4"><p className="text-[10px] font-bold">Workbook analysis</p><div className="mt-4 grid grid-cols-3 gap-2">{[[item.rowsDetected,"Rows"],[Object.keys(item.analysis?.mappings||{}).length,"Mapped"],[item.analysis?.sheets?.length||1,"Sheets"]].map(([n,l])=><div key={String(l)} className="rounded-xl bg-[#f4f3ee] px-3 py-2.5"><p className="text-[14px] font-bold">{n}</p><p className="text-[7px] uppercase text-[#8b958f]">{l}</p></div>)}</div></div>}
-function Issues({issues}:{issues:Issue[]}){return <div className="rounded-[18px] border bg-white p-4"><p className="text-[10px] font-bold">Issues</p><div className="mt-4 space-y-3">{issues.length?issues.map(i=><div key={i.id} className="flex gap-2"><span className={`mt-1 h-2 w-2 rounded-full ${i.resolvedAt?"bg-[#3d8c6c]":i.severity==="BLOCKING"?"bg-coral":"bg-[#e3ad52]"}`}/><div><p className="text-[8px] font-bold">{i.field}</p><p className="text-[7px] text-[#8b958f]">{i.resolvedAt?"Resolved":i.severity}</p></div></div>):<p className="text-[8px] text-[#8b958f]">No issues detected</p>}</div></div>}
+function AdminNav() {
+  return (
+    <>
+      <div className="px-5 py-6">
+        <LogoMark />
+      </div>
+      <nav className="flex-1 px-3">
+        {nav.map(([Icon, label, href]) => (
+          <a
+            key={label}
+            href={href}
+            className={`mb-1 flex h-10 w-full items-center gap-3 rounded-xl px-3 text-[10px] font-semibold ${label === "Imports" ? "bg-white text-forest" : "text-white/65 hover:bg-white/10 hover:text-white"}`}
+          >
+            <Icon size={15} />
+            {label}
+          </a>
+        ))}
+      </nav>
+      <div className="border-t border-white/10 p-3">
+        <button
+          onClick={async () => {
+            await adminApi.logout();
+            location.href = "/admin/login";
+          }}
+          className="flex h-10 w-full items-center gap-3 rounded-xl px-3 text-[10px] text-white/65"
+        >
+          <Settings size={15} /> Sign out
+        </button>
+      </div>
+    </>
+  );
+}
+function EmptyUpload({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="grid min-h-[460px] w-full place-items-center rounded-[24px] border-2 border-dashed border-[#cdd2cd] bg-white/60 p-8 text-center"
+    >
+      <div>
+        <div className="mx-auto grid h-16 w-16 place-items-center rounded-[22px] bg-[#e3eee8] text-forest">
+          <FileSpreadsheet size={27} />
+        </div>
+        <h3 className="mt-5 text-[16px] font-bold">
+          Upload an availability workbook
+        </h3>
+        <p className="mx-auto mt-2 max-w-sm text-[10px] leading-5 text-[#7b8781]">
+          XLSX, legacy XLS and CSV are supported. Maximum 20 MB and 10,000 rows.
+        </p>
+      </div>
+    </button>
+  );
+}
+function Assistant({ text }: { text: string }) {
+  return (
+    <div className="flex gap-3">
+      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-forest text-white">
+        <Sparkles size={13} />
+      </div>
+      <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-[#f1f0eb] px-4 py-3 text-[11px] leading-5">
+        {text}
+      </div>
+    </div>
+  );
+}
+function Answer({
+  issue,
+  value,
+  setValue,
+  locations,
+  submit,
+  loading,
+}: {
+  issue: Issue;
+  value: string;
+  setValue: (v: string) => void;
+  locations: Location[];
+  submit: (v?: string) => void;
+  loading: boolean;
+}) {
+  if (issue.field === "locationId")
+    return (
+      <div className="ml-11 grid gap-2 sm:grid-cols-2">
+        {locations
+          .filter((x) => ["AREA", "SUBAREA", "CITY"].includes(x.type))
+          .map((x) => (
+            <button
+              key={x.id}
+              onClick={() => submit(x.id)}
+              className="rounded-xl border p-3 text-left text-[9px] font-bold hover:border-forest"
+            >
+              {x.name}
+              <span className="mt-1 block text-[8px] font-normal text-[#87918d]">
+                {x.parent?.name || x.type}
+              </span>
+            </button>
+          ))}
+        <a
+          href="/admin/locations"
+          className="flex items-center gap-2 rounded-xl border border-dashed p-3 text-[9px] font-bold"
+        >
+          <Plus size={14} /> Add a missing location
+        </a>
+      </div>
+    );
+  return (
+    <div className="ml-11">
+      <div className="flex gap-2 rounded-xl border bg-white p-2">
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+          className="min-w-0 flex-1 px-2 text-[10px] outline-none"
+          placeholder={
+            issue.field?.startsWith("column:")
+              ? "Canonical field or IGNORE"
+              : issue.field?.startsWith("value:")
+                ? "Canonical value or IGNORE"
+                : "Enter a default value"
+          }
+        />
+        <button
+          onClick={() => submit()}
+          disabled={loading}
+          className="grid h-8 w-8 place-items-center rounded-lg bg-forest text-white"
+        >
+          <ArrowRight size={14} />
+        </button>
+      </div>
+      {issue.field === "currency" && (
+        <button
+          onClick={() => submit("EGP")}
+          className="mt-2 rounded-full border px-3 py-1.5 text-[8px] font-bold"
+        >
+          All prices are EGP
+        </button>
+      )}
+      {issue.severity !== "BLOCKING" &&
+        !issue.field?.startsWith("column:") &&
+        !issue.field?.startsWith("value:") && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <button
+              onClick={() => submit("LEAVE_EMPTY")}
+              className="rounded-full border px-3 py-1.5 text-[8px] font-bold"
+            >
+              Leave empty
+            </button>
+            <button
+              onClick={() => submit("EXCLUDE_ROWS")}
+              className="rounded-full border px-3 py-1.5 text-[8px] font-bold"
+            >
+              Exclude affected rows
+            </button>
+            <button
+              onClick={() => submit("CONTACT_SALES")}
+              className="rounded-full border px-3 py-1.5 text-[8px] font-bold"
+            >
+              Mark Contact Sales
+            </button>
+          </div>
+        )}
+    </div>
+  );
+}
+function StepBar({ status }: { status: string }) {
+  const active = status === "COMPLETED" ? 4 : status === "READY" ? 3 : 2;
+  return (
+    <div className="overflow-x-auto rounded-2xl border bg-white px-4 py-3">
+      <div className="flex min-w-[560px] items-center">
+        {["Upload", "Analyze", "Resolve", "Preview", "Import"].map((s, i) => (
+          <div key={s} className="flex flex-1 items-center last:flex-none">
+            <span
+              className={`grid h-6 w-6 place-items-center rounded-full text-[8px] font-bold ${i < active ? "bg-forest text-white" : i === active ? "border-2 border-coral text-coral" : "bg-[#eee] text-[#999]"}`}
+            >
+              {i < active ? <Check size={11} /> : i + 1}
+            </span>
+            <span className="ml-2 text-[8px] font-bold">{s}</span>
+            {i < 4 && (
+              <div
+                className={`mx-3 h-px flex-1 ${i < active ? "bg-forest" : "bg-[#ddd]"}`}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+function Analysis({ item }: { item: ImportData }) {
+  return (
+    <div className="rounded-[18px] border bg-white p-4">
+      <p className="text-[10px] font-bold">Workbook analysis</p>
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        {[
+          [item.rowsDetected, "Rows"],
+          [Object.keys(item.analysis?.mappings || {}).length, "Mapped"],
+          [item.analysis?.sheets?.length || 1, "Sheets"],
+        ].map(([n, l]) => (
+          <div key={String(l)} className="rounded-xl bg-[#f4f3ee] px-3 py-2.5">
+            <p className="text-[14px] font-bold">{n}</p>
+            <p className="text-[7px] uppercase text-[#8b958f]">{l}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+function Issues({ issues }: { issues: Issue[] }) {
+  return (
+    <div className="rounded-[18px] border bg-white p-4">
+      <p className="text-[10px] font-bold">Issues</p>
+      <div className="mt-4 space-y-3">
+        {issues.length ? (
+          issues.map((i) => (
+            <div key={i.id} className="flex gap-2">
+              <span
+                className={`mt-1 h-2 w-2 rounded-full ${i.resolvedAt ? "bg-[#3d8c6c]" : i.severity === "BLOCKING" ? "bg-coral" : "bg-[#e3ad52]"}`}
+              />
+              <div>
+                <p className="text-[8px] font-bold">{i.field}</p>
+                <p className="text-[7px] text-[#8b958f]">
+                  {i.resolvedAt ? "Resolved" : i.severity}
+                </p>
+              </div>
+            </div>
+          ))
+        ) : (
+          <p className="text-[8px] text-[#8b958f]">No issues detected</p>
+        )}
+      </div>
+    </div>
+  );
+}
