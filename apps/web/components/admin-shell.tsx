@@ -1,23 +1,7 @@
 "use client";
-
-import { usePathname } from "next/navigation";
 import { LogOut } from "lucide-react";
+import { usePathname } from "next/navigation";
 import { AdminSectionNav } from "./admin-section-nav";
 import { LogoMark } from "./logo";
 import { adminApi } from "@/lib/api";
-
-export function AdminShell({ children, privateEntry = false }: { children: React.ReactNode; privateEntry?: boolean }) {
-  const pathname = usePathname();
-  if (privateEntry || pathname === "/admin/login") return children;
-  return <div className="min-h-[100dvh] bg-[#f6f5f1] text-ink" dir="rtl">
-    <header className="sticky top-0 z-40 border-b bg-white/95 backdrop-blur">
-      <div className="mx-auto flex h-16 max-w-[1400px] items-center justify-between px-4 sm:px-7">
-        <LogoMark />
-        <div className="text-center"><p className="text-[15px] font-bold">إدارة مقار</p><p className="text-[11px] text-[#75817b]">مساحة التشغيل الخاصة</p></div>
-        <button onClick={async () => { await adminApi.logout(); location.href = "/"; }} className="flex h-10 items-center gap-2 rounded-xl border px-3 text-[13px] font-bold text-[#59655f]"><LogOut size={15}/> تسجيل الخروج</button>
-      </div>
-      <AdminSectionNav active="" />
-    </header>
-    <div className="admin-shell-content">{children}</div>
-  </div>;
-}
+export function AdminShell({children,privateEntry=false}:{children:React.ReactNode;privateEntry?:boolean}){const pathname=usePathname();if(privateEntry||pathname==="/admin/login")return children;return <div className="min-h-[100dvh] bg-[#f6f5f1] text-ink" dir="rtl"><header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b bg-white px-4 lg:hidden"><LogoMark/><p className="font-bold">إدارة مقار</p><button aria-label="تسجيل الخروج" onClick={async()=>{await adminApi.logout();location.href="/"}} className="rounded-xl border p-2"><LogOut size={17}/></button></header><aside className="fixed inset-y-0 right-0 z-40 hidden w-64 flex-col border-l bg-white lg:flex"><div className="flex h-20 items-center justify-between border-b px-5"><LogoMark/><div className="text-left"><p className="font-bold">إدارة مقار</p><p className="text-[11px] text-[#75817b]">مساحة التشغيل الخاصة</p></div></div><div className="flex-1 overflow-y-auto"><AdminSectionNav active=""/></div><button onClick={async()=>{await adminApi.logout();location.href="/"}} className="m-4 flex h-11 items-center justify-center gap-2 rounded-xl border text-sm font-bold"><LogOut size={15}/>تسجيل الخروج</button></aside><div className="overflow-x-auto border-b bg-white lg:hidden"><div className="min-w-max"><AdminSectionNav active=""/></div></div><div className="lg:mr-64">{children}</div></div>}

@@ -61,7 +61,7 @@ export default function DataPage() {
         "/imports/upload",
         form,
       );
-      location.href = `/admin?import=${created.id}`;
+      location.href = `/admin/data/import?import=${created.id}`;
     } catch (e) {
       setError(adminErrorMessage(e));
     } finally {
@@ -71,7 +71,7 @@ export default function DataPage() {
   }
   async function remove(
     batch: Batch,
-    mode: "DELETE_SOURCE_RECORD" | "DELETE_EXCLUSIVE_RECORDS" | "ROLLBACK_SAFE",
+    mode: "DELETE_UNFINISHED" | "DELETE_SOURCE_RECORD" | "DELETE_EXCLUSIVE_RECORDS" | "ROLLBACK_SAFE",
   ) {
     const warning =
       mode === "ROLLBACK_SAFE"
@@ -115,7 +115,7 @@ export default function DataPage() {
         <div className="mb-4 flex items-center justify-between">
           <p className="text-sm font-bold">{page.total} دفعة</p>
           <a
-            href="/admin"
+            href="/admin/data/import"
             className="flex h-10 items-center gap-2 rounded-xl bg-forest px-4 text-sm font-bold text-white"
           >
             <Upload size={16} />
@@ -191,7 +191,7 @@ export default function DataPage() {
                   <td className="px-4 py-4">
                     <div className="flex gap-1">
                       <a
-                        href={`/admin?import=${batch.id}`}
+                        href={`/admin/data/import?import=${batch.id}`}
                         title="عرض"
                         className="rounded-lg border p-2"
                       >
@@ -239,6 +239,16 @@ export default function DataPage() {
                             <Trash2 size={14} />
                           </button>
                         </>
+                      )}
+                      {batch.status !== "COMPLETED" && batch.status !== "ROLLED_BACK" && (
+                        <button
+                          title="حذف الاستيراد غير المكتمل"
+                          disabled={busy === batch.id}
+                          onClick={() => remove(batch, "DELETE_UNFINISHED")}
+                          className="rounded-lg border p-2 text-red-700"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       )}
                     </div>
                   </td>

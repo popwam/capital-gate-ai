@@ -18,3 +18,12 @@ test("normalized trace filters distinguish unit area from location IDs", async (
   assert.equal(filters.builtUpAreaMin, 100);
   assert.deepEqual(filters.locationIds, ["new-cairo"]);
 });
+
+test("developer history is retrieved as structured verified portfolio data", async () => {
+  let query: any;
+  const prisma = { developer: { findUnique: async (args: any) => { query = args; return { id: "developer-1", portfolioProjects: [{ projectName: "Delivered", status: "DELIVERED", verifiedAt: new Date() }], projects: [] }; } } };
+  const service = new PropertySearchService(prisma as any);
+  const result: any = await service.getDeveloper("developer-1");
+  assert.equal(result.portfolioProjects[0].status, "DELIVERED");
+  assert.deepEqual(query.include.portfolioProjects.where, { verifiedAt: { not: null } });
+});

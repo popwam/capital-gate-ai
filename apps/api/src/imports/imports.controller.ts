@@ -8,7 +8,7 @@ import { ImporterService } from "./importer.service";
 import { ImportHttpException, importErrorDetails } from "./import-errors";
 
 class ResolutionDto { @IsString() @IsNotEmpty() field!: string; @Allow() value!: unknown; }
-class RemoveBatchDto { @IsIn(["DELETE_SOURCE_RECORD", "DELETE_EXCLUSIVE_RECORDS", "ROLLBACK_SAFE"]) mode!: "DELETE_SOURCE_RECORD" | "DELETE_EXCLUSIVE_RECORDS" | "ROLLBACK_SAFE"; }
+class RemoveBatchDto { @IsIn(["DELETE_UNFINISHED", "DELETE_SOURCE_RECORD", "DELETE_EXCLUSIVE_RECORDS", "ROLLBACK_SAFE"]) mode!: "DELETE_UNFINISHED" | "DELETE_SOURCE_RECORD" | "DELETE_EXCLUSIVE_RECORDS" | "ROLLBACK_SAFE"; }
 @UseGuards(AdminAuthGuard)
 @Controller("admin/imports")
 export class ImportsController {
@@ -39,5 +39,5 @@ export class ImportsController {
   @Post(":id/resolve") resolve(@Param("id") id: string, @Body() body: ResolutionDto) { return this.imports.resolve(id, body.field, body.value); }
   @Post(":id/preview") preview(@Param("id") id: string) { return this.imports.preview(id); }
   @Post(":id/confirm") async confirm(@Param("id") id: string, @Req() req: any) { const result = await this.imports.confirm(id); await this.audit.record(req.admin.id, "IMPORT_CONFIRMED", "DataImport", id, result.result); return result; }
-  @Delete(":id") async remove(@Param("id") id: string, @Body() body: RemoveBatchDto, @Req() req: any) { const result = await this.imports.removeBatch(id, body.mode); await this.audit.record(req.admin.id, "IMPORT_BATCH_REMOVED", "DataImport", id, { mode: body.mode, affected: result.affected, conflicts: result.conflicts }); return result; }
+  @Delete(":id") async remove(@Param("id") id: string, @Body() body: RemoveBatchDto, @Req() req: any) { const result = await this.imports.removeBatch(id, body.mode); await this.audit.record(req.admin.id, "IMPORT_BATCH_REMOVED", "DataImport", id, { mode: body.mode, affected: result.affected, conflicts: result.conflicts, sourceObjectDeleted: result.sourceObjectDeleted, sourceObjectRetained: result.sourceObjectRetained, storageCleanupFailed: result.storageCleanupFailed }); return result; }
 }

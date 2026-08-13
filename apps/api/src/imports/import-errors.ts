@@ -21,7 +21,8 @@ export type ImportErrorCode =
   | "IMPORT_ROW_VALIDATION_FAILED"
   | "IMPORT_PREVIEW_REQUIRED"
   | "IMPORT_HAS_INVENTORY_PROVENANCE"
-  | "IMPORT_NOT_ROLLBACKABLE";
+  | "IMPORT_NOT_ROLLBACKABLE"
+  | "IMPORT_CONFIRMED_DELETE_BLOCKED";
 
 export class ImportHttpException extends HttpException {
   constructor(

@@ -33,6 +33,7 @@ import {
 } from "./admin/lead-crm.controller";
 import { LeadCrmService } from "./admin/lead-crm.service";
 import { SystemController } from "./admin/system.controller";
+import { RealEstateController } from "./admin/real-estate.controller";
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { SystemController } from "./admin/system.controller";
     LeadCrmController,
     AdminConversationsController,
     SystemController,
+    RealEstateController,
   ],
   providers: [
     ChatService,

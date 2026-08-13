@@ -18,6 +18,7 @@ import { DocumentType, MediaType, Prisma, UnitStatus } from "@prisma/client";
 import { Type } from "class-transformer";
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsIn,
@@ -128,13 +129,28 @@ class UpdateOfferDto {
 }
 class MediaDto {
   @IsEnum(MediaType) type!: MediaType;
+  @IsOptional() @IsString() developerId?: string;
   @IsOptional() @IsString() projectId?: string;
   @IsOptional() @IsString() unitId?: string;
   @IsOptional() @IsString() altText?: string;
+  @IsOptional() @IsString() altTextAr?: string;
+  @IsOptional() @IsString() altTextEn?: string;
+  @IsOptional() @IsString() caption?: string;
 }
 class DocumentDto {
   @IsEnum(DocumentType) type!: DocumentType;
-  @IsString() projectId!: string;
+  @IsOptional() @IsString() projectId?: string;
+  @IsOptional() @IsString() developerId?: string;
+  @IsOptional() @IsString() language?: string;
+  @IsOptional() @IsString() source?: string;
+}
+class UpdateMediaDto {
+  @IsOptional() @IsString() altText?: string;
+  @IsOptional() @IsString() altTextAr?: string;
+  @IsOptional() @IsString() altTextEn?: string;
+  @IsOptional() @IsString() caption?: string;
+  @IsOptional() @Type(() => Number) @IsInt() sortOrder?: number;
+  @IsOptional() @IsBoolean() isCover?: boolean;
 }
 
 @UseGuards(AdminAuthGuard)
@@ -202,6 +218,10 @@ export class CatalogController {
         location: true,
         media: true,
         documents: true,
+        amenities: { include: { amenity: true } },
+        investmentProfile: true,
+        landmarks: true,
+        competitorsFrom: { include: { competitorProject: true } },
         _count: { select: { units: true, knowledgeItems: true } },
       },
     });
@@ -497,19 +517,24 @@ export class CatalogController {
   ) {
     if (!file || !file.mimetype.startsWith("image/"))
       throw new BadRequestException("A valid image is required");
-    if (!body.projectId && !body.unitId)
-      throw new BadRequestException("projectId or unitId is required");
+    if (!body.developerId && !body.projectId && !body.unitId)
+      throw new BadRequestException("developerId, projectId or unitId is required");
     const stored = await this.storage.put(
       file.buffer,
       file.originalname,
       file.mimetype,
-      body.unitId ? "units" : "projects",
+      body.unitId ? "units" : body.projectId ? "projects" : "developers",
     );
     const item = await this.prisma.media.create({
       data: {
         type: body.type,
         url: stored.url,
+        storageKey: stored.key,
         altText: body.altText,
+        altTextAr: body.altTextAr,
+        altTextEn: body.altTextEn,
+        caption: body.caption,
+        developerId: body.developerId,
         projectId: body.projectId,
         unitId: body.unitId,
       },
@@ -526,6 +551,8 @@ export class CatalogController {
     @Body() body: DocumentDto,
     @Req() req: any,
   ) {
+    if (!body.projectId && !body.developerId)
+      throw new BadRequestException("projectId or developerId is required");
     if (
       !file ||
       ![
@@ -546,8 +573,12 @@ export class CatalogController {
         type: body.type,
         name: file.originalname,
         url: stored.url,
+        storageKey: stored.key,
         mimeType: file.mimetype,
         projectId: body.projectId,
+        developerId: body.developerId,
+        language: body.language,
+        source: body.source,
       },
     });
     await this.audit.record(
@@ -556,6 +587,15 @@ export class CatalogController {
       "Document",
       item.id,
     );
+    return item;
+  }
+  @Patch("media/:id") async updateMedia(@Param("id") id: string, @Body() body: UpdateMediaDto, @Req() req: any) {
+    const current = await this.prisma.media.findUniqueOrThrow({ where: { id } });
+    const item = await this.prisma.$transaction(async tx => {
+      if (body.isCover) await tx.media.updateMany({ where: { id: { not: id }, developerId: current.developerId, projectId: current.projectId, unitId: current.unitId }, data: { isCover: false } });
+      return tx.media.update({ where: { id }, data: body });
+    });
+    await this.audit.record(req.admin.id, "MEDIA_UPDATED", "Media", id, { fields: Object.keys(body) });
     return item;
   }
   @Delete("media/:id") async removeMedia(@Param("id") id: string, @Req() req: any) {

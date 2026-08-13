@@ -68,7 +68,7 @@ const nav = [
   [Users, "العملاء المحتملون", "/admin/leads"],
 ] as const;
 
-export default function AdminPage() {
+export function ImportAssistant() {
   const [drawer, setDrawer] = useState(false);
   const [item, setItem] = useState<ImportData | null>(null);
   const [locations, setLocations] = useState<Location[]>([]);
@@ -361,6 +361,30 @@ export default function AdminPage() {
       </section>
     </main>
   );
+}
+
+type DashboardSummary = { units: number; availableUnits: number; projects: number; developers: number; activeImports: number; importsNeedingInput: number; newLeads: number; followUps: number };
+
+export default function AdminDashboard() {
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => { adminApi.get<DashboardSummary>("/real-estate/dashboard").then(setSummary).catch(error => setError(adminErrorMessage(error))); }, []);
+  const cards = [
+    ["إجمالي الوحدات", summary?.units, "/admin/inventory"],
+    ["الوحدات المتاحة", summary?.availableUnits, "/admin/inventory"],
+    ["المشروعات", summary?.projects, "/admin/projects"],
+    ["المطورون", summary?.developers, "/admin/developers"],
+    ["عمليات الاستيراد النشطة", summary?.activeImports, "/admin/data"],
+    ["استيرادات تحتاج تدخلاً", summary?.importsNeedingInput, "/admin/data"],
+    ["العملاء الجدد", summary?.newLeads, "/admin/leads"],
+    ["المتابعات المطلوبة", summary?.followUps, "/admin/leads"],
+  ] as const;
+  return <main className="mx-auto min-h-screen max-w-7xl p-4 sm:p-8" dir="rtl">
+    <div className="mb-7"><h1 className="text-2xl font-bold">لوحة التحكم</h1><p className="mt-2 text-sm text-[#68756f]">ملخص حالة البيانات والتشغيل.</p></div>
+    {error && <div className="mb-5 rounded-xl bg-red-50 p-4 text-sm text-red-800">{error}</div>}
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{cards.map(([label, value, href]) => <a key={label} href={href} className="rounded-2xl border bg-white p-5 shadow-sm transition hover:-translate-y-0.5"><p className="text-sm text-[#68756f]">{label}</p><p className="mt-3 text-3xl font-bold text-forest">{value ?? "—"}</p></a>)}</div>
+    <div className="mt-6"><a href="/admin/data/import" className="inline-flex h-11 items-center gap-2 rounded-xl bg-forest px-5 text-sm font-bold text-white"><UploadCloud size={17}/>بدء استيراد جديد</a></div>
+  </main>;
 }
 
 function AdminNav() {

@@ -163,6 +163,24 @@ export class ChatService {
         payload = { type: "map", map: this.serialize(map) };
         verifiedFacts = map ? [map] : [];
       }
+    } else if (state.preferredDevelopers?.length === 1 && /(?:المطور|سابقة|سلم|تاريخ|developer|track\s*record|portfolio)/iu.test(content)) {
+      const developerName = state.preferredDevelopers[0];
+      const developer = await this.prisma.developer.findFirst({ where: { OR: [{ name: { contains: developerName, mode: "insensitive" } }, { canonicalName: { contains: developerName, mode: "insensitive" } }, { nameAr: { contains: developerName, mode: "insensitive" } }, { nameEn: { contains: developerName, mode: "insensitive" } }] }, select: { id: true } });
+      if (developer) verifiedFacts = [this.serialize(await this.search.getDeveloper(developer.id))];
+      trace.searchOperation = "GET_DEVELOPER_STRUCTURED_FACTS";
+      trace.databaseResultCount = developer ? 1 : 0;
+    } else if (state.requestedProject) {
+      const match = await this.search.findProjectByName(state.requestedProject);
+      if (match) {
+        const project = await this.search.getProject(match.id);
+        verifiedFacts = [this.serialize(project)];
+        approvedKnowledge = project.knowledgeItems;
+        trace.searchOperation = "GET_PROJECT_STRUCTURED_FACTS";
+        trace.databaseResultCount = 1;
+      } else {
+        trace.searchOperation = "GET_PROJECT_STRUCTURED_FACTS";
+        trace.databaseResultCount = 0;
+      }
     } else if (state.temporaryIntent === "INVENTORY_AGGREGATION" && state.aggregationDimension) {
       const aggregate = await this.search.aggregateInventory(state);
       verifiedFacts = [this.serialize(aggregate)];

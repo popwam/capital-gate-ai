@@ -35,7 +35,10 @@ function fixture(options: { aiFails?: boolean; storageFails?: boolean; remembere
     location: { findUnique: async () => ({ id: "location-1" }) },
     importMapping: { findMany: async () => options.rememberedMappings ?? [] },
     importValueMapping: { findMany: async () => [] },
-    unit: { findMany: async () => [] },
+    unit: { findMany: async () => [], count: async () => 0 },
+    paymentPlan: { count: async () => 0 },
+    media: { count: async () => 0 },
+    document: { count: async () => 0 },
     dataImport: {
       create: async ({ data }: any) => {
         events.push("database-create");
@@ -55,9 +58,12 @@ function fixture(options: { aiFails?: boolean; storageFails?: boolean; remembere
       findUnique: async () => ({
         ...record,
         issues,
+        unitChanges: [],
         developer: null,
         project: null,
       }),
+      count: async () => 0,
+      delete: async () => { record = undefined; return { id: "import-1" }; },
     },
     importIssue: {
       createMany: async ({ data }: any) => {
@@ -89,6 +95,7 @@ function fixture(options: { aiFails?: boolean; storageFails?: boolean; remembere
         throw new StorageProviderError("AUTH", 403, new Error("denied"));
       return { key: "imports/source.xlsx", url: "https://assets/source.xlsx" };
     },
+    delete: async () => { events.push("storage-delete"); },
   };
   const ai: any = {
     mapColumns: async () => {
@@ -264,4 +271,15 @@ test("preview and confirm share typed normalization and reject an invalid date b
   assert.equal(preview.preview.invalidRows, 1);
   assert.equal(preview.preview.canConfirm, false);
   await assert.rejects(() => f.service.confirm(uploaded.id), (error: any) => error.getResponse().code === "IMPORT_PREVIEW_REQUIRED");
+});
+
+test("unfinished import deletion removes only an exclusively-owned source object", async () => {
+  const f = fixture({ aiFails: true });
+  await f.service.analyze(file(workbookBuffer({ "Unit Number": "CLEANUP-1" })), {});
+  const result: any = await f.service.removeBatch("import-1", "DELETE_UNFINISHED");
+  assert.equal(result.deleted, true);
+  assert.equal(result.sourceObjectDeleted, true);
+  assert.equal(result.storageCleanupFailed, false);
+  assert.equal(f.record(), undefined);
+  assert.ok(f.events.includes("storage-delete"));
 });

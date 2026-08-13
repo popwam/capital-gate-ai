@@ -1514,9 +1514,37 @@ export class ImporterService {
 
   async removeBatch(
     id: string,
-    mode: "DELETE_SOURCE_RECORD" | "DELETE_EXCLUSIVE_RECORDS" | "ROLLBACK_SAFE",
+    mode: "DELETE_UNFINISHED" | "DELETE_SOURCE_RECORD" | "DELETE_EXCLUSIVE_RECORDS" | "ROLLBACK_SAFE",
   ) {
     const item = await this.get(id);
+    if (mode === "DELETE_UNFINISHED") {
+      if (item.status === ImportStatus.COMPLETED || item.status === ImportStatus.ROLLED_BACK || item.unitChanges.length)
+        throw new ImportHttpException(HttpStatus.CONFLICT, "IMPORT_CONFIRMED_DELETE_BLOCKED", "Confirmed inventory cannot be deleted as an unfinished import. Use the reviewed rollback workflow.", "cleanup", id);
+      const [sourceUnits, sourcePlans] = await this.prisma.$transaction([
+        this.prisma.unit.count({ where: { sourceImportId: id } }),
+        this.prisma.paymentPlan.count({ where: { sourceImportId: id } }),
+      ]);
+      if (sourceUnits || sourcePlans)
+        throw new ImportHttpException(HttpStatus.CONFLICT, "IMPORT_HAS_INVENTORY_PROVENANCE", "This import owns inventory records and requires safe rollback review.", "cleanup", id);
+      const analysis = (item.analysis ?? {}) as Analysis;
+      let sourceObjectDeleted = false;
+      let sourceObjectExclusive = false;
+      if (item.fileUrl && analysis.fileKey) {
+        const [imports, media, documents] = await this.prisma.$transaction([
+          this.prisma.dataImport.count({ where: { fileUrl: item.fileUrl, id: { not: id } } }),
+          this.prisma.media.count({ where: { url: item.fileUrl } }),
+          this.prisma.document.count({ where: { url: item.fileUrl } }),
+        ]);
+        sourceObjectExclusive = imports + media + documents === 0;
+      }
+      await this.prisma.dataImport.delete({ where: { id } });
+      let storageCleanupFailed = false;
+      if (sourceObjectExclusive && analysis.fileKey) {
+        try { await this.storage.delete(analysis.fileKey); sourceObjectDeleted = true; }
+        catch (error) { storageCleanupFailed = true; this.logger.error(`ImportCleanupFailure importId=${id} stage=storage-delete code=IMPORT_STORAGE_FAILED`); }
+      }
+      return { id, mode, deleted: true, sourceObjectDeleted, sourceObjectRetained: Boolean(item.fileUrl && !sourceObjectDeleted), storageCleanupFailed, affected: 0, conflicts: 0 };
+    }
     if (mode === "DELETE_SOURCE_RECORD") {
       if (item.unitChanges.length)
         throw new ImportHttpException(

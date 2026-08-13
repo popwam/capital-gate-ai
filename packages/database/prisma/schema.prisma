@@ -97,6 +97,11 @@ model Location {
   id            String             @id @default(cuid())
   type          LocationType
   name          String
+  canonicalName String?
+  nameAr        String?
+  nameEn        String?
+  formattedAddress String?
+  source        String?
   slug          String             @unique
   parentId      String?
   parent        Location?          @relation("LocationTree", fields: [parentId], references: [id])
@@ -108,6 +113,8 @@ model Location {
   distancesFrom LocationDistance[] @relation("DistanceFrom")
   distancesTo   LocationDistance[] @relation("DistanceTo")
   projects      Project[]
+  portfolioProjects DeveloperProjectPortfolio[]
+  projectLandmarks ProjectLandmark[]
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
 
@@ -140,6 +147,8 @@ model LocationDistance {
   notes            String?
   isBidirectional  Boolean   @default(true)
   verifiedAt       DateTime?
+  verifiedByAdminId String?
+  verifiedBy        AdminUser? @relation(fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
 
   @@unique([fromLocationId, toLocationId])
 }
@@ -149,11 +158,37 @@ model Developer {
   name        String
   slug        String       @unique
   description String?
+  canonicalName String?
+  nameAr String?
+  nameEn String?
+  shortName String?
+  brandName String?
+  logoUrl String?
+  coverImageUrl String?
+  website String?
+  foundedYear Int?
+  headquarters String?
+  country String?
+  developerType String?
+  salesPhone String?
+  email String?
+  socialLinks Json?
+  shortDescriptionAr String?
+  shortDescriptionEn String?
+  fullDescriptionAr String?
+  fullDescriptionEn String?
+  yearsInMarket Int?
+  deliveredProjectsCount Int?
+  projectsUnderConstructionCount Int?
+  geographicFocus String[]
+  specialties String[]
+  sourceMetadata Json?
   projects    Project[]
   units       Unit[]
   media       Media[]
   documents   Document[]
   imports     DataImport[]
+  portfolioProjects DeveloperProjectPortfolio[]
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 }
@@ -165,20 +200,59 @@ model Project {
   locationId          String?
   location            Location?              @relation(fields: [locationId], references: [id])
   name                String
+  canonicalName       String?
+  nameAr              String?
+  nameEn              String?
   slug                String                 @unique
   shortDescription    String?
   description         String?
+  shortDescriptionAr  String?
+  shortDescriptionEn  String?
+  fullDescriptionAr   String?
+  fullDescriptionEn   String?
+  adminStatus         String                 @default("DRAFT")
+  launchDate          DateTime?
+  launchYear          Int?
+  officialWebsite     String?
+  formattedAddress    String?
+  googlePlaceId       String?
   latitude            Decimal?               @db.Decimal(10, 7)
   longitude           Decimal?               @db.Decimal(10, 7)
   projectStatus       String?
   projectType         String?
   deliveryInformation String?
+  deliveryStatus      String?
+  deliveryDate        DateTime?
+  deliveryYear        Int?
+  finishingOptions    String[]
+  totalLandArea       Decimal?               @db.Decimal(14, 2)
+  builtUpPercentage   Decimal?               @db.Decimal(7, 4)
+  numberOfPhases      Int?
+  totalUnits          Int?
+  densityDescription  String?
+  gatedCommunity      Boolean?
+  unitTypes           String[]
+  minArea             Decimal?               @db.Decimal(10, 2)
+  maxArea             Decimal?               @db.Decimal(10, 2)
+  minBedrooms         Int?
+  maxBedrooms         Int?
+  priceSummary        String?
+  paymentSummary      String?
+  maintenanceSummary  String?
+  clubFeesSummary     String?
+  customerFit         String[]
+  sourceMetadata      Json?
   units               Unit[]
   knowledge           ProjectKnowledge[]
   knowledgeItems      ProjectKnowledgeItem[]
   media               Media[]
   documents           Document[]
   imports             DataImport[]
+  amenities           ProjectAmenity[]
+  investmentProfile   ProjectInvestmentProfile?
+  landmarks           ProjectLandmark[]
+  competitorsFrom     ProjectCompetitor[]    @relation("CompetitorFrom")
+  competitorsTo       ProjectCompetitor[]    @relation("CompetitorTo")
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @updatedAt
 
@@ -329,6 +403,11 @@ model Media {
   type        MediaType
   url         String
   altText     String?
+  altTextAr   String?
+  altTextEn   String?
+  caption     String?
+  storageKey  String?
+  isCover     Boolean    @default(false)
   developerId String?
   developer   Developer? @relation(fields: [developerId], references: [id])
   projectId   String?
@@ -346,6 +425,11 @@ model Document {
   url            String
   mimeType       String
   originalText   String?
+  storageKey     String?
+  language       String?
+  source         String?
+  validFrom      DateTime?
+  validTo        DateTime?
   developerId    String?
   developer      Developer?             @relation(fields: [developerId], references: [id])
   projectId      String?
@@ -569,6 +653,117 @@ model AdminUser {
   leadEvents    LeadEvent[]
   imports       DataImport[]
   approvedKnowledgeItems ProjectKnowledgeItem[]
+  verifiedLocationDistances LocationDistance[]
+  verifiedPortfolioProjects DeveloperProjectPortfolio[]
+  verifiedInvestmentProfiles ProjectInvestmentProfile[]
+}
+
+model DeveloperProjectPortfolio {
+  id              String    @id @default(cuid())
+  developerId     String
+  developer       Developer @relation(fields: [developerId], references: [id], onDelete: Cascade)
+  projectName     String
+  locationText    String?
+  locationId      String?
+  location        Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  projectType     String?
+  status          String
+  launchYear      Int?
+  deliveryYear    Int?
+  unitsCount      Int?
+  description     String?
+  source          String?
+  verifiedAt      DateTime?
+  verifiedByAdminId String?
+  verifiedBy      AdminUser? @relation(fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([developerId, status])
+  @@index([locationId])
+}
+
+model Amenity {
+  id          String @id @default(cuid())
+  canonicalName String @unique
+  nameAr      String?
+  nameEn      String?
+  category    String?
+  description String?
+  projects    ProjectAmenity[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ProjectAmenity {
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  amenityId String
+  amenity   Amenity @relation(fields: [amenityId], references: [id], onDelete: Cascade)
+  notes     String?
+  verified  Boolean @default(false)
+  source    String?
+
+  @@id([projectId, amenityId])
+}
+
+model ProjectInvestmentProfile {
+  id                    String   @id @default(cuid())
+  projectId             String   @unique
+  project               Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  suitableForLiving     Boolean?
+  suitableForInvestment Boolean?
+  suitableForRental     Boolean?
+  resaleDemand          String?
+  rentalDemand          String?
+  expectedRentalYieldMin Decimal? @db.Decimal(7, 4)
+  expectedRentalYieldMax Decimal? @db.Decimal(7, 4)
+  strongestUnitTypes    String[]
+  targetCustomers       String[]
+  investmentAdvantages String[]
+  investmentRisks      String[]
+  notes                 String?
+  source                String?
+  verifiedAt            DateTime?
+  verifiedByAdminId     String?
+  verifiedBy            AdminUser? @relation(fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model ProjectLandmark {
+  id              String   @id @default(cuid())
+  projectId       String
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name            String
+  category        String?
+  locationId      String?
+  location        Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  distanceKm      Decimal? @db.Decimal(8, 2)
+  estimatedMinutes Int?
+  distanceType    String @default("ADMIN_VERIFIED")
+  notes           String?
+  source          String?
+  verifiedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([projectId, category])
+  @@index([locationId])
+}
+
+model ProjectCompetitor {
+  projectId            String
+  project              Project @relation("CompetitorFrom", fields: [projectId], references: [id], onDelete: Cascade)
+  competitorProjectId  String
+  competitorProject    Project @relation("CompetitorTo", fields: [competitorProjectId], references: [id], onDelete: Cascade)
+  reason               String?
+  notes                String?
+  verified              Boolean @default(false)
+  source                String?
+  createdAt             DateTime @default(now())
+
+  @@id([projectId, competitorProjectId])
 }
 
 model AuditLog {
