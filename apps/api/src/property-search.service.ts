@@ -223,7 +223,7 @@ export class PropertySearchService {
         take: 1,
         orderBy: { sortOrder: "asc" },
       },
-    };
+    }; 
     const loader = () => this.prisma.unit.findMany({ where, take: Math.max(limit * 4, 20), orderBy: [{ availabilityUpdatedAt: "desc" }, { price: "asc" }], include });
     const raw = await (this.cache?.getOrLoad("property-search-v3", cacheKey, 60_000, loader) ?? loader());
     const units = await this.attachEffectivePaymentPlans(raw as any[], intent);
