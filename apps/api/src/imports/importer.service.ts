@@ -978,10 +978,6 @@ export class ImporterService {
     }
 
     const result = this.withImportReadiness(item);
-    if (unfinished && item.preview && !result.workflow.previewValid) {
-      await this.prisma.dataImport.update({ where: { id }, data: { preview: Prisma.DbNull } });
-      return this.get(id);
-    }
     if (unfinished && item.status !== result.workflow.status) {
       await this.prisma.dataImport.update({ where: { id }, data: { status: result.workflow.status } });
       return this.get(id);
@@ -996,7 +992,6 @@ export class ImporterService {
       where: { id },
       data: {
         status,
-        ...(refreshed.preview ? { preview: Prisma.DbNull } : {}),
       },
     });
     return this.get(id);

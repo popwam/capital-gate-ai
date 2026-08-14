@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { LogoMark } from "@/components/logo";
 import { adminApi, adminErrorMessage } from "@/lib/api";
-import { IMPORT_STEPS, importStepState, type ImportWorkflow } from "@/lib/import-workflow";
+import { generatePreviewAndRefresh, IMPORT_STEPS, importNextAction, importStepState, type ImportWorkflow } from "@/lib/import-workflow";
 
 type Issue = {
   id: string;
@@ -150,10 +150,11 @@ export function ImportAssistant() {
   async function preview() {
     if (!item) return;
     setLoading(true);
+    setError("");
     try {
-      setItem(await adminApi.post<ImportData>(`/imports/${item.id}/preview`));
+      setItem(await generatePreviewAndRefresh<ImportData>(item.id, adminApi));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Preview failed");
+      setError(adminErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -337,18 +338,18 @@ export function ImportAssistant() {
                         <Assistant
                           text={`Import complete. ${item.rowsCreated} units were created, ${item.rowsUpdated} updated and ${item.rowsRejected} rejected. No data was inserted before confirmation.`}
                         />
-                      ) : item.workflow.canPreview && !item.workflow.previewExists ? (
+                      ) : ["GENERATE_PREVIEW", "REGENERATE_PREVIEW"].includes(importNextAction(item.workflow)) ? (
                         <>
-                          <Assistant text="تم حل كل الأسئلة المطلوبة. أنشئ المعاينة النهائية قبل تأكيد الاستيراد." />
+                          <Assistant text={importNextAction(item.workflow) === "REGENERATE_PREVIEW" ? "تغيّرت الشيتات أو التعيينات بعد آخر معاينة. أنشئ المعاينة مرة أخرى قبل التأكيد." : "تم حل كل المتطلبات. أنشئ معاينة المخزون المحدد قبل تأكيد الاستيراد."} />
                           <button
                             onClick={preview}
                             disabled={loading}
-                            className="ml-11 rounded-xl bg-forest px-5 py-3 text-[9px] font-bold text-white"
+                            className="mx-auto flex min-h-11 w-full max-w-md items-center justify-center rounded-xl bg-forest px-5 py-3 text-sm font-bold text-white disabled:opacity-50"
                           >
-                            إنشاء المعاينة
+                            {loading ? "جارٍ إنشاء المعاينة…" : importNextAction(item.workflow) === "REGENERATE_PREVIEW" ? "إعادة إنشاء المعاينة" : "إنشاء المعاينة"}
                           </button>
                         </>
-                      ) : null}
+                      ) : item.workflow.previewExists && item.workflow.previewValid ? <ImportPreview item={item} /> : null}
                     </div>
                   </div>
                   {item.workflow.canConfirm && item.workflow.stage !== "COMPLETE" && (
@@ -654,6 +655,33 @@ function PaymentPlanAnswer({ issue, submit }: { issue: Issue; submit: (value?: a
     <button onClick={() => submit({ durationMonths: durationMonths ? Number(durationMonths) : undefined, valueType, currency })} className="rounded-xl bg-forest px-4 py-3 text-[14px] font-bold text-white">اعتماد خطة السداد</button>
   </div>;
 }
+function ImportPreview({ item }: { item: ImportData }) {
+  const preview = item.preview ?? {};
+  const sheets = Array.isArray(preview.sheets) ? preview.sheets : [];
+  return (
+    <section className="space-y-4 rounded-2xl border border-forest/25 bg-[#f4f8f5] p-4" dir="rtl">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div><h3 className="font-bold">معاينة الاستيراد</h3><p className="mt-1 text-xs text-[#68756f]">تعرض هذه المعاينة الشيتات المحددة للاستيراد فقط.</p></div>
+        <span className={`rounded-full px-3 py-1 text-xs font-bold ${item.workflow.canConfirm ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-900"}`}>{item.workflow.canConfirm ? "جاهز للتأكيد" : "تحتاج المعاينة إلى مراجعة"}</span>
+      </div>
+      <div className="grid gap-2 text-sm sm:grid-cols-4">
+        <p className="rounded-xl bg-white p-3"><b>{preview.valid ?? 0}</b><span className="block text-xs text-[#68756f]">صف صالح</span></p>
+        <p className="rounded-xl bg-white p-3"><b>{preview.invalidRows ?? 0}</b><span className="block text-xs text-[#68756f]">صف غير صالح</span></p>
+        <p className="rounded-xl bg-white p-3"><b>{preview.newUnits ?? 0}</b><span className="block text-xs text-[#68756f]">وحدة جديدة</span></p>
+        <p className="rounded-xl bg-white p-3"><b>{preview.existingUnits ?? 0}</b><span className="block text-xs text-[#68756f]">وحدة موجودة</span></p>
+      </div>
+      {sheets.map((sheet: any) => (
+        <details key={sheet.sheetId} open className="rounded-xl border bg-white p-3">
+          <summary className="cursor-pointer font-bold" dir="auto">{sheet.sheetName} — {sheet.rowsFound} صف</summary>
+          <div className="mt-3 grid gap-2 text-xs sm:grid-cols-4"><span>صالح: <b>{sheet.valid}</b></span><span>غير صالح: <b>{sheet.invalidRows}</b></span><span>مكرر: <b>{sheet.duplicates}</b></span><span>جديد: <b>{sheet.newUnits}</b></span></div>
+          {!!sheet.normalizedRows?.length && <div className="mt-3 overflow-x-auto"><table className="min-w-full text-xs"><thead><tr>{Object.keys(sheet.normalizedRows[0]).map((key) => <th key={key} className="whitespace-nowrap border p-2 text-start" dir="auto">{key}</th>)}</tr></thead><tbody>{sheet.normalizedRows.slice(0,10).map((row: Record<string, unknown>, index: number) => <tr key={index}>{Object.keys(sheet.normalizedRows[0]).map((key) => <td key={key} className="max-w-48 truncate border p-2" dir="auto">{row[key] == null ? "—" : String(row[key])}</td>)}</tr>)}</tbody></table></div>}
+        </details>
+      ))}
+      {!item.workflow.canConfirm && <p className="rounded-xl bg-amber-50 p-3 text-xs font-bold text-amber-900">راجع الصفوف غير الصالحة أعلاه. زر التأكيد يظهر فقط عندما يسمح backend بالتأكيد.</p>}
+    </section>
+  );
+}
+
 function StepBar({ workflow }: { workflow: ImportWorkflow }) {
   return (
     <div className="overflow-x-auto rounded-2xl border bg-white px-4 py-3">

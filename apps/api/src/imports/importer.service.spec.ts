@@ -448,7 +448,11 @@ test("editing a mapping invalidates preview and confirmation uses the reviewed r
   assert.equal(result.workflow.canConfirm,true);
   const previewVersion=result.sheets[0].previewMappingVersion;
   result=await f.service.updateImportSheetMapping(result.id,sheet.id,"Land Area","builtUpArea");
-  assert.equal(result.preview,null);
+  assert.ok(result.preview);
+  assert.equal(result.workflow.previewExists,true);
+  assert.equal(result.workflow.previewValid,false);
+  assert.equal(result.workflow.canConfirm,false);
+  assert.equal(result.workflow.previewRequired,true);
   assert.equal(result.sheets[0].previewMappingVersion,null);
   assert.ok(result.sheets[0].mappingVersion>previewVersion);
   await assert.rejects(()=>f.service.confirm(result.id),(error:any)=>error.getResponse().code==="IMPORT_PREVIEW_REQUIRED");

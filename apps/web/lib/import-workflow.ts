@@ -23,11 +23,30 @@ export type ImportWorkflow = {
 
 export const IMPORT_STEPS = ["Upload", "Analyze", "Resolve", "Preview", "Import"] as const;
 
+export type ImportNextAction = "RESOLVE" | "GENERATE_PREVIEW" | "REGENERATE_PREVIEW" | "VIEW_PREVIEW" | "CONFIRM_IMPORT" | "NONE";
+
+export function importNextAction(workflow: ImportWorkflow): ImportNextAction {
+  if (workflow.stage === "COMPLETE" || workflow.stage === "FAILED") return "NONE";
+  if (!workflow.canPreview) return "RESOLVE";
+  if (workflow.previewExists && !workflow.previewValid) return "REGENERATE_PREVIEW";
+  if (!workflow.previewExists) return "GENERATE_PREVIEW";
+  if (workflow.canConfirm) return "CONFIRM_IMPORT";
+  return "VIEW_PREVIEW";
+}
+
+export async function generatePreviewAndRefresh<T>(
+  importId: string,
+  api: { post: <R>(path: string, body?: unknown) => Promise<R>; get: <R>(path: string) => Promise<R> },
+) {
+  await api.post(`/imports/${importId}/preview`);
+  return api.get<T>(`/imports/${importId}`);
+}
+
 export function importStepState(workflow: ImportWorkflow, index: number) {
   const activeIndex = workflow.stage === "COMPLETE"
     ? IMPORT_STEPS.length
     : workflow.stage === "IMPORT"
-      ? 4
+      ? 3
       : workflow.stage === "PREVIEW"
         ? 3
         : workflow.stage === "RESOLVE"
