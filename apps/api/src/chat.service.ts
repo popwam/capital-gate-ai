@@ -76,14 +76,61 @@ export class ChatService {
 
   private cardProperty(value: any) {
     return {
-      id: value.id, externalUnitId: value.externalUnitId, unitType: value.unitType,
-      bedrooms: value.bedrooms, bathrooms: value.bathrooms, builtUpArea: value.builtUpArea,
-      price: value.price, currency: value.currency, status: value.status,
-      availabilityUpdatedAt: value.availabilityUpdatedAt, deliveryDate: value.deliveryDate,
+      id: value.id,
+      externalUnitId: value.externalUnitId,
+      unitType: value.unitType,
+      bedrooms: value.bedrooms,
+      bathrooms: value.bathrooms,
+      builtUpArea: value.builtUpArea,
+      price: value.price,
+      currency: value.currency,
+      status: value.status,
+      availabilityUpdatedAt: value.availabilityUpdatedAt,
+      deliveryDate: value.deliveryDate,
       finishingType: value.finishingType,
-      project: value.project ? { id: value.project.id, name: value.project.name, location: value.project.location ? { id: value.project.location.id, name: value.project.location.name } : null } : null,
-      developer: value.developer ? { id: value.developer.id, name: value.developer.name } : null,
+      floor: value.floor,
+      phase: value.phase,
+      internalLocationDescription: value.internalLocationDescription,
+      projectZone: value.projectZone ? { id: value.projectZone.id, name: value.projectZone.nameAr ?? value.projectZone.nameEn ?? value.projectZone.name } : null,
+      projectBuilding: value.projectBuilding ? { id: value.projectBuilding.id, name: value.projectBuilding.nameAr ?? value.projectBuilding.nameEn ?? value.projectBuilding.name } : null,
+      closestGate: value.closestGate ?? null,
+      matchScore: value.matchScore ?? null,
+      matchReasons: value.matchReasons ?? [],
+      bestPaymentPlan: value.bestPaymentPlan ?? null,
+      project: value.project ? {
+        id: value.project.id,
+        name: value.project.nameAr ?? value.project.nameEn ?? value.project.name,
+        location: value.project.location ? { id: value.project.location.id, name: value.project.location.nameAr ?? value.project.location.nameEn ?? value.project.location.name } : null,
+      } : null,
+      developer: value.developer ? { id: value.developer.id, name: value.developer.nameAr ?? value.developer.nameEn ?? value.developer.brandName ?? value.developer.name } : null,
+      paymentPlans: Array.isArray(value.paymentPlans) ? value.paymentPlans.map((plan: any) => ({
+        id: plan.id,
+        name: plan.name,
+        durationMonths: plan.durationMonths,
+        downPaymentAmount: plan.downPaymentAmount ?? plan.downPayment,
+        downPaymentPercent: plan.downPaymentPercent,
+        installmentAmount: plan.installmentAmount,
+        installmentFrequency: plan.installmentFrequency,
+        totalPrice: plan.totalPrice,
+        currency: plan.currency ?? value.currency,
+        scope: plan.unitId ? "UNIT" : "PROJECT",
+      })) : [],
+      media: Array.isArray(value.media) ? value.media.slice(0, 1).map((item: any) => ({ id: item.id, url: item.url, altText: item.altTextAr ?? item.altTextEn ?? item.altText ?? null })) : [],
     };
+  }
+
+  private contextualUnitIds(previous: StructuredIntent, priorUnitIds: string[]) {
+    const presentation = previous.presentation ?? {};
+    return [...new Set([
+      ...(presentation.lastPresentedUnitIds ?? []),
+      ...(presentation.selectedUnitId ? [presentation.selectedUnitId] : []),
+      ...(presentation.searchCandidateIds ?? []),
+      ...priorUnitIds,
+    ])];
+  }
+
+  private asksUnitMedia(content: string) {
+    return /(?:صور|photos?|images?).*(?:الوحده|الوحدة|unit)|(?:الوحده|الوحدة|unit).*(?:صور|photos?|images?)/iu.test(content);
   }
 
   private distanceDestination(content: string) {
@@ -111,7 +158,10 @@ export class ChatService {
     if (intent === "MEDIA_REQUEST") {
       const action = payload.uiActions.find((item) => item.type === "PROJECT_PHOTOS");
       const count = (action?.payload.media as unknown[] | undefined)?.length ?? 0;
-      return count ? (ar ? "أكيد، دي الصور المعتمدة المتاحة للمشروع." : "Here are the approved project photos available.") : (ar ? "لسه مفيش صور معتمدة للمشروع عندي." : "There are no approved project photos available yet.");
+      const unitScope = action?.payload.scope === "UNIT";
+      return count
+        ? (ar ? (unitScope ? "أكيد، دي الصور المعتمدة المتاحة للوحدة." : "أكيد، دي الصور المعتمدة المتاحة للمشروع.") : (unitScope ? "Here are the approved unit photos available." : "Here are the approved project photos available."))
+        : (ar ? (unitScope ? "لسه مفيش صور مخصصة للوحدة دي عندي." : "لسه مفيش صور معتمدة للمشروع عندي.") : (unitScope ? "There are no unit-specific photos available yet." : "There are no approved project photos available yet."));
     }
     if (intent === "BROCHURE_REQUEST") {
       const exists = facts.length > 0;
@@ -135,6 +185,76 @@ export class ChatService {
       return ar ? `الأسعار المتاحة حاليًا من ${Math.min(...prices).toLocaleString("en")} إلى ${Math.max(...prices).toLocaleString("en")} EGP.` : `Available prices currently range from EGP ${Math.min(...prices).toLocaleString("en")} to ${Math.max(...prices).toLocaleString("en")}.`;
     }
     if (intent === "VIEWING_REQUEST" && state.externalUnitId) return facts.length ? (ar ? `تمام، لقيت الوحدة ${state.externalUnitId}. عشان نرتب المعاينة محتاج اسمك ورقم الموبايل.` : `I found unit ${state.externalUnitId}. To arrange the viewing, I need your name and phone number.`) : (ar ? `ملقيتش وحدة متاحة بالكود ${state.externalUnitId}.` : `I could not find an available unit with ID ${state.externalUnitId}.`);
+
+    if (intent === "PROJECT_DETAILS") {
+      const names = [...new Set(facts.flatMap((fact: any) => {
+        const name = fact?.project?.nameAr ?? fact?.project?.nameEn ?? fact?.project?.name ?? fact?.nameAr ?? fact?.nameEn ?? fact?.name;
+        return name ? [String(name)] : [];
+      }))];
+      const developers = [...new Set(facts.flatMap((fact: any) => {
+        const developer = fact?.developer ?? fact?.project?.developer;
+        const name = developer?.nameAr ?? developer?.nameEn ?? developer?.brandName ?? developer?.name;
+        return name ? [String(name)] : [];
+      }))];
+      if (names.length) {
+        const projectText = ar ? `المشروع${names.length > 1 ? "ات" : ""}: ${names.join("، ")}` : `Project${names.length > 1 ? "s" : ""}: ${names.join(", ")}`;
+        const developerText = developers.length ? (ar ? `، والمطور${developers.length > 1 ? "ين" : ""}: ${developers.join("، ")}` : `; developer${developers.length > 1 ? "s" : ""}: ${developers.join(", ")}`) : "";
+        return `${projectText}${developerText}.`;
+      }
+    }
+
+    if (intent === "DEVELOPER_DETAILS") {
+      const aggregate = facts.find((fact: any) => fact?.dimension === "DEVELOPER") as any;
+      const aggregateNames = Array.isArray(aggregate?.values) ? aggregate.values.map((value: any) => value?.nameAr ?? value?.nameEn ?? value?.brandName ?? value?.name).filter(Boolean) : [];
+      const contextualNames = facts.flatMap((fact: any) => {
+        const developer = fact?.developer ?? fact?.project?.developer;
+        const name = developer?.nameAr ?? developer?.nameEn ?? developer?.brandName ?? developer?.name ?? fact?.developerName;
+        return name ? [String(name)] : [];
+      });
+      const names = [...new Set([...aggregateNames, ...contextualNames])];
+      if (names.length) return ar ? `المطور${names.length > 1 ? "ين" : ""}: ${names.join("، ")}.` : `Developer${names.length > 1 ? "s" : ""}: ${names.join(", ")}.`;
+    }
+
+    if (intent === "INVENTORY_AGGREGATION") {
+      const aggregate = first;
+      const values = Array.isArray(aggregate?.values) ? aggregate.values : [];
+      if (!values.length) return ar ? "مفيش بيانات مطابقة في نطاق البحث الحالي." : "No matching data is available in the current search scope.";
+      if (aggregate?.dimension === "DEVELOPER") {
+        const names = values.map((value: any) => value?.nameAr ?? value?.nameEn ?? value?.brandName ?? value?.name).filter(Boolean);
+        return ar ? `المطورين المتاح عندهم مخزون في النطاق الحالي: ${names.join("، ")}.` : `Developers with inventory in the current scope: ${names.join(", ")}.`;
+      }
+      if (aggregate?.dimension === "PROJECT") {
+        const names = values.map((value: any) => value?.nameAr ?? value?.nameEn ?? value?.name).filter(Boolean);
+        return ar ? `المشروعات المتاحة في النطاق الحالي: ${names.join("، ")}.` : `Projects in the current scope: ${names.join(", ")}.`;
+      }
+      if (aggregate?.dimension === "UNIT_TYPE") return ar ? `أنواع الوحدات المتاحة: ${values.join("، ")}.` : `Available unit types: ${values.join(", ")}.`;
+      if (aggregate?.dimension === "BEDROOM_COUNT") return ar ? `أعداد غرف النوم المتاحة: ${values.join("، ")}.` : `Available bedroom counts: ${values.join(", ")}.`;
+      if (aggregate?.dimension === "PAYMENT_DURATION") return ar ? `مدد السداد المتاحة: ${values.map((months: any) => `${months} شهر`).join("، ")}.` : `Available payment durations: ${values.map((months: any) => `${months} months`).join(", ")}.`;
+    }
+
+    if (intent === "PAYMENT_PLAN") {
+      const unit = facts.find((fact: any) => Array.isArray(fact?.paymentPlans) && fact.paymentPlans.length) as any;
+      if (!unit) return ar ? "لسه مفيش نظام سداد موثق للوحدة دي عندي." : "There is no verified payment plan for this unit yet.";
+      const basePrice = Number(unit.price ?? 0);
+      const plan = unit.bestPaymentPlan ?? [...unit.paymentPlans].sort((a: any, b: any) => Number(b.durationMonths ?? 0) - Number(a.durationMonths ?? 0))[0];
+      const total = Number(plan.totalPrice ?? basePrice ?? 0);
+      const dpPercent = plan.downPaymentPercent != null ? Number(plan.downPaymentPercent) : null;
+      const dpAmount = plan.downPaymentAmount != null ? Number(plan.downPaymentAmount) : (dpPercent != null && total ? total * dpPercent / 100 : null);
+      const remaining = total && dpAmount != null ? Math.max(0, total - dpAmount) : null;
+      const frequency = String(plan.installmentFrequency ?? "").toUpperCase();
+      const stepMonths: Record<string, number> = { MONTHLY: 1, QUARTERLY: 3, SEMI_ANNUAL: 6, SEMIANNUAL: 6, ANNUAL: 12, YEARLY: 12 };
+      const count = plan.durationMonths && stepMonths[frequency] ? Math.max(1, Math.round(Number(plan.durationMonths) / stepMonths[frequency])) : null;
+      const calculatedInstallment = plan.monthlyEquivalent != null ? Number(plan.monthlyEquivalent) : plan.installmentAmount != null ? Number(plan.installmentAmount) : (remaining != null && count ? remaining / count : null);
+      const money = (value: number | null) => value == null || !Number.isFinite(value) ? null : `${Math.round(value).toLocaleString("en")} ${plan.currency ?? unit.currency ?? "EGP"}`;
+      const parts = [
+        plan.durationMonths ? (ar ? `المدة ${plan.durationMonths} شهر` : `${plan.durationMonths} months`) : null,
+        dpAmount != null ? (ar ? `المقدم ${money(dpAmount)}${dpPercent != null ? ` (${dpPercent}%)` : ""}` : `down payment ${money(dpAmount)}${dpPercent != null ? ` (${dpPercent}%)` : ""}`) : null,
+        calculatedInstallment != null ? (ar ? `${plan.installmentAmount == null ? "القسط المحسوب تقريبًا" : "القسط"} ${money(calculatedInstallment)}${frequency ? ` / ${frequency.toLowerCase()}` : ""}` : `${plan.installmentAmount == null ? "calculated installment approx." : "installment"} ${money(calculatedInstallment)}${frequency ? ` / ${frequency.toLowerCase()}` : ""}`) : null,
+        total ? (ar ? `إجمالي سعر الخطة ${money(total)}` : `plan total ${money(total)}`) : null,
+      ].filter(Boolean);
+      return parts.length ? parts.join(ar ? "، " : ", ") + "." : (ar ? "نظام السداد موجود لكن تفاصيله الرقمية مش كاملة في البيانات الموثقة." : "A payment plan exists, but its verified numeric details are incomplete.");
+    }
+
     return undefined;
   }
 
@@ -190,6 +310,7 @@ export class ChatService {
     let contextKind: AIContextKind = "PROPERTY_SEARCH";
     const priorUnitIds = existingState?.suggestedUnitIds ?? [];
     const priorPresentation = previous.presentation ?? {};
+    const contextualUnitIds = this.contextualUnitIds(previous, priorUnitIds);
     let cacheHits = this.cache.stats().hits;
     let cacheMisses = this.cache.stats().misses;
 
@@ -198,8 +319,11 @@ export class ChatService {
     if (referencedProject) projectId = (await this.search.findProjectByName(referencedProject))?.id ?? projectId;
     if (!projectId && priorPresentation.selectedUnitId)
       projectId = (await this.prisma.unit.findUnique({ where: { id: priorPresentation.selectedUnitId }, select: { projectId: true } }))?.projectId;
-    if (!projectId && priorUnitIds.length)
-      projectId = (await this.prisma.unit.findFirst({ where: { id: { in: priorUnitIds } }, select: { projectId: true } }))?.projectId;
+    if (!projectId && priorUnitIds.length) {
+      const projectRefs = await this.prisma.unit.findMany({ where: { id: { in: priorUnitIds } }, select: { projectId: true } });
+      const uniqueProjectIds = [...new Set(projectRefs.map((item) => item.projectId).filter(Boolean))];
+      if (uniqueProjectIds.length === 1) projectId = uniqueProjectIds[0];
+    }
 
     if (plan.intent === "SMALL_TALK") {
       trace.searchOperation = "NONE";
@@ -213,15 +337,47 @@ export class ChatService {
       trace.databaseResultCount = unit ? 1 : 0;
       if (unit) {
         properties = [unit]; verifiedFacts = this.serialize(properties); projectId = unit.projectId;
-        state.presentation = nextPresentation(priorPresentation, { selectedUnitId: unit.id, selectedProjectId: unit.projectId, lastReferencedEntity: { type: "UNIT", id: unit.id }, ...(plan.intent === "VIEWING_REQUEST" ? { presentedUnitIds: [...new Set([...(priorPresentation.presentedUnitIds ?? []), unit.id])], lastPresentedUnitIds: [unit.id] } : {}), awaitingConfirmation: false });
-        if (plan.intent === "VIEWING_REQUEST") payload.uiActions.push({ type: "PROPERTY_CARDS", payload: { properties: [this.cardProperty(unit)] } }, { type: "VIEWING_REQUEST", payload: { unitId: unit.id, externalUnitId: unit.externalUnitId } });
+        state.presentation = nextPresentation(priorPresentation, { selectedUnitId: unit.id, selectedProjectId: unit.projectId, lastReferencedEntity: { type: "UNIT", id: unit.id }, awaitingConfirmation: false });
+        if (plan.emitCards) {
+          const alreadyShown = (priorPresentation.presentedUnitIds ?? []).includes(unit.id);
+          if (!alreadyShown || plan.intent === "VIEWING_REQUEST") {
+            payload.uiActions.push({ type: "PROPERTY_CARDS", payload: { properties: [this.cardProperty(unit)] } });
+            state.presentation = nextPresentation(state.presentation, { presentedUnitIds: [...new Set([...(priorPresentation.presentedUnitIds ?? []), unit.id])], lastPresentedUnitIds: [unit.id] });
+          }
+        }
+        if (plan.intent === "VIEWING_REQUEST") payload.uiActions.push({ type: "VIEWING_REQUEST", payload: { unitId: unit.id, externalUnitId: unit.externalUnitId } });
+      }
+    } else if (plan.intent === "PROPERTY_DETAILS" && !plan.exactUnitId) {
+      const selectedId = priorPresentation.selectedUnitId ?? priorPresentation.lastPresentedUnitIds?.[0] ?? contextualUnitIds[0];
+      const unit = selectedId ? await this.search.getProperty(selectedId).catch(() => null) : null;
+      trace.searchOperation = "CONTEXT_UNIT_LOOKUP";
+      trace.databaseResultCount = unit ? 1 : 0;
+      if (unit) {
+        properties = [unit]; verifiedFacts = this.serialize(properties); projectId = unit.projectId;
+        state.presentation = nextPresentation(priorPresentation, { selectedUnitId: unit.id, selectedProjectId: unit.projectId, lastReferencedEntity: { type: "UNIT", id: unit.id }, awaitingConfirmation: false });
+        if (plan.emitCards && !(priorPresentation.presentedUnitIds ?? []).includes(unit.id)) {
+          payload.uiActions.push({ type: "PROPERTY_CARDS", payload: { properties: [this.cardProperty(unit)] } });
+          state.presentation = nextPresentation(state.presentation, { presentedUnitIds: [...new Set([...(priorPresentation.presentedUnitIds ?? []), unit.id])], lastPresentedUnitIds: [unit.id] });
+        }
       }
     } else if (plan.intent === "MEDIA_REQUEST") {
       contextKind = "MEDIA_REQUEST";
-      const media = projectId ? await this.search.getProjectMedia(projectId) : [];
+      let media: any[] = [];
+      let mediaUnitId: string | null = null;
+      if (plan.exactUnitId) {
+        const unit = await this.search.findUnitByExternalId(plan.exactUnitId);
+        if (unit) { media = unit.media ?? []; mediaUnitId = unit.id; projectId = unit.projectId; }
+      } else if (this.asksUnitMedia(content)) {
+        const selectedId = priorPresentation.selectedUnitId ?? priorPresentation.lastPresentedUnitIds?.[0] ?? contextualUnitIds[0];
+        if (selectedId) {
+          const unit = await this.search.getProperty(selectedId).catch(() => null);
+          if (unit) { media = unit.media ?? []; mediaUnitId = unit.id; projectId = unit.projectId; }
+        }
+      }
+      if (!mediaUnitId) media = projectId ? await this.search.getProjectMedia(projectId) : [];
       verifiedFacts = this.serialize(media);
-      trace.searchOperation = "GET_PROJECT_MEDIA"; trace.databaseResultCount = media.length;
-      payload.uiActions.push({ type: "PROJECT_PHOTOS", payload: { projectId: projectId ?? null, media: this.serialize(media) } });
+      trace.searchOperation = mediaUnitId ? "GET_UNIT_MEDIA" : "GET_PROJECT_MEDIA"; trace.databaseResultCount = media.length;
+      payload.uiActions.push({ type: "PROJECT_PHOTOS", payload: { projectId: projectId ?? null, unitId: mediaUnitId, media: this.serialize(media), scope: mediaUnitId ? "UNIT" : "PROJECT" } });
     } else if (plan.intent === "BROCHURE_REQUEST" || plan.executeBrochure) {
       contextKind = "BROCHURE_REQUEST";
       const documents = projectId ? await this.search.getProjectDocuments(projectId, DocumentType.BROCHURE) : [];
@@ -240,6 +396,71 @@ export class ChatService {
       payload.uiActions.push({ type: "PROJECT_LOCATION", payload: { map } });
     } else if (plan.intent === "DISTANCE_REQUEST") {
       // The distance tool executes below after resolving contextual endpoints.
+    } else if (plan.intent === "PROJECT_DETAILS") {
+      if (projectId) {
+        contextKind = "PROJECT_DETAILS";
+        const project = await this.search.getProject(projectId).catch(() => null);
+        verifiedFacts = project ? [this.serialize(project)] : [];
+        approvedKnowledge = project?.knowledgeItems ?? [];
+        trace.searchOperation = "GET_CONTEXT_PROJECT";
+        trace.databaseResultCount = project ? 1 : 0;
+      } else {
+        contextKind = "PROPERTY_SEARCH";
+        const units = await this.search.getUnitsByIds(contextualUnitIds.slice(0, 5));
+        verifiedFacts = this.serialize(units);
+        trace.searchOperation = "GET_CONTEXT_PROJECTS_FROM_UNITS";
+        trace.databaseResultCount = units.length;
+      }
+    } else if (plan.intent === "DEVELOPER_DETAILS") {
+      const asksDeveloperList = /(?:مطورين|المطورين|developers?)/iu.test(content) && /(?:تعرف|عندك|ايه|اي|what|available|موجود|متاح)/iu.test(content);
+      if (asksDeveloperList) {
+        contextKind = "AGGREGATION";
+        const aggregateState: StructuredIntent = { ...state, temporaryIntent: "INVENTORY_AGGREGATION", aggregationDimension: "DEVELOPER" };
+        const aggregate = await this.search.aggregateInventory(aggregateState);
+        verifiedFacts = [this.serialize(aggregate)];
+        trace.searchOperation = "AGGREGATE_DEVELOPER";
+        trace.databaseResultCount = aggregate.count;
+      } else if (contextualUnitIds.length) {
+        contextKind = "PROPERTY_SEARCH";
+        const units = await this.search.getUnitsByIds(contextualUnitIds.slice(0, 5));
+        verifiedFacts = this.serialize(units);
+        trace.searchOperation = "GET_CONTEXT_DEVELOPERS_FROM_UNITS";
+        trace.databaseResultCount = units.length;
+      } else if (projectId) {
+        contextKind = "PROJECT_DETAILS";
+        const project = await this.search.getProject(projectId).catch(() => null);
+        verifiedFacts = project ? [this.serialize(project)] : [];
+        trace.searchOperation = "GET_CONTEXT_PROJECT_DEVELOPER";
+        trace.databaseResultCount = project ? 1 : 0;
+      } else if (state.preferredDevelopers?.length === 1) {
+        contextKind = "DEVELOPER_HISTORY";
+        const developerName = state.preferredDevelopers[0];
+        const developer = await this.prisma.developer.findFirst({ where: { OR: [{ name: { contains: developerName, mode: "insensitive" } }, { canonicalName: { contains: developerName, mode: "insensitive" } }, { nameAr: { contains: developerName, mode: "insensitive" } }, { nameEn: { contains: developerName, mode: "insensitive" } }] }, select: { id: true } });
+        if (developer) verifiedFacts = [this.serialize(await this.search.getDeveloper(developer.id))];
+        trace.searchOperation = "GET_DEVELOPER_STRUCTURED_FACTS";
+        trace.databaseResultCount = developer ? 1 : 0;
+      } else {
+        trace.searchOperation = "GET_CONTEXT_DEVELOPER";
+        trace.databaseResultCount = 0;
+      }
+    } else if (plan.intent === "PAYMENT_PLAN") {
+      contextKind = "PROPERTY_SEARCH";
+      let units: any[] = [];
+      if (plan.exactUnitId) {
+        const unit = await this.search.findUnitByExternalId(plan.exactUnitId);
+        if (unit) units = [unit];
+      } else {
+        const ids = (priorPresentation.lastPresentedUnitIds?.length ? priorPresentation.lastPresentedUnitIds : contextualUnitIds).slice(0, 5);
+        units = await this.search.getUnitsByIds(ids);
+      }
+      properties = units;
+      verifiedFacts = this.serialize(units);
+      if (units.length === 1) {
+        projectId = units[0].projectId;
+        state.presentation = nextPresentation(priorPresentation, { selectedUnitId: units[0].id, selectedProjectId: units[0].projectId, lastReferencedEntity: { type: "UNIT", id: units[0].id } });
+      }
+      trace.searchOperation = "GET_PAYMENT_PLANS";
+      trace.databaseResultCount = units.reduce((count, unit) => count + (unit.paymentPlans?.length ?? 0), 0);
     } else if (state.preferredDevelopers?.length === 1 && /(?:المطور|سابقة|سلم|تاريخ|developer|track\s*record|portfolio)/iu.test(content)) {
       contextKind = "DEVELOPER_HISTORY";
       const developerName = state.preferredDevelopers[0];
@@ -280,7 +501,9 @@ export class ChatService {
         verifiedFacts = [...verifiedFacts, ...this.serialize(distances)];
       }
       const candidateIds = properties.map((property) => property.id);
-      state.presentation = nextPresentation(priorPresentation, { searchCandidateIds: candidateIds, selectedProjectId: projectId ?? properties[0]?.projectId, lastOfferedAction: properties.length && !plan.emitCards ? "PROPERTY_CARDS" : !properties.length ? "SEARCH_WIDEN" : priorPresentation.lastOfferedAction, awaitingConfirmation: Boolean((properties.length && !plan.emitCards) || !properties.length) });
+      const candidateProjectIds = [...new Set(properties.map((property) => property.projectId).filter(Boolean))];
+      const contextualProjectId = projectId ?? (candidateProjectIds.length === 1 ? candidateProjectIds[0] : undefined);
+      state.presentation = nextPresentation(priorPresentation, { searchCandidateIds: candidateIds, selectedProjectId: contextualProjectId, lastOfferedAction: properties.length && !plan.emitCards ? "PROPERTY_CARDS" : !properties.length ? "SEARCH_WIDEN" : priorPresentation.lastOfferedAction, awaitingConfirmation: Boolean((properties.length && !plan.emitCards) || !properties.length) });
       if (plan.emitCards) {
         const unseenIds = new Set(unpresentedUnitIds(properties.map((property) => property.id), priorPresentation.presentedUnitIds));
         const unseen = properties.filter((property) => unseenIds.has(property.id));

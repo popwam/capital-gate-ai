@@ -3,10 +3,12 @@ import { Prisma, UnitStatus, ApprovalStatus, DocumentType } from "@prisma/client
 import { PrismaService } from "./database/prisma.service";
 import { StructuredIntent } from "./providers/ai-provider";
 import { ApplicationCache } from "./cache/application-cache";
+import { closestGate, spatialScore } from "./spatial-ranking";
+import { chooseBestPaymentPlan } from "./payment-calculator";
 
 @Injectable()
 export class PropertySearchService {
-  constructor(private readonly prisma: PrismaService, @Optional() private readonly cache?: ApplicationCache) {}
+  constructor(private readonly prisma: PrismaService, @Optional() private readonly cache?: ApplicationCache) { }
   private normalize(value: string) { return value.toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, " ").trim(); }
 
   async resolveLocations(terms: string[] = []) {
@@ -21,6 +23,32 @@ export class PropertySearchService {
       frontier = children.map(x => x.id).filter(id => !ids.has(id)); frontier.forEach(id => ids.add(id));
     }
     return [...ids];
+  }
+
+  private async attachEffectivePaymentPlans<T extends { id: string; projectId: string; price?: unknown; currency?: string | null; paymentPlans?: any[] }>(units: T[], intent?: StructuredIntent): Promise<Array<T & { paymentPlans: any[]; bestPaymentPlan: any | null }>> {
+    if (!units.length) return [];
+    const projectIds = [...new Set(units.map(unit => unit.projectId))];
+    const projectPlans = await this.prisma.paymentPlan.findMany({
+      where: { projectId: { in: projectIds }, unitId: null, isActive: true, OR: [{ validFrom: null }, { validFrom: { lte: new Date() } }], AND: [{ OR: [{ validTo: null }, { validTo: { gte: new Date() } }] }] },
+      orderBy: [{ durationMonths: "desc" }, { id: "asc" }],
+    });
+    return units.map(unit => {
+      const direct = Array.isArray(unit.paymentPlans) ? unit.paymentPlans : [];
+      const inherited = projectPlans.filter(plan => plan.projectId === unit.projectId);
+      const keyed = new Map<string, any>();
+      for (const plan of [...inherited, ...direct]) {
+        const key = `${plan.durationMonths ?? "x"}:${plan.name ?? ""}:${plan.installmentFrequency ?? ""}`;
+        keyed.set(key, plan); // unit-level plan is later and overrides equivalent project plan
+      }
+      const paymentPlans = [...keyed.values()];
+      const bestPaymentPlan = chooseBestPaymentPlan(paymentPlans, unit.price, unit.currency, {
+        preferredPaymentDurationMonths: intent?.preferredPaymentDurationMonths,
+        maxDownPayment: intent?.maxDownPayment,
+        maxMonthlyInstallment: intent?.maxMonthlyInstallment,
+        preferredDownPaymentPercent: intent?.preferredDownPaymentPercent,
+      });
+      return { ...unit, paymentPlans, bestPaymentPlan };
+    });
   }
 
   private async normalizedWhere(intent: StructuredIntent): Promise<Prisma.UnitWhereInput | null> {
@@ -47,6 +75,35 @@ export class PropertySearchService {
     if (intent.currency) where.currency = { equals: intent.currency, mode: "insensitive" };
     if (intent.deliveryMaxYears != null) { const latest = new Date(); latest.setFullYear(latest.getFullYear() + Math.ceil(intent.deliveryMaxYears)); where.deliveryDate = { lte: latest }; }
     if (intent.propertyTypes?.length) where.unitType = { in: intent.propertyTypes, mode: "insensitive" };
+    if (intent.preferredFloor != null) where.floor = { equals: String(intent.preferredFloor), mode: "insensitive" };
+    if (intent.preferredPhase) where.phase = { contains: intent.preferredPhase, mode: "insensitive" };
+    if (intent.preferredProjectZone) where.OR = [
+      { cluster: { contains: intent.preferredProjectZone, mode: "insensitive" } },
+      { projectZone: { name: { contains: intent.preferredProjectZone, mode: "insensitive" } } },
+      { projectZone: { nameAr: { contains: intent.preferredProjectZone, mode: "insensitive" } } },
+      { projectZone: { nameEn: { contains: intent.preferredProjectZone, mode: "insensitive" } } },
+    ];
+    if (intent.preferredBuilding) {
+      const buildingFilter: Prisma.UnitWhereInput = {
+        OR: [
+          { building: { contains: intent.preferredBuilding, mode: "insensitive" } },
+          { projectBuilding: { name: { contains: intent.preferredBuilding, mode: "insensitive" } } },
+          { projectBuilding: { nameAr: { contains: intent.preferredBuilding, mode: "insensitive" } } },
+          { projectBuilding: { nameEn: { contains: intent.preferredBuilding, mode: "insensitive" } } },
+        ]
+      };
+      where.AND = [...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []), buildingFilter];
+    }
+    const boundedProximity = intent.proximityPreferences?.filter(p => p.preference === "NEAR" && p.maxDistanceMeters != null) ?? [];
+    for (const pref of boundedProximity) {
+      const target = pref.targetName;
+      const relation: Prisma.UnitProximityWhereInput = {
+        targetType: pref.targetType,
+        distanceMeters: { lte: pref.maxDistanceMeters },
+        ...(pref.targetType === "GATE" && target ? { gate: { OR: [{ name: { contains: target, mode: "insensitive" } }, { nameAr: { contains: target, mode: "insensitive" } }, { nameEn: { contains: target, mode: "insensitive" } }, ...(target === "MAIN_GATE" ? [{ isMain: true }] : [])] } } : {}),
+      };
+      where.AND = [...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []), { proximities: { some: relation } }];
+    }
     const projectWhere: Prisma.ProjectWhereInput = {};
     if (locationIds.length) projectWhere.locationId = { in: locationIds };
     if (rejectedLocationIds.length) projectWhere.NOT = { locationId: { in: rejectedLocationIds } };
@@ -68,6 +125,16 @@ export class PropertySearchService {
       bedrooms: intent.bedrooms ?? null,
       locationIds,
       availability: [UnitStatus.AVAILABLE],
+      preferredFloor: intent.preferredFloor ?? null,
+      preferredPhase: intent.preferredPhase ?? null,
+      preferredProjectZone: intent.preferredProjectZone ?? null,
+      preferredBuilding: intent.preferredBuilding ?? null,
+      preferredGate: intent.preferredGate ?? null,
+      maxGateDistanceMeters: intent.maxGateDistanceMeters ?? null,
+      preferredPaymentDurationMonths: intent.preferredPaymentDurationMonths ?? null,
+      maxDownPayment: intent.maxDownPayment ?? null,
+      maxMonthlyInstallment: intent.maxMonthlyInstallment ?? null,
+      proximityPreferences: intent.proximityPreferences ?? [],
     };
   }
 
@@ -109,22 +176,99 @@ export class PropertySearchService {
     const where = await this.normalizedWhere(intent);
     if (!where) return [];
     const locationIds = await this.resolveLocations(intent.locations);
-    const cacheKey = JSON.stringify({ filters: await this.normalizedSearchFilters(intent), limit });
-    const units = await (this.cache?.getOrLoad("property-search", cacheKey, 60_000, () => this.prisma.unit.findMany({ where, take: limit, orderBy: [{ availabilityUpdatedAt: "desc" }, { price: "asc" }], include: { developer: { select: { id: true, name: true, nameAr: true, nameEn: true, brandName: true } }, project: { include: { location: true, amenities: { where: { verified: true }, include: { amenity: true } }, investmentProfile: true } }, paymentPlans: { where: { isActive: true } }, offers: { where: { isActive: true } } } })) ?? this.prisma.unit.findMany({ where, take: limit, orderBy: [{ availabilityUpdatedAt: "desc" }, { price: "asc" }], include: { developer: { select: { id: true, name: true, nameAr: true, nameEn: true, brandName: true } }, project: { include: { location: true, amenities: { where: { verified: true }, include: { amenity: true } }, investmentProfile: true } }, paymentPlans: { where: { isActive: true } }, offers: { where: { isActive: true } } } }));
-    return units.map(unit => { let score = 50; const reasons: string[] = ["currently available"];
-      if (intent.bedrooms != null && unit.bedrooms === intent.bedrooms) { score += 15; reasons.push("bedroom match"); }
-      if (intent.budgetMax != null && unit.price && Number(unit.price) <= intent.budgetMax) { score += 15; reasons.push("within budget"); }
-      if (locationIds.length && unit.project.locationId && locationIds.includes(unit.project.locationId)) { score += 10; reasons.push("location match"); }
-      if (intent.propertyTypes?.length && unit.unitType && intent.propertyTypes.some(x => x.toLowerCase() === unit.unitType!.toLowerCase())) { score += 10; reasons.push("property type match"); }
-      return { ...unit, matchScore: Math.min(100, score), matchReasons: reasons }; });
+    const cacheKey = JSON.stringify({ filters: await this.normalizedSearchFilters(intent), pool: Math.max(limit * 4, 20) });
+    const include: Prisma.UnitInclude = {
+      developer: {
+        select: {
+          id: true,
+          name: true,
+          nameAr: true,
+          nameEn: true,
+          brandName: true,
+        },
+      },
+      project: {
+        include: {
+          location: true,
+          gates: {
+            where: { isActive: true },
+            orderBy: [
+              { isMain: "desc" },
+              { gateNumber: "asc" },
+            ],
+          },
+          amenities: {
+            where: { verified: true },
+            include: { amenity: true },
+          },
+          investmentProfile: true,
+        },
+      },
+      projectZone: true,
+      projectBuilding: true,
+      proximities: {
+        include: {
+          gate: true,
+          amenity: true,
+          landmark: true,
+        },
+      },
+      paymentPlans: {
+        where: { isActive: true },
+      },
+      offers: {
+        where: { isActive: true },
+      },
+      media: {
+        take: 1,
+        orderBy: { sortOrder: "asc" },
+      },
+    };
+    const loader = () => this.prisma.unit.findMany({ where, take: Math.max(limit * 4, 20), orderBy: [{ availabilityUpdatedAt: "desc" }, { price: "asc" }], include });
+    const raw = await (this.cache?.getOrLoad("property-search-v3", cacheKey, 60_000, loader) ?? loader());
+    const units = await this.attachEffectivePaymentPlans(raw as any[], intent);
+    return units.map(unit => {
+      let score = 40;
+      const reasons: string[] = ["currently available"];
+      if (intent.bedrooms != null && unit.bedrooms === intent.bedrooms) { score += 14; reasons.push("bedroom match"); }
+      if (intent.bathrooms != null && unit.bathrooms != null && unit.bathrooms >= intent.bathrooms) { score += 5; reasons.push("bathroom match"); }
+      if ((intent.priceMax ?? intent.budgetMax) != null && unit.price && Number(unit.price) <= (intent.priceMax ?? intent.budgetMax)!) { score += 14; reasons.push("within budget"); }
+      if (locationIds.length && unit.project.locationId && locationIds.includes(unit.project.locationId)) { score += 9; reasons.push("location match"); }
+      if (intent.propertyTypes?.length && unit.unitType && intent.propertyTypes.some(x => this.normalize(x) === this.normalize(unit.unitType!))) { score += 9; reasons.push("property type match"); }
+      if (intent.builtUpAreaMin != null && unit.builtUpArea && Number(unit.builtUpArea) >= intent.builtUpAreaMin) { score += 5; reasons.push("area match"); }
+      const spatial = spatialScore(unit as any, intent); score += spatial.score; reasons.push(...spatial.reasons);
+      if (unit.bestPaymentPlan) {
+        if (intent.preferredPaymentDurationMonths && unit.bestPaymentPlan.durationMonths === intent.preferredPaymentDurationMonths) { score += 7; reasons.push("payment duration match"); }
+        if (intent.maxDownPayment != null && unit.bestPaymentPlan.downPaymentAmount != null && unit.bestPaymentPlan.downPaymentAmount <= intent.maxDownPayment) { score += 7; reasons.push("down payment match"); }
+        if (intent.maxMonthlyInstallment != null && unit.bestPaymentPlan.monthlyEquivalent != null && unit.bestPaymentPlan.monthlyEquivalent <= intent.maxMonthlyInstallment) { score += 7; reasons.push("monthly installment match"); }
+      }
+      return { ...unit, closestGate: closestGate(unit as any), matchScore: Math.max(0, Math.min(100, score)), matchReasons: [...new Set(reasons)] };
+    }).sort((a, b) => b.matchScore - a.matchScore || Number(a.price ?? Number.MAX_SAFE_INTEGER) - Number(b.price ?? Number.MAX_SAFE_INTEGER)).slice(0, limit);
   }
 
-  async getProperty(id: string) { const unit = await this.prisma.unit.findUnique({ where: { id }, include: { developer: true, project: { include: { location: true } }, paymentPlans: true, offers: true, media: true, priceHistory: { orderBy: { effectiveAt: "desc" } } } }); if (!unit) throw new NotFoundException("Property not found"); return unit; }
-  async findUnitByExternalId(externalUnitId: string) { return this.prisma.unit.findFirst({ where: { externalUnitId: { equals: externalUnitId, mode: "insensitive" }, status: UnitStatus.AVAILABLE, archivedAt: null }, include: { developer: { select: { id: true, name: true, nameAr: true, nameEn: true } }, project: { include: { location: true } }, paymentPlans: { where: { isActive: true } }, offers: { where: { isActive: true } } } }); }
+  async getProperty(id: string) { const unit = await this.prisma.unit.findUnique({ where: { id }, include: { developer: true, project: { include: { location: true, gates: { where: { isActive: true } } } }, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } }, paymentPlans: { where: { isActive: true } }, offers: true, media: true, priceHistory: { orderBy: { effectiveAt: "desc" } } } }); if (!unit) throw new NotFoundException("Property not found"); return (await this.attachEffectivePaymentPlans([unit]))[0]; }
+  async findUnitByExternalId(externalUnitId: string) { const unit = await this.prisma.unit.findFirst({ where: { externalUnitId: { equals: externalUnitId, mode: "insensitive" }, status: UnitStatus.AVAILABLE, archivedAt: null }, include: { developer: { select: { id: true, name: true, nameAr: true, nameEn: true } }, project: { include: { location: true, gates: { where: { isActive: true } } } }, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } }, paymentPlans: { where: { isActive: true } }, offers: { where: { isActive: true } }, media: { orderBy: { sortOrder: "asc" } } } }); return unit ? (await this.attachEffectivePaymentPlans([unit]))[0] : null; }
   async findProjectByName(name: string) { return this.prisma.project.findFirst({ where: { OR: [{ name: { contains: name, mode: "insensitive" } }, { canonicalName: { contains: name, mode: "insensitive" } }, { nameAr: { contains: name, mode: "insensitive" } }, { nameEn: { contains: name, mode: "insensitive" } }] }, select: { id: true } }); }
-  async getProject(id: string) { const loader = async () => { const project = await this.prisma.project.findUnique({ where: { id }, include: { developer: { include: { portfolioProjects: { where: { verifiedAt: { not: null } }, include: { location: true } } } }, location: { include: { parent: true } }, amenities: { where: { verified: true }, include: { amenity: true } }, investmentProfile: true, landmarks: { where: { verifiedAt: { not: null } }, include: { location: true } }, competitorsFrom: { where: { verified: true }, include: { competitorProject: { include: { developer: true, location: true } } } }, knowledgeItems: { where: { approvalStatus: ApprovalStatus.APPROVED } } } }); if (!project) throw new NotFoundException("Project not found"); return project; }; return this.cache?.getOrLoad("project-public", id, 15 * 60_000, loader) ?? loader(); }
+  async getProject(id: string) { const loader = async () => { const project = await this.prisma.project.findUnique({ where: { id }, include: { developer: { include: { portfolioProjects: { where: { verifiedAt: { not: null } }, include: { location: true } } } }, location: { include: { parent: true } }, gates: { where: { isActive: true }, orderBy: [{ isMain: "desc" }, { gateNumber: "asc" }] }, zones: { include: { buildings: true } }, amenities: { where: { verified: true }, include: { amenity: true } }, investmentProfile: true, landmarks: { where: { verifiedAt: { not: null } }, include: { location: true } }, competitorsFrom: { where: { verified: true }, include: { competitorProject: { include: { developer: true, location: true } } } }, knowledgeItems: { where: { approvalStatus: ApprovalStatus.APPROVED } } } }); if (!project) throw new NotFoundException("Project not found"); return project; }; return this.cache?.getOrLoad("project-public", id, 15 * 60_000, loader) ?? loader(); }
   async getDeveloper(id: string) { const loader = async () => { const developer = await this.prisma.developer.findUnique({ where: { id }, include: { portfolioProjects: { where: { verifiedAt: { not: null } }, include: { location: true } }, projects: { where: { adminStatus: "READY_FOR_CUSTOMER" }, select: { id: true, name: true, nameAr: true, nameEn: true, projectStatus: true, deliveryStatus: true } } } }); if (!developer) throw new NotFoundException("Developer not found"); return developer; }; return this.cache?.getOrLoad("developer-public", id, 30 * 60_000, loader) ?? loader(); }
-  async getPaymentPlans(unitId: string) { return this.prisma.paymentPlan.findMany({ where: { unitId, isActive: true } }); }
+
+  async getUnitsByIds(ids: string[]) {
+    if (!ids.length) return [];
+    const units = await this.prisma.unit.findMany({
+      where: { id: { in: ids }, archivedAt: null },
+      include: {
+        developer: { select: { id: true, name: true, nameAr: true, nameEn: true, brandName: true } },
+        project: { include: { location: true, gates: { where: { isActive: true } } } },
+        projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } },
+        paymentPlans: { where: { isActive: true } },
+        offers: { where: { isActive: true } },
+        media: { take: 1, orderBy: { sortOrder: "asc" } },
+      },
+    });
+    return this.attachEffectivePaymentPlans(units as any[]);
+  }
+
+  async getPaymentPlans(unitId: string) { const unit = await this.prisma.unit.findUnique({ where: { id: unitId }, select: { id: true, projectId: true, price: true, currency: true, paymentPlans: { where: { isActive: true } } } }); if (!unit) throw new NotFoundException("Property not found"); return (await this.attachEffectivePaymentPlans([unit]))[0].paymentPlans; }
   async compareProperties(ids: string[]) { return this.prisma.unit.findMany({ where: { id: { in: ids }, status: UnitStatus.AVAILABLE }, include: { project: true, paymentPlans: { where: { isActive: true } }, offers: { where: { isActive: true } } } }); }
   async getProjectMedia(projectId: string) { return this.cache?.getOrLoad("project-media", projectId, 15 * 60_000, () => this.prisma.media.findMany({ where: { projectId }, orderBy: { sortOrder: "asc" } })) ?? this.prisma.media.findMany({ where: { projectId }, orderBy: { sortOrder: "asc" } }); }
   async getProjectDocuments(projectId: string, type?: DocumentType) { const key = `${projectId}:${type ?? "ALL"}`; return this.cache?.getOrLoad("project-documents", key, 15 * 60_000, () => this.prisma.document.findMany({ where: { projectId, ...(type ? { type } : {}) }, orderBy: { createdAt: "desc" } })) ?? this.prisma.document.findMany({ where: { projectId, ...(type ? { type } : {}) }, orderBy: { createdAt: "desc" } }); }

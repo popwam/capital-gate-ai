@@ -41,19 +41,14 @@ export class CloudflareWorkersAIProvider implements AIProvider {
 
   async extractIntent(messages: AIMessage[], previous: StructuredIntent) {
     const raw = await this.run(this.fastModel, this.structuredPrompt(
-      "Extract PATCH-like updates to Egyptian real-estate conversation state. Understand Egyptian Arabic, MSA, English, mixed Arabic/English, and Arabizi. مساحة/المساحات/متر mean UNIT built-up area unless geography is explicit; منطقة/مناطق/مكان/لوكيشن mean location. New explicit corrections replace conflicts; an informational question must not erase prior filters. Keep rejections separately. Extract language, dialect, purpose, locations, rejectedLocations, propertyTypes, bedrooms, bathrooms, budgetMin, budgetMax, budgetFlexible, currency, deliveryMaxYears, maxDownPayment, maxTravelMinutes, builtUpAreaMin, builtUpAreaMax, targetBuiltUpArea, hardRequirements, softPreferences, requestedMedia, requestedProject, exactRouteRequested, routeOrigin, routeDestination, purchaseIntent 0-100, contactName, contactPhone, rejectedProjects, preferredDevelopers, preferredProjects, familyRequirements, investmentRequirements, customerConcerns.",
+      "Extract PATCH-like updates to Egyptian real-estate conversation state. Understand Egyptian Arabic, MSA, English, mixed Arabic/English, and Arabizi. مساحة/المساحات/متر mean UNIT built-up area unless geography is explicit; منطقة/مناطق/مكان/لوكيشن mean location. New explicit corrections replace conflicts; an informational question must not erase prior filters. Keep rejections separately. Extract language, dialect, purpose, locations, rejectedLocations, propertyTypes, bedrooms, bathrooms, budgetMin, budgetMax, budgetFlexible, currency, deliveryMaxYears, maxDownPayment, maxTravelMinutes, builtUpAreaMin, builtUpAreaMax, targetBuiltUpArea, preferredFloor, minimumFloor, maximumFloor, preferredPhase, preferredProjectZone, preferredBuilding, preferredGate, maxGateDistanceMeters, preferredPaymentDurationMonths, maxMonthlyInstallment, preferredDownPaymentPercent, proximityPreferences, hardRequirements, softPreferences, requestedMedia, requestedProject, exactRouteRequested, routeOrigin, routeDestination, purchaseIntent 0-100, contactName, contactPhone, rejectedProjects, preferredDevelopers, preferredProjects, familyRequirements, investmentRequirements, customerConcerns. For proximityPreferences use an array of {targetType:GATE|AMENITY|LANDMARK|PROJECT_CENTER,targetName?,preference:NEAR|FAR|ANY,maxDistanceMeters?}. Never assume a project has one gate; a compound can have zero, one, or many gates. If the customer says بوابة 2/Gate 2 extract preferredGate and a GATE proximity preference. Payment-plan duration is months; convert 8 years to 96 months. A request like مقدم مليون means maxDownPayment when it is a ceiling, and قسط شهري لا يزيد عن means maxMonthlyInstallment.",
       { previous, messages: messages.slice(-10) },
     ));
     return sanitizeIntent(parseJsonObject(raw, "workers"), previous);
   }
 
   async composeAnswer(input: AnswerInput) { return this.run(this.primaryModel, advisorMessages(input), { temperature: 0.25, max_tokens: 1000 }); }
-
-  async *streamAnswer(input: AnswerInput): AsyncIterable<string> {
-    // Workers models do not expose one uniform streaming envelope; the hybrid router
-    // uses this only as a final compatibility fallback and emits its real generated text.
-    yield await this.composeAnswer(input);
-  }
+  async *streamAnswer(input: AnswerInput): AsyncIterable<string> { yield await this.composeAnswer(input); }
 
   async extractKnowledge(sourceText: string) {
     const text = await this.run(this.fastModel, this.structuredPrompt("Extract only explicit project facts into arrays keyed by overview, developerInformation, location, amenities, nearbyPlaces, investmentPoints, targetCustomer, masterPlan, facilities, paymentInformation, delivery, finishing, salesPoints, objections, restrictions, and faqs. Every array item must be an object with content, an exact short sourceExcerpt, and confidence from 0 to 1. Never infer.", sourceText.slice(0, 80_000)));

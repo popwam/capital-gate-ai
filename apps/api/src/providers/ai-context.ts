@@ -14,7 +14,9 @@ CONVERSATION BEHAVIOR
 - If the customer asks for project/developer of results already discussed, answer that exact question instead of repeating inventory.
 - Ask at most ONE useful follow-up question.
 - Do not repeatedly greet after the conversation has started.
-- Prefer concise prose. Use a table/list only when comparison genuinely benefits.
+- Prefer concise prose. Never use Markdown tables in customer chat.
+- Property choices are rendered by the UI as cards only when the application explicitly emits PROPERTY_CARDS.
+- If cards were not requested, do not dump raw units as a pseudo-table or repetitive numbered inventory list. Summarize the verified result in prose and answer the exact question asked.
 
 GROUNDING
 - VERIFIED_FACTS is the only source for inventory/project/developer factual claims.
@@ -23,6 +25,8 @@ GROUNDING
 - If one requested fact is absent, say that specific fact is unavailable. Do not generalize that all project data is missing.
 - Do not widen budget/location/bedrooms/unit type unless CURRENT_STATE/application results explicitly reflect that widening.
 - Do not repeat the same properties merely because the customer asks a different informational question.
+- If the customer asks “مشروع اي ده؟”, “مين المطور؟”, “تعرف مطورين اي؟”, payment-plan details, or another narrow follow-up, answer that narrow question directly from VERIFIED_FACTS. Do not rerun the sales pitch.
+- For payment-plan questions, use only verified plan fields. You may perform deterministic arithmetic from verified total price, down-payment percentage/amount, duration, and installment frequency, and clearly describe any derived installment as calculated/approximate rather than source data.
 
 FOLLOW-UP EXAMPLES
 Customer: "مشروع اي ده؟"
@@ -52,7 +56,9 @@ function compactIntent(intent: StructuredIntent) {
     "language","dialect","purpose","locations","propertyTypes","bedrooms","bathrooms",
     "budgetMin","budgetMax","priceTarget","priceMin","priceMax","budgetFlexible","budgetFlexibility",
     "explicitRejectedPriceMin","explicitRejectedPriceMax","currency","deliveryMaxYears","maxDownPayment",
-    "maxTravelMinutes","builtUpAreaMin","builtUpAreaMax","targetBuiltUpArea","hardRequirements",
+    "maxTravelMinutes","builtUpAreaMin","builtUpAreaMax","targetBuiltUpArea","preferredFloor","minimumFloor","maximumFloor",
+    "preferredPhase","preferredProjectZone","preferredBuilding","preferredGate","maxGateDistanceMeters",
+    "preferredPaymentDurationMonths","maxMonthlyInstallment","preferredDownPaymentPercent","proximityPreferences","hardRequirements",
     "softPreferences","rejectedLocations","rejectedProjects","preferredDevelopers","preferredProjects",
     "requestedProject","requestedMedia","purchaseIntent","turnIntent","aggregationDimension","externalUnitId",
     "familyRequirements","investmentRequirements","customerConcerns","presentation",
@@ -64,7 +70,8 @@ function paymentHighlight(plans: any[], intent: StructuredIntent) {
   if (!Array.isArray(plans) || !plans.length) return null;
   const byDuration = [...plans].sort((a,b) => Number(b.durationMonths ?? 0) - Number(a.durationMonths ?? 0));
   const byDownPayment = [...plans].sort((a,b) => Number(a.downPaymentAmount ?? a.downPayment ?? Infinity) - Number(b.downPaymentAmount ?? b.downPayment ?? Infinity));
-  const plan = intent.maxDownPayment != null ? byDownPayment[0] : byDuration[0];
+  const preferred = intent.preferredPaymentDurationMonths != null ? [...plans].sort((a,b) => Math.abs(Number(a.durationMonths ?? 0)-intent.preferredPaymentDurationMonths!) - Math.abs(Number(b.durationMonths ?? 0)-intent.preferredPaymentDurationMonths!))[0] : null;
+  const plan = preferred ?? (intent.maxDownPayment != null ? byDownPayment[0] : byDuration[0]);
   return {
     name: text(plan.name,80), durationMonths: plan.durationMonths ?? null,
     downPaymentAmount: numeric(plan.downPaymentAmount ?? plan.downPayment),
@@ -85,7 +92,8 @@ function propertyFact(value:any,intent:StructuredIntent){
     unitType:value.unitType??null, bedrooms:value.bedrooms??null, bathrooms:value.bathrooms??null,
     builtUpArea:numeric(value.builtUpArea), price:numeric(value.price), currency:value.currency??null,
     availability:value.status??null, deliveryDate:value.deliveryDate??null, finishingType:value.finishingType??null,
-    paymentPlan:paymentHighlight(value.paymentPlans,intent),
+    paymentPlan:value.bestPaymentPlan ?? paymentHighlight(value.paymentPlans,intent),
+    internalLocation:{ floor:value.floor??null, phase:value.phase??null, zone:value.projectZone?.nameAr??value.projectZone?.nameEn??value.projectZone?.name??value.cluster??null, building:value.projectBuilding?.nameAr??value.projectBuilding?.nameEn??value.projectBuilding?.name??value.building??null, closestGate:value.closestGate??null },
     offer:Array.isArray(value.offers)&&value.offers[0]?{title:text(value.offers[0].title,100),discountAmount:numeric(value.offers[0].discountAmount),endsAt:value.offers[0].endsAt??null}:null,
     matchScore:value.matchScore??null, matchReasons:Array.isArray(value.matchReasons)?value.matchReasons.slice(0,4):[],
   };

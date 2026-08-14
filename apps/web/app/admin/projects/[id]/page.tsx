@@ -7,6 +7,7 @@ import {
 } from "react";
 
 import { adminApi, adminErrorMessage } from "@/lib/api";
+import { ProjectSpatialEditor } from "@/components/project-spatial-editor";
 
 type Amenity = {
   id: string;
@@ -1835,6 +1836,8 @@ export default function ProjectDetails({
           </button>
         </form>
       </section>
+
+      <ProjectSpatialEditor projectId={id} />
     </main>
   );
 }

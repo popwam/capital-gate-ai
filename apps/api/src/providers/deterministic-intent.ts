@@ -1,4 +1,4 @@
-import { AIMessage, StructuredIntent } from "./ai-provider";
+import { AIMessage, ProximityPreference, StructuredIntent } from "./ai-provider";
 
 const arabicDigits: Record<string, string> = { "٠":"0", "١":"1", "٢":"2", "٣":"3", "٤":"4", "٥":"5", "٦":"6", "٧":"7", "٨":"8", "٩":"9" };
 function normalizedNumbers(value: string) { return value.replace(/[٠-٩]/g, digit => arabicDigits[digit]); }
@@ -13,36 +13,29 @@ export function detectRequestedMedia(value: string) {
 
 export function detectExplicitSalesSignals(value: string) {
   const phone = value.match(/(?:\+?20|0)?1[0125]\d{8}/)?.[0];
-  const arabicName = value.match(
-    /اسمي\s+(.+?)(?=\s+(?:ورقمي|ورقم|رقمي)|[.,،]|$)/iu,
-  )?.[1];
-  const englishName = value.match(
-    /my name is\s+(.+?)(?=\s+(?:and my (?:phone|number)|phone|number)|[.,،]|$)/iu,
-  )?.[1];
-  const strongIntent =
-    /(?:جاهز\s*(?:أشتري|اشتري)|عايز\s*(?:أحجز|احجز)|كلمني|تواصلوا?\s*معي|معاينة|book|reserve|contact me|ready to buy)/iu.test(
-      value,
-    );
-  return {
-    contactPhone: phone,
-    contactName: (arabicName ?? englishName)?.trim(),
-    purchaseIntent: strongIntent ? 90 : undefined,
-  };
+  const arabicName = value.match(/اسمي\s+(.+?)(?=\s+(?:ورقمي|ورقم|رقمي)|[.,،]|$)/iu)?.[1];
+  const englishName = value.match(/my name is\s+(.+?)(?=\s+(?:and my (?:phone|number)|phone|number)|[.,،]|$)/iu)?.[1];
+  const strongIntent = /(?:جاهز\s*(?:أشتري|اشتري)|عايز\s*(?:أحجز|احجز)|كلمني|تواصلوا?\s*معي|معاينة|book|reserve|contact me|ready to buy)/iu.test(value);
+  return { contactPhone: phone, contactName: (arabicName ?? englishName)?.trim(), purchaseIntent: strongIntent ? 90 : undefined };
 }
 
 export function detectExplicitRouteRequest(value: string) {
-  const match = value.match(
-    /(?:المسافة|الوقت|قد\s*إيه|كام|how far|distance|route).*?(?:من|from)\s+(.+?)\s+(?:إلى|الى|لـ|to)\s+(.+?)(?:\?|؟|$)/iu,
-  );
-  return match
-    ? {
-        exactRouteRequested: true as const,
-        routeOrigin: match[1].trim(),
-        routeDestination: match[2]
-          .replace(/\s+(?:كام|قد\s*إيه|how far)$/iu, "")
-          .trim(),
-      }
-    : undefined;
+  const match = value.match(/(?:المسافة|الوقت|قد\s*إيه|كام|how far|distance|route).*?(?:من|from)\s+(.+?)\s+(?:إلى|الى|لـ|to)\s+(.+?)(?:\?|؟|$)/iu);
+  return match ? { exactRouteRequested: true as const, routeOrigin: match[1].trim(), routeDestination: match[2].replace(/\s+(?:كام|قد\s*إيه|how far)$/iu, "").trim() } : undefined;
+}
+
+function proximityFromText(text: string): ProximityPreference[] | undefined {
+  const values: ProximityPreference[] = [];
+  const near = /(?:قريب(?:ه|ة)?|جنب|ناحيه|ناحية|near|close to)/iu.test(text);
+  const far = /(?:بعيد(?:ه|ة)?|بعيده|away from|far from)/iu.test(text);
+  const preference = far ? "FAR" : near ? "NEAR" : undefined;
+  if (!preference) return undefined;
+  const gate = text.match(/(?:البوابه|البوابة|بوابه|بوابة|gate)\s*(?:رقم\s*)?([a-z0-9\u0600-\u06ff-]+)?/iu);
+  if (gate) values.push({ targetType: "GATE", targetName: gate[1]?.trim() || (/(?:الرئيسيه|الرئيسية|main)/iu.test(text) ? "MAIN_GATE" : undefined), preference });
+  const amenity = text.match(/(?:الكلوب\s*هاوس|club\s*house|حمام\s*السباحه|حمام\s*السباحة|pool|الجيم|gym|الحديقه|الحديقة|park)/iu)?.[0];
+  if (amenity) values.push({ targetType: "AMENITY", targetName: amenity, preference });
+  if (/(?:نص\s*المشروع|منتصف\s*المشروع|وسط\s*الكمبوند|project center|center of (?:the )?compound)/iu.test(text)) values.push({ targetType: "PROJECT_CENTER", preference: "NEAR" });
+  return values.length ? values : undefined;
 }
 
 export function deterministicIntent(messages: AIMessage[], previous: StructuredIntent): StructuredIntent {
@@ -53,6 +46,12 @@ export function deterministicIntent(messages: AIMessage[], previous: StructuredI
   const millions = [...text.matchAll(/(\d+(?:[.,]\d+)?)\s*(?:m|mn|million|مليون)/g)].map(match => Number(match[1].replace(",", ".")) * 1_000_000);
   const range = text.match(/(\d+(?:[.,]\d+)?)\s*(?:ل(?:حد|ـ)?|to|[-–])\s*(\d+(?:[.,]\d+)?)\s*(?:m|mn|million|مليون)/);
   const bedroom = text.match(/(\d+)\s*(?:bed(?:room)?s?|غرف(?:ة|تين)?|نوم)/);
+  const floor = text.match(/(?:الدور|طابق|floor)\s*(?:ال)?(\d+)/iu);
+  const phase = text.match(/(?:phase|مرحله|مرحلة)\s*([a-z0-9\u0600-\u06ff-]+)/iu);
+  const building = text.match(/(?:building|مبنى|عماره|عمارة)\s*([a-z0-9\u0600-\u06ff-]+)/iu);
+  const gate = text.match(/(?:بوابه|بوابة|gate)\s*(?:رقم\s*)?(\d+)/iu);
+  const paymentYears = text.match(/(?:تقسيط|سداد|على|payment).*?(\d+(?:[.,]\d+)?)\s*(?:سنه|سنة|سنين|years?|y\b)/iu);
+  const paymentMonths = text.match(/(?:تقسيط|سداد|على|payment).*?(\d+)\s*(?:شهر|شهور|months?|mo\b)/iu);
   const sales = detectExplicitSalesSignals(source);
   const route = detectExplicitRouteRequest(source);
   return {
@@ -65,6 +64,12 @@ export function deterministicIntent(messages: AIMessage[], previous: StructuredI
     dialect: hasArabic && hasLatin ? "MIXED" : hasArabic ? "EGYPTIAN_ARABIC" : "ENGLISH",
     purpose: /(?:استثمار|investment|resale)/i.test(text) ? "INVESTMENT" : previous.purpose,
     bedrooms: bedroom ? Number(bedroom[1]) : previous.bedrooms,
+    preferredFloor: floor ? Number(floor[1]) : previous.preferredFloor,
+    preferredPhase: phase?.[1]?.trim() ?? previous.preferredPhase,
+    preferredBuilding: building?.[1]?.trim() ?? previous.preferredBuilding,
+    preferredGate: gate ? `Gate ${gate[1]}` : previous.preferredGate,
+    preferredPaymentDurationMonths: paymentMonths ? Number(paymentMonths[1]) : paymentYears ? Math.round(Number(paymentYears[1].replace(",", ".")) * 12) : previous.preferredPaymentDurationMonths,
+    proximityPreferences: proximityFromText(text) ?? previous.proximityPreferences,
     budgetMin: range ? Number(range[1].replace(",", ".")) * 1_000_000 : previous.budgetMin,
     budgetMax: range ? Number(range[2].replace(",", ".")) * 1_000_000 : millions.at(-1) ?? previous.budgetMax,
     currency: millions.length || range ? "EGP" : previous.currency,

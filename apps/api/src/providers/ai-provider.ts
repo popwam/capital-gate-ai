@@ -1,4 +1,5 @@
 export type AIMessage = { role: "user" | "assistant" | "system"; content: string };
+
 export type CustomerTurnIntent =
   | "SMALL_TALK" | "PROPERTY_SEARCH" | "PROPERTY_REFINEMENT" | "PROPERTY_OPTIONS_REQUEST"
   | "PROPERTY_DETAILS" | "PROJECT_DETAILS" | "DEVELOPER_DETAILS" | "INVENTORY_COUNT"
@@ -7,6 +8,15 @@ export type CustomerTurnIntent =
   | "DISTANCE_REQUEST" | "VIEWING_REQUEST" | "CONTACT_REQUEST" | "COMPARISON"
   | "INVESTMENT" | "RESALE" | "RENTAL" | "PAYMENT_PLAN" | "AVAILABILITY_CHECK"
   | "FOLLOW_UP_CONFIRMATION" | "UNKNOWN";
+
+export type ProximityPreference = {
+  targetType: "GATE" | "AMENITY" | "LANDMARK" | "PROJECT_CENTER";
+  targetId?: string;
+  targetName?: string;
+  preference: "NEAR" | "FAR" | "ANY";
+  maxDistanceMeters?: number;
+};
+
 export type PresentationState = {
   searchCandidateIds?: string[];
   selectedProjectId?: string;
@@ -17,6 +27,7 @@ export type PresentationState = {
   lastOfferedAction?: "PROPERTY_CARDS" | "PROJECT_BROCHURE" | "SEARCH_WIDEN" | "CONTACT_REQUEST";
   awaitingConfirmation?: boolean;
 };
+
 export type StructuredIntent = {
   language: string;
   dialect?: "EGYPTIAN_ARABIC" | "MSA" | "ENGLISH" | "MIXED";
@@ -57,6 +68,18 @@ export type StructuredIntent = {
   builtUpAreaMin?: number;
   builtUpAreaMax?: number;
   targetBuiltUpArea?: number;
+  preferredFloor?: number;
+  minimumFloor?: number;
+  maximumFloor?: number;
+  preferredPhase?: string;
+  preferredProjectZone?: string;
+  preferredBuilding?: string;
+  preferredGate?: string;
+  maxGateDistanceMeters?: number;
+  preferredPaymentDurationMonths?: number;
+  maxMonthlyInstallment?: number;
+  preferredDownPaymentPercent?: number;
+  proximityPreferences?: ProximityPreference[];
   temporaryIntent?: "INVENTORY_AGGREGATION";
   aggregationDimension?: "COUNT" | "BUILT_UP_AREA" | "PRICE" | "LOCATION" | "PROJECT" | "DEVELOPER" | "UNIT_TYPE" | "DELIVERY_DATE" | "PAYMENT_DURATION" | "BEDROOM_COUNT";
   turnIntent?: CustomerTurnIntent;
@@ -67,10 +90,12 @@ export type StructuredIntent = {
   customerConcerns?: string[];
   extractionDegraded?: boolean;
 };
+
 export type AIContextKind = "PROPERTY_SEARCH" | "PROJECT_DETAILS" | "DEVELOPER_HISTORY" | "INVESTMENT" | "RESALE" | "RENTAL" | "AMENITIES" | "MEDIA_REQUEST" | "BROCHURE_REQUEST" | "DISTANCE" | "COMPARISON" | "AGGREGATION";
 export type AnswerInput = { messages: AIMessage[]; intent: StructuredIntent; verifiedFacts: unknown[]; approvedKnowledge?: unknown[]; conversationSummary?: unknown; contextKind?: AIContextKind; candidatesBeforeRanking?: number; compactionLevel?: "normal" | "aggressive"; requestId?: string; conversationId?: string };
 export type AIHealth = { provider: string; configured: boolean; healthy: boolean; model: string | null; errorCode?: string };
 export type AITraceContext = { requestId?: string; conversationId?: string };
+
 export interface AIProvider {
   extractIntent(messages: AIMessage[], previous: StructuredIntent, context?: AITraceContext): Promise<StructuredIntent>;
   composeAnswer(input: AnswerInput): Promise<string>;

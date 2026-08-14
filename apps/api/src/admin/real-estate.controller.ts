@@ -125,6 +125,57 @@ class LandmarkDto {
 }
 class CompetitorsDto { @IsArray() @IsString({ each: true }) projectIds!: string[]; }
 
+class ProjectGateDto {
+  @IsString() name!: string;
+  @IsOptional() @IsString() code?: string;
+  @IsOptional() @IsString() nameAr?: string;
+  @IsOptional() @IsString() nameEn?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) gateNumber?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() latitude?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() longitude?: number;
+  @IsOptional() @IsString() googlePlaceId?: string;
+  @IsOptional() @IsBoolean() isMain?: boolean;
+  @IsOptional() @IsBoolean() isActive?: boolean;
+  @IsOptional() @IsString() notes?: string;
+}
+class ProjectZoneDto {
+  @IsString() name!: string;
+  @IsOptional() @IsString() code?: string;
+  @IsOptional() @IsString() nameAr?: string;
+  @IsOptional() @IsString() nameEn?: string;
+  @IsOptional() @IsString() notes?: string;
+}
+class ProjectBuildingDto {
+  @IsString() name!: string;
+  @IsOptional() @IsString() code?: string;
+  @IsOptional() @IsString() nameAr?: string;
+  @IsOptional() @IsString() nameEn?: string;
+  @IsOptional() @IsString() zoneId?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() latitude?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() longitude?: number;
+  @IsOptional() @IsString() notes?: string;
+}
+class UnitInternalLocationDto {
+  @IsOptional() @IsString() projectZoneId?: string;
+  @IsOptional() @IsString() projectBuildingId?: string;
+  @IsOptional() @IsString() floor?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() latitude?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() longitude?: number;
+  @IsOptional() @IsString() internalLocationDescription?: string;
+}
+class UnitProximityDto {
+  @IsIn(["GATE", "AMENITY", "LANDMARK", "PROJECT_CENTER"]) targetType!: string;
+  @IsOptional() @IsString() gateId?: string;
+  @IsOptional() @IsString() amenityId?: string;
+  @IsOptional() @IsString() landmarkId?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) distanceMeters?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) walkingMinutes?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) drivingMinutes?: number;
+  @IsOptional() @IsString() source?: string;
+  @IsOptional() @IsBoolean() verified?: boolean;
+  @IsOptional() @IsString() notes?: string;
+}
+
 @UseGuards(AdminAuthGuard)
 @Controller("admin/real-estate")
 export class RealEstateController {
@@ -191,7 +242,7 @@ export class RealEstateController {
   }
 
   @Get("projects/:id") project(@Param("id") id: string) {
-    return this.prisma.project.findUniqueOrThrow({ where: { id }, include: { developer: true, location: { include: { parent: true, aliases: true } }, amenities: { include: { amenity: true } }, investmentProfile: true, landmarks: { include: { location: true }, orderBy: { name: "asc" } }, competitorsFrom: { include: { competitorProject: { include: { developer: true, location: true } } } }, media: { orderBy: [{ isCover: "desc" }, { sortOrder: "asc" }] }, documents: { orderBy: { createdAt: "desc" } }, knowledgeItems: { where: { approvalStatus: "APPROVED" }, orderBy: { category: "asc" } }, _count: { select: { units: true, knowledgeItems: true } } } });
+    return this.prisma.project.findUniqueOrThrow({ where: { id }, include: { developer: true, location: { include: { parent: true, aliases: true } }, amenities: { include: { amenity: true } }, gates: { orderBy: [{ isMain: "desc" }, { gateNumber: "asc" }, { name: "asc" }] }, zones: { include: { buildings: { orderBy: { name: "asc" } } }, orderBy: { name: "asc" } }, buildings: { include: { zone: true }, orderBy: { name: "asc" } }, investmentProfile: true, landmarks: { include: { location: true }, orderBy: { name: "asc" } }, competitorsFrom: { include: { competitorProject: { include: { developer: true, location: true } } } }, media: { orderBy: [{ isCover: "desc" }, { sortOrder: "asc" }] }, documents: { orderBy: { createdAt: "desc" } }, knowledgeItems: { where: { approvalStatus: "APPROVED" }, orderBy: { category: "asc" } }, _count: { select: { units: true, knowledgeItems: true } } } });
   }
   @Get("projects/:id/readiness") readiness(@Param("id") id: string) { return this.readinessFor(id); }
   @Patch("projects/:id") async updateProject(@Param("id") id: string, @Body() body: ProjectDetailsDto, @Req() req: any) {
@@ -234,4 +285,103 @@ export class RealEstateController {
     await this.audit.record(req.admin.id, "PROJECT_COMPETITORS_SET", "Project", projectId, { count: ids.length });
     return { saved: true };
   }
+
+  @Get("projects/:id/gates") gates(@Param("id") projectId: string) {
+    return this.prisma.projectGate.findMany({ where: { projectId }, orderBy: [{ isMain: "desc" }, { gateNumber: "asc" }, { name: "asc" }] });
+  }
+  @Post("projects/:id/gates") async createGate(@Param("id") projectId: string, @Body() body: ProjectGateDto, @Req() req: any) {
+    if (body.isMain) await this.prisma.projectGate.updateMany({ where: { projectId }, data: { isMain: false } });
+    const item = await this.prisma.projectGate.create({ data: { ...body, projectId } });
+    await this.audit.record(req.admin.id, "PROJECT_GATE_CREATED", "ProjectGate", item.id, { projectId });
+    return item;
+  }
+  @Patch("gates/:id") async updateGate(@Param("id") id: string, @Body() body: ProjectGateDto, @Req() req: any) {
+    const current = await this.prisma.projectGate.findUniqueOrThrow({ where: { id } });
+    if (body.isMain) await this.prisma.projectGate.updateMany({ where: { projectId: current.projectId, id: { not: id } }, data: { isMain: false } });
+    const item = await this.prisma.projectGate.update({ where: { id }, data: body });
+    await this.audit.record(req.admin.id, "PROJECT_GATE_UPDATED", "ProjectGate", id);
+    return item;
+  }
+  @Delete("gates/:id") async deleteGate(@Param("id") id: string, @Req() req: any) {
+    await this.prisma.projectGate.delete({ where: { id } });
+    await this.audit.record(req.admin.id, "PROJECT_GATE_DELETED", "ProjectGate", id);
+    return { deleted: true };
+  }
+
+  @Post("projects/:id/zones") async createZone(@Param("id") projectId: string, @Body() body: ProjectZoneDto, @Req() req: any) {
+    const item = await this.prisma.projectZone.create({ data: { ...body, projectId } });
+    await this.audit.record(req.admin.id, "PROJECT_ZONE_CREATED", "ProjectZone", item.id, { projectId });
+    return item;
+  }
+  @Patch("zones/:id") async updateZone(@Param("id") id: string, @Body() body: ProjectZoneDto, @Req() req: any) {
+    const item = await this.prisma.projectZone.update({ where: { id }, data: body });
+    await this.audit.record(req.admin.id, "PROJECT_ZONE_UPDATED", "ProjectZone", id);
+    return item;
+  }
+  @Delete("zones/:id") async deleteZone(@Param("id") id: string, @Req() req: any) {
+    await this.prisma.projectZone.delete({ where: { id } });
+    await this.audit.record(req.admin.id, "PROJECT_ZONE_DELETED", "ProjectZone", id);
+    return { deleted: true };
+  }
+
+  @Post("projects/:id/buildings") async createBuilding(@Param("id") projectId: string, @Body() body: ProjectBuildingDto, @Req() req: any) {
+    if (body.zoneId) {
+      const zone = await this.prisma.projectZone.findFirst({ where: { id: body.zoneId, projectId } });
+      if (!zone) throw new BadRequestException("المنطقة الداخلية لا تتبع هذا المشروع.");
+    }
+    const item = await this.prisma.projectBuilding.create({ data: { ...body, projectId } });
+    await this.audit.record(req.admin.id, "PROJECT_BUILDING_CREATED", "ProjectBuilding", item.id, { projectId });
+    return item;
+  }
+  @Patch("buildings/:id") async updateBuilding(@Param("id") id: string, @Body() body: ProjectBuildingDto, @Req() req: any) {
+    const current = await this.prisma.projectBuilding.findUniqueOrThrow({ where: { id } });
+    if (body.zoneId) {
+      const zone = await this.prisma.projectZone.findFirst({ where: { id: body.zoneId, projectId: current.projectId } });
+      if (!zone) throw new BadRequestException("المنطقة الداخلية لا تتبع هذا المشروع.");
+    }
+    const item = await this.prisma.projectBuilding.update({ where: { id }, data: body });
+    await this.audit.record(req.admin.id, "PROJECT_BUILDING_UPDATED", "ProjectBuilding", id);
+    return item;
+  }
+  @Delete("buildings/:id") async deleteBuilding(@Param("id") id: string, @Req() req: any) {
+    await this.prisma.projectBuilding.delete({ where: { id } });
+    await this.audit.record(req.admin.id, "PROJECT_BUILDING_DELETED", "ProjectBuilding", id);
+    return { deleted: true };
+  }
+
+  @Patch("units/:id/internal-location") async updateUnitInternalLocation(@Param("id") id: string, @Body() body: UnitInternalLocationDto, @Req() req: any) {
+    const unit = await this.prisma.unit.findUniqueOrThrow({ where: { id }, select: { projectId: true } });
+    if (body.projectZoneId) {
+      const zone = await this.prisma.projectZone.findFirst({ where: { id: body.projectZoneId, projectId: unit.projectId } });
+      if (!zone) throw new BadRequestException("المنطقة الداخلية لا تتبع مشروع الوحدة.");
+    }
+    if (body.projectBuildingId) {
+      const building = await this.prisma.projectBuilding.findFirst({ where: { id: body.projectBuildingId, projectId: unit.projectId } });
+      if (!building) throw new BadRequestException("المبنى لا يتبع مشروع الوحدة.");
+    }
+    const item = await this.prisma.unit.update({ where: { id }, data: body });
+    await this.audit.record(req.admin.id, "UNIT_INTERNAL_LOCATION_UPDATED", "Unit", id);
+    return item;
+  }
+
+  @Get("units/:id/proximities") proximities(@Param("id") unitId: string) {
+    return this.prisma.unitProximity.findMany({ where: { unitId }, include: { gate: true, amenity: true, landmark: true }, orderBy: [{ targetType: "asc" }, { distanceMeters: "asc" }] });
+  }
+  @Post("units/:id/proximities") async createProximity(@Param("id") unitId: string, @Body() body: UnitProximityDto, @Req() req: any) {
+    const unit = await this.prisma.unit.findUniqueOrThrow({ where: { id: unitId }, select: { projectId: true } });
+    const targetCount = [body.gateId, body.amenityId, body.landmarkId].filter(Boolean).length;
+    if (body.targetType === "PROJECT_CENTER") { if (targetCount) throw new BadRequestException("PROJECT_CENTER لا يحتاج هدفاً إضافياً."); }
+    else if (targetCount !== 1) throw new BadRequestException("اختر هدفاً واحداً فقط لقياس القرب.");
+    if (body.gateId && !(await this.prisma.projectGate.findFirst({ where: { id: body.gateId, projectId: unit.projectId } }))) throw new BadRequestException("البوابة لا تتبع مشروع الوحدة.");
+    if (body.landmarkId && !(await this.prisma.projectLandmark.findFirst({ where: { id: body.landmarkId, projectId: unit.projectId } }))) throw new BadRequestException("المعلم لا يتبع مشروع الوحدة.");
+    const item = await this.prisma.unitProximity.create({ data: { ...body, unitId } });
+    await this.audit.record(req.admin.id, "UNIT_PROXIMITY_CREATED", "UnitProximity", item.id, { unitId });
+    return item;
+  }
+  @Delete("proximities/:id") async deleteProximity(@Param("id") id: string, @Req() req: any) {
+    await this.prisma.unitProximity.delete({ where: { id } });
+    await this.audit.record(req.admin.id, "UNIT_PROXIMITY_DELETED", "UnitProximity", id);
+    return { deleted: true };
+  }
 }
+

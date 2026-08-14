@@ -253,6 +253,9 @@ model Project {
   importSheets        ImportSheet[]
   paymentPlans        PaymentPlan[]
   amenities           ProjectAmenity[]
+  gates               ProjectGate[]
+  zones               ProjectZone[]
+  buildings           ProjectBuilding[]
   investmentProfile   ProjectInvestmentProfile?
   landmarks           ProjectLandmark[]
   competitorsFrom     ProjectCompetitor[]    @relation("CompetitorFrom")
@@ -332,6 +335,12 @@ model Unit {
   offerText             String?
   latitude              Decimal?           @db.Decimal(10, 7)
   longitude             Decimal?           @db.Decimal(10, 7)
+  internalLocationDescription String?
+  projectZoneId         String?
+  projectZone           ProjectZone?        @relation(fields: [projectZoneId], references: [id], onDelete: SetNull)
+  projectBuildingId     String?
+  projectBuilding       ProjectBuilding?    @relation(fields: [projectBuildingId], references: [id], onDelete: SetNull)
+  proximities           UnitProximity[]
   sourceImportId        String?
   sourceImport          DataImport?        @relation(fields: [sourceImportId], references: [id], onDelete: SetNull)
   archivedAt            DateTime?
@@ -348,6 +357,96 @@ model Unit {
 
   @@unique([developerId, projectId, externalUnitId])
   @@index([projectId, status, price, bedrooms])
+  @@index([projectZoneId])
+  @@index([projectBuildingId])
+}
+
+model ProjectGate {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  code          String?
+  name          String
+  nameAr        String?
+  nameEn        String?
+  gateNumber    Int?
+  latitude      Decimal? @db.Decimal(10, 7)
+  longitude     Decimal? @db.Decimal(10, 7)
+  googlePlaceId String?
+  isMain        Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  notes         String?
+  proximities   UnitProximity[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([projectId, name])
+  @@index([projectId, isActive])
+}
+
+model ProjectZone {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  code      String?
+  name      String
+  nameAr    String?
+  nameEn    String?
+  notes     String?
+  units     Unit[]
+  buildings ProjectBuilding[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, name])
+  @@index([projectId])
+}
+
+model ProjectBuilding {
+  id        String       @id @default(cuid())
+  projectId String
+  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  zoneId    String?
+  zone      ProjectZone? @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  code      String?
+  name      String
+  nameAr    String?
+  nameEn    String?
+  latitude  Decimal?     @db.Decimal(10, 7)
+  longitude Decimal?     @db.Decimal(10, 7)
+  notes     String?
+  units     Unit[]
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@unique([projectId, name])
+  @@index([projectId, zoneId])
+}
+
+model UnitProximity {
+  id               String          @id @default(cuid())
+  unitId           String
+  unit             Unit            @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  targetType       String
+  gateId           String?
+  gate             ProjectGate?    @relation(fields: [gateId], references: [id], onDelete: Cascade)
+  amenityId        String?
+  amenity           Amenity?        @relation(fields: [amenityId], references: [id], onDelete: Cascade)
+  landmarkId       String?
+  landmark          ProjectLandmark? @relation(fields: [landmarkId], references: [id], onDelete: Cascade)
+  distanceMeters   Int?
+  walkingMinutes   Int?
+  drivingMinutes   Int?
+  source           String?
+  verified         Boolean         @default(false)
+  notes            String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([unitId, targetType])
+  @@index([gateId])
+  @@index([amenityId])
+  @@index([landmarkId])
 }
 
 model UnitPriceHistory {
@@ -785,6 +884,7 @@ model Amenity {
   category    String?
   description String?
   projects    ProjectAmenity[]
+  unitProximities UnitProximity[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
@@ -841,6 +941,7 @@ model ProjectLandmark {
   verifiedAt      DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  unitProximities UnitProximity[]
 
   @@index([projectId, category])
   @@index([locationId])
