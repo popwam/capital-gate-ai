@@ -12,18 +12,24 @@ import { GroqProvider } from "./groq.provider";
 import { OpenAIProvider } from "./openai.provider";
 import { AIUpstreamError, unavailable } from "./provider-utils";
 import {
-  detectExplicitSalesSignals,
   detectExplicitRouteRequest,
+  detectExplicitSalesSignals,
   detectRequestedMedia,
   deterministicIntent,
 } from "./deterministic-intent";
 import { AIUsageService } from "./ai-usage.service";
 import { normalizeRealEstateSemantics } from "./real-estate-semantics";
 import { compactAnswerInput } from "./ai-context";
+import {
+  configuredGroqModels,
+  GroqRoute,
+  routeCustomerModel,
+} from "./conversation-model-router";
 
 @Injectable()
 export class HybridAIProvider implements AIProvider {
   private readonly logger = new Logger(HybridAIProvider.name);
+
   constructor(
     readonly workers: CloudflareWorkersAIProvider,
     readonly groq: GroqProvider,
@@ -35,15 +41,20 @@ export class HybridAIProvider implements AIProvider {
     this.workers.validateConfiguration();
     this.groq.validateConfiguration();
   }
-  async extractIntent(messages: AIMessage[], previous: StructuredIntent, context: AITraceContext = {}) {
+
+  async extractIntent(
+    messages: AIMessage[],
+    previous: StructuredIntent,
+    context: AITraceContext = {},
+  ) {
     const started = Date.now();
     try {
       const result = await this.workers.extractIntent(messages, previous);
-      const requestedMedia = detectRequestedMedia(
-        messages.at(-1)?.content ?? "",
-      );
-      const sales = detectExplicitSalesSignals(messages.at(-1)?.content ?? "");
-      const route = detectExplicitRouteRequest(messages.at(-1)?.content ?? "");
+      const latest = messages.at(-1)?.content ?? "";
+      const requestedMedia = detectRequestedMedia(latest);
+      const sales = detectExplicitSalesSignals(latest);
+      const route = detectExplicitRouteRequest(latest);
+
       await this.usage?.record({
         provider: "workers",
         model: this.workers.fastModel,
@@ -51,15 +62,25 @@ export class HybridAIProvider implements AIProvider {
         latencyMs: Date.now() - started,
         success: true,
       });
-      this.logger.log(`AIProviderTrace ${JSON.stringify({ requestId: context.requestId ?? "unknown", conversationId: context.conversationId ?? "unknown", provider: "workers", model: this.workers.fastModel, stage: "WORKERS_EXTRACTION", upstreamStatus: 200, errorCategory: null, fallbackAttempted: false, fallbackSucceeded: null })}`);
-      return normalizeRealEstateSemantics(messages.at(-1)?.content ?? "", {
+
+      this.logger.log(`AIProviderTrace ${JSON.stringify({
+        requestId: context.requestId ?? "unknown",
+        conversationId: context.conversationId ?? "unknown",
+        provider: "workers",
+        model: this.workers.fastModel,
+        stage: "WORKERS_EXTRACTION",
+        upstreamStatus: 200,
+        errorCategory: null,
+        fallbackAttempted: false,
+        fallbackSucceeded: null,
+      })}`);
+
+      return normalizeRealEstateSemantics(latest, {
         ...result,
         requestedMedia,
         ...(sales.contactName ? { contactName: sales.contactName } : {}),
         ...(sales.contactPhone ? { contactPhone: sales.contactPhone } : {}),
-        ...(sales.purchaseIntent
-          ? { purchaseIntent: Math.max(result.purchaseIntent ?? 0, sales.purchaseIntent) }
-          : {}),
+        ...(sales.purchaseIntent ? { purchaseIntent: Math.max(result.purchaseIntent ?? 0, sales.purchaseIntent) } : {}),
         ...(route ?? {}),
       }, previous);
     } catch (error) {
@@ -71,14 +92,29 @@ export class HybridAIProvider implements AIProvider {
         success: false,
         errorCode: error instanceof AIUpstreamError ? error.code : "UNKNOWN",
       });
+
       const upstream = error instanceof AIUpstreamError ? error : undefined;
-      this.logger.warn(`AIProviderTrace ${JSON.stringify({ requestId: context.requestId ?? "unknown", conversationId: context.conversationId ?? "unknown", provider: "workers", model: this.workers.fastModel, stage: "WORKERS_EXTRACTION", upstreamStatus: upstream?.status ?? null, errorCategory: upstream?.code ?? "UNKNOWN", fallbackAttempted: true, fallbackSucceeded: true })}`);
-      this.logger.warn(
-        "Workers intent extraction unavailable; using deterministic extraction",
+      this.logger.warn(`AIProviderTrace ${JSON.stringify({
+        requestId: context.requestId ?? "unknown",
+        conversationId: context.conversationId ?? "unknown",
+        provider: "workers",
+        model: this.workers.fastModel,
+        stage: "WORKERS_EXTRACTION",
+        upstreamStatus: upstream?.status ?? null,
+        errorCategory: upstream?.code ?? "UNKNOWN",
+        fallbackAttempted: true,
+        fallbackSucceeded: true,
+      })}`);
+      this.logger.warn("Workers intent extraction unavailable; using deterministic extraction");
+
+      return normalizeRealEstateSemantics(
+        messages.at(-1)?.content ?? "",
+        deterministicIntent(messages, previous),
+        previous,
       );
-      return normalizeRealEstateSemantics(messages.at(-1)?.content ?? "", deterministicIntent(messages, previous), previous);
     }
   }
+
   async extractKnowledge(sourceText: string) {
     const started = Date.now();
     try {
@@ -92,24 +128,15 @@ export class HybridAIProvider implements AIProvider {
       });
       return result;
     } catch {
-      this.logger.warn(
-        "Workers knowledge extraction unavailable; preserving source for manual review",
-      );
+      this.logger.warn("Workers knowledge extraction unavailable; preserving source for manual review");
       return { extractionUnavailable: true, sourceLength: sourceText.length };
     }
   }
-  async mapColumns(
-    headers: string[],
-    sampleRows: unknown[][],
-    canonicalFields: string[],
-  ) {
+
+  async mapColumns(headers: string[], sampleRows: unknown[][], canonicalFields: string[]) {
     const started = Date.now();
     try {
-      const result = await this.workers.mapColumns(
-        headers,
-        sampleRows,
-        canonicalFields,
-      );
+      const result = await this.workers.mapColumns(headers, sampleRows, canonicalFields);
       await this.usage?.record({
         provider: "workers",
         model: this.workers.fastModel,
@@ -119,65 +146,133 @@ export class HybridAIProvider implements AIProvider {
       });
       return result;
     } catch {
-      this.logger.warn(
-        "Workers column mapping unavailable; continuing with manual mapping",
-      );
+      this.logger.warn("Workers column mapping unavailable; continuing with manual mapping");
       return [];
     }
   }
 
   private shouldFallback(error: unknown) {
     return error instanceof AIUpstreamError
-      ? error.status === 413 || error.retryable || !error.status
+      ? error.status === 413 || error.status === 429 || error.retryable || !error.status
       : true;
   }
-  private is413(error:unknown){return error instanceof AIUpstreamError&&(error.status===413||error.code==="HTTP_413");}
-  private traceFailure(input: AnswerInput, provider: string, model: string, stage: string, error: unknown, fallbackAttempted: boolean, fallbackSucceeded?: boolean) {
+
+  private is413(error: unknown) {
+    return error instanceof AIUpstreamError && (error.status === 413 || error.code === "HTTP_413");
+  }
+
+  private traceFailure(
+    input: AnswerInput,
+    provider: string,
+    model: string,
+    stage: string,
+    error: unknown,
+    fallbackAttempted: boolean,
+    fallbackSucceeded?: boolean,
+  ) {
     const upstream = error instanceof AIUpstreamError ? error : undefined;
-    this.logger.warn(`AIProviderTrace ${JSON.stringify({ requestId: input.requestId ?? "unknown", conversationId: input.conversationId ?? "unknown", provider, model, stage, upstreamStatus: upstream?.status ?? null, errorCategory: upstream?.code ?? "UNKNOWN", fallbackAttempted, fallbackSucceeded: fallbackSucceeded ?? null })}`);
+    this.logger.warn(`AIProviderTrace ${JSON.stringify({
+      requestId: input.requestId ?? "unknown",
+      conversationId: input.conversationId ?? "unknown",
+      provider,
+      model,
+      stage,
+      upstreamStatus: upstream?.status ?? null,
+      errorCategory: upstream?.code ?? "UNKNOWN",
+      fallbackAttempted,
+      fallbackSucceeded: fallbackSucceeded ?? null,
+    })}`);
   }
-  private temporaryAnswer(input: AnswerInput) {
-    return input.intent.language?.startsWith("ar")
-      ? "خدمة المستشار غير متاحة للحظات. بيانات الوحدات لم تتغير، جرّب رسالتك مرة أخرى بعد قليل."
-      : "The property advisor is temporarily unavailable. No inventory facts were generated; please try again shortly.";
+
+  private modelRouteTrace(input: AnswerInput, route: GroqRoute) {
+    this.logger.log(`AIModelRoute ${JSON.stringify({
+      requestId: input.requestId ?? "unknown",
+      conversationId: input.conversationId ?? "unknown",
+      role: route.role,
+      model: route.model,
+      reason: route.reason,
+      fallbackModels: route.fallbacks,
+    })}`);
   }
-  async composeAnswer(input: AnswerInput) {
-    let started = Date.now();
-    try {
-      const result = await this.groq.composeAnswer(input);
-      await this.usage?.record({
-        provider: "groq",
-        model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
-        taskType: "customer_answer",
-        latencyMs: Date.now() - started,
-        success: true,
-      });
-      return result;
-    } catch (initialGroqError) {
-      let groqError = initialGroqError;
-      this.traceFailure(input, "groq", process.env.GROQ_MODEL || "openai/gpt-oss-120b", "GROQ_GENERATION", groqError, true);
-      await this.usage?.record({
-        provider: "groq",
-        model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
-        taskType: "customer_answer",
-        latencyMs: Date.now() - started,
-        success: false,
-        errorCode:
-          groqError instanceof AIUpstreamError ? groqError.code : "UNKNOWN",
-      });
-      let fallbackInput = compactAnswerInput(input, "normal");
-      if (this.is413(groqError)) {
-        fallbackInput = compactAnswerInput(input, "aggressive");
-        this.logger.warn(`AIProviderTrace ${JSON.stringify({requestId:input.requestId??"unknown",conversationId:input.conversationId??"unknown",provider:"groq",model:process.env.GROQ_MODEL||"openai/gpt-oss-120b",stage:"CONTEXT_COMPACTION",attempt:2,compacted:true})}`);
-        try { return await this.groq.composeAnswer(fallbackInput); }
-        catch (retryError) { groqError=retryError; this.traceFailure(fallbackInput,"groq",process.env.GROQ_MODEL||"openai/gpt-oss-120b","GROQ_GENERATION_RETRY",retryError,true,false); }
+
+  private uniqueModels(route: GroqRoute) {
+    return [...new Set([route.model, ...route.fallbacks])];
+  }
+
+  private async recordGroq(
+    model: string,
+    taskType: string,
+    started: number,
+    success: boolean,
+    fallbackUsed: boolean,
+    error?: unknown,
+  ) {
+    await this.usage?.record({
+      provider: "groq",
+      model,
+      taskType,
+      latencyMs: Date.now() - started,
+      success,
+      fallbackUsed,
+      ...(success ? {} : { errorCode: error instanceof AIUpstreamError ? error.code : "UNKNOWN" }),
+    });
+  }
+
+  private async composeWithGroqRoute(input: AnswerInput, route: GroqRoute): Promise<string> {
+    const models = this.uniqueModels(route);
+    let lastError: unknown;
+    let candidateInput = input;
+
+    for (let index = 0; index < models.length; index++) {
+      const model = models[index];
+      const started = Date.now();
+      try {
+        const answer = await this.groq.composeAnswerWithModel(candidateInput, model);
+        await this.recordGroq(model, "customer_answer", started, true, index > 0);
+        this.logger.log(`AIProviderTrace ${JSON.stringify({
+          requestId: input.requestId ?? "unknown",
+          conversationId: input.conversationId ?? "unknown",
+          provider: "groq",
+          model,
+          stage: index === 0 ? "GROQ_GENERATION" : "GROQ_MODEL_FALLBACK",
+          upstreamStatus: 200,
+          fallbackAttempted: index > 0,
+          fallbackSucceeded: index > 0 ? true : null,
+        })}`);
+        return answer;
+      } catch (error) {
+        lastError = error;
+        await this.recordGroq(model, "customer_answer", started, false, index > 0, error);
+        this.traceFailure(candidateInput, "groq", model, index === 0 ? "GROQ_GENERATION" : "GROQ_MODEL_FALLBACK", error, index < models.length - 1, false);
+        if (this.is413(error)) candidateInput = compactAnswerInput(input, "aggressive");
+        if (!this.shouldFallback(error)) break;
       }
-      if (!this.shouldFallback(groqError)) unavailable("groq", groqError);
-      this.logger.warn("Groq generation unavailable; using OpenAI fallback");
-      started = Date.now();
+    }
+
+    throw lastError ?? new AIUpstreamError("groq", "ALL_MODELS_FAILED");
+  }
+
+  async composeAnswer(input: AnswerInput) {
+    const route = routeCustomerModel(input);
+    this.modelRouteTrace(input, route);
+    let fallbackInput = input;
+
+    try {
+      return await this.composeWithGroqRoute(input, route);
+    } catch (groqError) {
+      fallbackInput = this.is413(groqError) ? compactAnswerInput(input, "aggressive") : compactAnswerInput(input, "normal");
+      this.logger.warn("All selected Groq models unavailable; using OpenAI fallback");
+      const started = Date.now();
+
       try {
         const result = await this.openai.composeAnswer(fallbackInput);
-        this.logger.log(`AIProviderTrace ${JSON.stringify({ requestId: input.requestId ?? "unknown", conversationId: input.conversationId ?? "unknown", provider: "openai", stage: "OPENAI_FALLBACK", fallbackSucceeded: true })}`);
+        this.logger.log(`AIProviderTrace ${JSON.stringify({
+          requestId: input.requestId ?? "unknown",
+          conversationId: input.conversationId ?? "unknown",
+          provider: "openai",
+          stage: "OPENAI_FALLBACK",
+          fallbackSucceeded: true,
+        })}`);
         await this.usage?.record({
           provider: "openai",
           model: process.env.OPENAI_TEXT_MODEL || "gpt-5-mini",
@@ -188,10 +283,8 @@ export class HybridAIProvider implements AIProvider {
         });
         return result;
       } catch (openaiError) {
-        this.traceFailure(input, "openai", process.env.OPENAI_TEXT_MODEL || "gpt-5-mini", "OPENAI_FALLBACK", openaiError, true, false);
-        this.logger.warn(
-          "OpenAI generation unavailable; using Workers AI compatibility fallback",
-        );
+        this.traceFailure(fallbackInput, "openai", process.env.OPENAI_TEXT_MODEL || "gpt-5-mini", "OPENAI_FALLBACK", openaiError, true, false);
+        this.logger.warn("OpenAI generation unavailable; using Workers AI compatibility fallback");
         try {
           return await this.workers.composeAnswer(fallbackInput);
         } catch (workersError) {
@@ -203,44 +296,52 @@ export class HybridAIProvider implements AIProvider {
   }
 
   async *streamAnswer(input: AnswerInput): AsyncIterable<string> {
-    let started = Date.now();
-    let emitted = false;
-    try {
-      for await (const chunk of this.groq.streamAnswer(input)) { emitted = true; yield chunk; }
-      await this.usage?.record({
-        provider: "groq",
-        model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
-        taskType: "customer_stream",
-        latencyMs: Date.now() - started,
-        success: true,
-      });
-      return;
-    } catch (initialGroqError) {
-      let groqError=initialGroqError;
-      this.traceFailure(input, "groq", process.env.GROQ_MODEL || "openai/gpt-oss-120b", "GROQ_GENERATION", groqError, !emitted);
-      await this.usage?.record({
-        provider: "groq",
-        model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
-        taskType: "customer_stream",
-        latencyMs: Date.now() - started,
-        success: false,
-        errorCode:
-          groqError instanceof AIUpstreamError ? groqError.code : "UNKNOWN",
-      });
-      let fallbackInput=compactAnswerInput(input,"normal");
-      if(!emitted&&this.is413(groqError)){
-        fallbackInput=compactAnswerInput(input,"aggressive");
-        this.logger.warn(`AIProviderTrace ${JSON.stringify({requestId:input.requestId??"unknown",conversationId:input.conversationId??"unknown",provider:"groq",model:process.env.GROQ_MODEL||"openai/gpt-oss-120b",stage:"CONTEXT_COMPACTION",attempt:2,compacted:true})}`);
-        try{for await(const chunk of this.groq.streamAnswer(fallbackInput)){emitted=true;yield chunk}return;}catch(retryError){groqError=retryError;this.traceFailure(fallbackInput,"groq",process.env.GROQ_MODEL||"openai/gpt-oss-120b","GROQ_GENERATION_RETRY",retryError,!emitted,false);}
+    const route = routeCustomerModel(input);
+    this.modelRouteTrace(input, route);
+    const models = this.uniqueModels(route);
+    let lastError: unknown;
+    let candidateInput = input;
+
+    for (let index = 0; index < models.length; index++) {
+      const model = models[index];
+      const started = Date.now();
+      let emitted = false;
+
+      try {
+        for await (const chunk of this.groq.streamAnswerWithModel(candidateInput, model)) {
+          emitted = true;
+          yield chunk;
+        }
+        await this.recordGroq(model, "customer_stream", started, true, index > 0);
+        return;
+      } catch (error) {
+        lastError = error;
+        await this.recordGroq(model, "customer_stream", started, false, index > 0, error);
+        this.traceFailure(candidateInput, "groq", model, index === 0 ? "GROQ_GENERATION" : "GROQ_MODEL_FALLBACK", error, !emitted && index < models.length - 1, false);
+
+        if (emitted) unavailable("groq", error);
+        if (this.is413(error)) candidateInput = compactAnswerInput(input, "aggressive");
+        if (!this.shouldFallback(error)) break;
       }
-      if (emitted || !this.shouldFallback(groqError)) unavailable("groq", groqError);
-      this.logger.warn("Groq stream unavailable; using OpenAI stream fallback");
-      input=fallbackInput;
     }
-    started = Date.now();
+
+    if (lastError && !this.shouldFallback(lastError)) unavailable("groq", lastError);
+    this.logger.warn("All selected Groq stream models unavailable; using OpenAI stream fallback");
+
+    const openAIInput = lastError && this.is413(lastError)
+      ? compactAnswerInput(input, "aggressive")
+      : compactAnswerInput(input, "normal");
+    const started = Date.now();
+
     try {
-      for await (const chunk of this.openai.streamAnswer(input)) yield chunk;
-      this.logger.log(`AIProviderTrace ${JSON.stringify({ requestId: input.requestId ?? "unknown", conversationId: input.conversationId ?? "unknown", provider: "openai", stage: "OPENAI_FALLBACK", fallbackSucceeded: true })}`);
+      for await (const chunk of this.openai.streamAnswer(openAIInput)) yield chunk;
+      this.logger.log(`AIProviderTrace ${JSON.stringify({
+        requestId: input.requestId ?? "unknown",
+        conversationId: input.conversationId ?? "unknown",
+        provider: "openai",
+        stage: "OPENAI_FALLBACK",
+        fallbackSucceeded: true,
+      })}`);
       await this.usage?.record({
         provider: "openai",
         model: process.env.OPENAI_TEXT_MODEL || "gpt-5-mini",
@@ -251,24 +352,28 @@ export class HybridAIProvider implements AIProvider {
       });
       return;
     } catch (openaiError) {
-      this.traceFailure(input, "openai", process.env.OPENAI_TEXT_MODEL || "gpt-5-mini", "OPENAI_FALLBACK", openaiError, true, false);
-      this.logger.warn(
-        "OpenAI stream unavailable; using Workers AI compatibility fallback",
-      );
+      this.traceFailure(openAIInput, "openai", process.env.OPENAI_TEXT_MODEL || "gpt-5-mini", "OPENAI_FALLBACK", openaiError, true, false);
+      this.logger.warn("OpenAI stream unavailable; using Workers AI compatibility fallback");
       try {
-        yield await this.workers.composeAnswer(input);
+        yield await this.workers.composeAnswer(openAIInput);
       } catch (workersError) {
-        this.traceFailure(input, "workers", this.workers.primaryModel, "WORKERS_RESPONSE_FALLBACK", workersError, false, false);
+        this.traceFailure(openAIInput, "workers", this.workers.primaryModel, "WORKERS_RESPONSE_FALLBACK", workersError, false, false);
         unavailable("workers", workersError);
       }
     }
   }
 
   async health(): Promise<AIHealth[]> {
-    return Promise.all([
-      this.workers.health(),
-      this.groq.health(),
-      this.openai.health(),
-    ]);
+    const base = await Promise.all([this.workers.health(), this.groq.health(), this.openai.health()]);
+    const models = configuredGroqModels();
+    return [
+      ...base,
+      {
+        provider: "groq-router",
+        configured: Boolean(process.env.GROQ_API_KEY),
+        healthy: Boolean(process.env.GROQ_API_KEY),
+        model: `${models.arabic} | ${models.general} | ${models.reasoning}`,
+      },
+    ];
   }
 }
