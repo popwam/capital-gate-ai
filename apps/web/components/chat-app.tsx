@@ -15,9 +15,9 @@ type Message = { id: string; role: "user" | "assistant"; text: string; kind?: Me
 type Conversation = { id: string; title: string; updatedAt: string; messages: Message[] };
 
 const starters = [
-  { icon: Building2, label: "ابحث عن بيت", prompt: "عاوز شقة في القاهرة الجديدة" },
-  { icon: Sparkles, label: "فرص استثمار", prompt: "وريني اختيارات استثمارية في حدود 15 مليون" },
-  { icon: MapPin, label: "ابحث بالمنطقة", prompt: "إيه المتاح قريب من العاصمة الإدارية؟" }
+  { icon: Building2, label: "بدور على بيت", prompt: "عاوز شقة في القاهرة الجديدة" },
+  { icon: Sparkles, label: "بفكر في استثمار", prompt: "وريني اختيارات استثمارية في حدود 15 مليون" },
+  { icon: MapPin, label: "المكان أهم حاجة", prompt: "إيه المتاح قريب من العاصمة الإدارية؟" }
 ];
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -104,9 +104,9 @@ export default function ChatApp() {
 
         <div ref={scrollRef} className="scrollbar-none flex-1 overflow-y-auto">
           {messages.length === 0 ? <Welcome isArabic={isArabic} onSelect={send}/> : (
-            <div className="mx-auto w-full max-w-[790px] px-4 pb-40 pt-7 sm:px-7 sm:pt-10">
+            <div className="mx-auto w-full max-w-[860px] px-4 pb-44 pt-7 sm:px-8 sm:pt-10">
               {messages.map((m, i) => <MessageView key={m.id} message={m} liked={liked} setLiked={setLiked} onAction={send} isLast={i === messages.length - 1} isArabic={isArabic}/>) }
-              {generating && <div className="message-rise mb-7 flex gap-3"><AssistantAvatar/>{streamingText ? <div className="max-w-[84%] pt-1 text-[16px] leading-[1.8] text-[#27322e] sm:text-[17px]" dir={textDirection(streamingText)}>{streamingText}<span className="ms-1 inline-block h-4 w-0.5 animate-pulse bg-forest"/></div> : <div className="mt-1 flex h-9 items-center gap-1 rounded-2xl rounded-tl-sm bg-[#efede6] px-4"><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/></div>}</div>}
+              {generating && <div className="message-rise mb-7 flex gap-3"><AssistantAvatar/>{streamingText ? <div className="chat-copy max-w-[92%] pt-0.5 text-[17px] leading-[1.9] tracking-[.005em] text-[#27322e] sm:max-w-[86%] sm:text-[18px]" dir={textDirection(streamingText)}>{streamingText}<span className="ms-1 inline-block h-4 w-0.5 animate-pulse bg-forest"/></div> : <div className="mt-1 flex h-9 items-center gap-1 rounded-2xl rounded-tl-sm bg-[#efede6] px-4"><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/></div>}</div>}
             </div>
           )}
         </div>
@@ -119,20 +119,20 @@ export default function ChatApp() {
 
 function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, onRename }: { conversations: Conversation[]; activeId: string; onSelect: (id:string)=>void; onNew:()=>void; onDelete:(id:string)=>void; onRename:(id:string,title:string)=>void }) {
   return <>
-    <div className="px-5 pb-5 pt-6"><LogoMark/><button onClick={onNew} className="mt-7 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-forest text-[12px] font-bold text-white shadow-sm transition hover:-translate-y-px hover:bg-[#0e332b]"><Plus size={16}/> New conversation</button></div>
-    <div className="px-4"><div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#8b958f]" size={14}/><input className="h-10 w-full rounded-xl border border-[#dcdcd6] bg-[#f8f6f1] pl-9 pr-3 text-[11px] outline-none focus:border-[#a4b9b0]" placeholder="Search conversations"/></div></div>
-    <div className="scrollbar-none mt-6 flex-1 overflow-y-auto px-3"><p className="px-2 text-[9px] font-bold uppercase tracking-[.16em] text-[#89938e]">Recent</p><div className="mt-2 space-y-1">{conversations.map(c => <button key={c.id} onClick={() => onSelect(c.id)} onDoubleClick={()=>onRename(c.id,c.title)} title="Double-click to rename" className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-start transition ${activeId === c.id ? "bg-white shadow-sm" : "hover:bg-white/60"}`}><MessageSquareText size={15} className={activeId === c.id ? "text-coral" : "text-[#81908a]"}/><span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-semibold" dir="auto">{c.title}</span><span className="mt-0.5 block text-[9px] text-[#8a948f]">{c.updatedAt}</span></span><span onClick={e => {e.stopPropagation();onDelete(c.id)}} className="hidden h-7 w-7 place-items-center rounded-lg text-[#85908b] hover:bg-[#f6e3df] hover:text-[#bd553e] group-hover:grid"><Trash2 size={13}/></span></button>)}</div></div>
+    <div className="px-5 pb-5 pt-6"><LogoMark/><button onClick={onNew} className="mt-7 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-forest text-[12px] font-bold text-white shadow-sm transition hover:-translate-y-px hover:bg-[#0e332b]"><Plus size={16}/> محادثة جديدة</button></div>
+    <div className="px-4"><div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#8b958f]" size={14}/><input className="h-10 w-full rounded-xl border border-[#dcdcd6] bg-[#f8f6f1] pl-9 pr-3 text-[11px] outline-none focus:border-[#a4b9b0]" placeholder="ابحث في المحادثات"/></div></div>
+    <div className="scrollbar-none mt-6 flex-1 overflow-y-auto px-3"><p className="px-2 text-[9px] font-bold uppercase tracking-[.16em] text-[#89938e]">الأخيرة</p><div className="mt-2 space-y-1">{conversations.map(c => <button key={c.id} onClick={() => onSelect(c.id)} onDoubleClick={()=>onRename(c.id,c.title)} title="Double-click to rename" className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-start transition ${activeId === c.id ? "bg-white shadow-sm" : "hover:bg-white/60"}`}><MessageSquareText size={15} className={activeId === c.id ? "text-coral" : "text-[#81908a]"}/><span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-semibold" dir="auto">{c.title}</span><span className="mt-0.5 block text-[9px] text-[#8a948f]">{c.updatedAt}</span></span><span onClick={e => {e.stopPropagation();onDelete(c.id)}} className="hidden h-7 w-7 place-items-center rounded-lg text-[#85908b] hover:bg-[#f6e3df] hover:text-[#bd553e] group-hover:grid"><Trash2 size={13}/></span></button>)}</div></div>
   </>;
 }
 
 function Welcome({ onSelect, isArabic }: { onSelect:(v:string)=>void; isArabic:boolean }) {
   return <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col items-center justify-center px-5 pb-36 pt-14 text-center" dir={isArabic ? "rtl" : "ltr"}>
     <div className="relative mb-7"><div className="absolute -inset-4 rounded-full bg-[#d9e9e0] blur-xl"/><div className="relative grid h-16 w-16 place-items-center rounded-[22px] bg-forest text-white shadow-soft"><svg viewBox="0 0 36 36" className="h-8 w-8" fill="none"><path d="M8 29V15l10-7 10 7v14" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"/><path d="M13 29v-8h10v8M11 13l7 6 7-6" stroke="#f3b79f" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"/></svg></div></div>
-    <p className="mb-2 text-[10px] font-bold uppercase tracking-[.2em] text-coral">{isArabic ? "مستشارك العقاري الذكي" : "Your AI property advisor"}</p>
-    <h1 className="max-w-[620px] text-[32px] font-semibold leading-[1.12] tracking-[-.045em] sm:text-[46px]">{isArabic ? "إيه مواصفات البيت اللي بتدور عليه؟" : "What kind of place are you looking for?"}</h1>
-    <p className="mt-4 max-w-[530px] text-[16px] leading-[1.8] text-[#6d7974] sm:text-[17px]">{isArabic ? "احكيلي بطريقتك — المنطقة، الميزانية، أو حتى مجرد فكرة. هدوّر لك في الوحدات المتاحة فعلاً." : "Tell me in your own words — an area, a budget, or just an idea. I’ll search verified, currently available properties for you."}</p>
+    <p className="mb-2 text-[13px] font-bold text-coral">{isArabic ? "مقار" : "Maqar"}</p>
+    <h1 className="max-w-[650px] text-[34px] font-semibold leading-[1.3] tracking-[-.025em] sm:text-[46px]">{isArabic ? "احكيلي إيه اللي في دماغك" : "Tell me what you have in mind"}</h1>
+    <p className="mt-4 max-w-[560px] text-[17px] leading-[1.9] text-[#66736d] sm:text-[18px]">{isArabic ? "مش محتاج تملى بيانات. اتكلم عادي، وأنا هفهم منك خطوة بخطوة وأدور في المخزون الموثق." : "No form to fill in. Just talk naturally and I’ll narrow things down with you using verified inventory."}</p>
     <div className="mt-9 grid w-full gap-2.5 sm:grid-cols-3" dir="ltr">{starters.map(({icon:Icon,label,prompt}) => <button key={label} onClick={() => onSelect(prompt)} className="group flex min-h-[96px] flex-col items-start justify-between rounded-2xl border border-[#dedfd9] bg-white p-4 text-left shadow-[0_4px_15px_rgba(20,40,32,.03)] transition hover:-translate-y-1 hover:border-[#b8c9c1] hover:shadow-soft"><Icon size={18} className="text-coral"/><span className="flex w-full items-end justify-between text-[11px] font-bold">{label}<ArrowUp className="rotate-45 text-[#8a958f] transition group-hover:text-forest" size={15}/></span></button>)}</div>
-    <div className="mt-7 flex items-center gap-2 text-[9px] font-semibold text-[#8b958f]"><ShieldCheck size={13}/> Verified inventory · Private by design · No account needed</div>
+    <div className="mt-7 flex items-center gap-2 text-[13px] font-semibold text-[#7f8b85]"><ShieldCheck size={14}/>{isArabic ? "مخزون موثق · بدون تسجيل حساب" : "Verified inventory · No account needed"}</div>
   </div>;
 }
 
@@ -149,8 +149,8 @@ function MessageView({ message, liked, setLiked, onAction, isLast, isArabic }: {
   const contact = actions.some((action:any) => action.type === "CONTACT_REQUEST");
   return <div className={`message-rise mb-7 flex gap-3 ${assistant ? "justify-start" : "justify-end"}`}>
     {assistant && <AssistantAvatar/>}
-    <div className={assistant ? "max-w-[92%] sm:max-w-[84%]" : "max-w-[84%]"}>
-      <div dir={textDirection(message.text)} className={assistant ? "pt-1 text-start text-[16px] leading-[1.8] text-[#27322e] sm:text-[17px]" : "rounded-2xl rounded-tr-sm bg-[#e8e5de] px-4 py-3 text-start text-[16px] leading-[1.75] text-[#26312d] sm:text-[17px]"}>{message.text}</div>
+    <div className={assistant ? "max-w-[94%] sm:max-w-[86%]" : "max-w-[88%] sm:max-w-[78%]"}>
+      <div dir={textDirection(message.text)} className={assistant ? "chat-copy pt-0.5 text-start text-[17px] leading-[1.9] tracking-[.005em] text-[#27322e] sm:text-[18px]" : "chat-copy rounded-[20px] rounded-tr-md bg-[#ebe8e1] px-4 py-3 text-start text-[17px] leading-[1.85] text-[#26312d] sm:text-[18px]"}>{message.text}</div>
       {!!cards.length && <PropertyResults properties={cards} liked={liked} setLiked={setLiked} onAction={onAction} isArabic={isArabic}/>}
       {!!photos.length && <MediaGallery media={photos}/>}
       {!!brochures.length && <Documents documents={brochures}/>}
@@ -235,7 +235,7 @@ function LeadHint({created}:{created:boolean}) { return <div className="mt-3 fle
 
 function Composer({ input, setInput, send, disabled, isArabic }: {input:string;setInput:(v:string)=>void;send:()=>void;disabled:boolean;isArabic:boolean}) {
   return <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-[#fbfaf7] via-[#fbfaf7] to-transparent px-3 pb-[max(14px,env(safe-area-inset-bottom))] pt-9 sm:px-6">
-    <div className="pointer-events-auto mx-auto max-w-[790px]"><div className="rounded-[22px] border border-[#d9dcd6] bg-white p-2 shadow-[0_14px_50px_rgba(28,45,39,.12)] transition focus-within:border-[#9bb3a9]"><textarea dir={input ? textDirection(input) : (isArabic ? "rtl" : "ltr")} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}} rows={1} placeholder={isArabic ? "اسألني عن أي عقار..." : "Ask about any property..."} className="scrollbar-none block max-h-28 min-h-[50px] w-full resize-none bg-transparent px-3 py-3 text-start text-[16px] leading-[1.75] outline-none placeholder:text-[#9ba39f]"/><div className="flex items-center justify-between px-1 pb-1"><span className="hidden text-[13px] font-medium text-[#8c9691] sm:inline">Shift + Enter لسطر جديد</span><button disabled={disabled || !input.trim()} onClick={send} className="grid h-10 w-10 place-items-center rounded-full bg-forest text-white transition enabled:hover:scale-105 disabled:bg-[#d5dad7]" aria-label="إرسال"><ArrowUp size={18}/></button></div></div><p className="mt-2 text-center text-[13px] text-[#7e8984]">مقار يعرض بيانات المخزون الموثقة فقط، مع تاريخ آخر تحديث للإتاحة.</p></div>
+    <div className="pointer-events-auto mx-auto max-w-[860px]"><div className="rounded-[22px] border border-[#d9dcd6] bg-white p-2 shadow-[0_14px_50px_rgba(28,45,39,.12)] transition focus-within:border-[#9bb3a9]"><textarea dir={input ? textDirection(input) : (isArabic ? "rtl" : "ltr")} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}} rows={1} placeholder={isArabic ? "اكتب اللي في بالك..." : "Tell me what you have in mind..."} className="scrollbar-none block max-h-28 min-h-[50px] w-full resize-none bg-transparent px-3 py-3 text-start text-[16px] leading-[1.75] outline-none placeholder:text-[#9ba39f]"/><div className="flex items-center justify-between px-1 pb-1"><span className="hidden text-[13px] font-medium text-[#8c9691] sm:inline">Shift + Enter لسطر جديد</span><button disabled={disabled || !input.trim()} onClick={send} className="grid h-10 w-10 place-items-center rounded-full bg-forest text-white transition enabled:hover:scale-105 disabled:bg-[#d5dad7]" aria-label="إرسال"><ArrowUp size={18}/></button></div></div><p className="mt-2 text-center text-[13px] text-[#7e8984]">{isArabic ? "الأسعار والإتاحة من البيانات الموثقة فقط." : "Prices and availability come from verified data only."}</p></div>
   </div>;
 }
 

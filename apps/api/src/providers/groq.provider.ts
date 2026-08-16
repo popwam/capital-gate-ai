@@ -12,7 +12,15 @@ type GroqChatResponse = {
 @Injectable()
 export class GroqProvider implements AIProvider {
   private stripReasoning(value: string) {
-    return value.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<think>[\s\S]*$/gi, "").trim();
+    // Reasoning tags can span multiple SSE chunks. Keep whitespace intact here;
+    // trimming individual chunks corrupts Arabic/English word boundaries.
+    return value
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .replace(/<think>[\s\S]*$/gi, "");
+  }
+
+  private finalText(value: string) {
+    return this.stripReasoning(value).trim();
   }
   private readonly apiKey = process.env.GROQ_API_KEY ?? "";
   private readonly endpoint = "https://api.groq.com/openai/v1/chat/completions";
@@ -60,20 +68,31 @@ export class GroqProvider implements AIProvider {
   }
 
   async composeAnswerWithModel(input: AnswerInput, model: string) {
-    const response = await this.request(model, advisorMessages(input), { temperature: 0.22, maxTokens: 1000 });
+    const response = await this.request(model, advisorMessages(input), { temperature: 0.42, maxTokens: 1000 });
     const body = (await response.json()) as GroqChatResponse;
-    const content = this.stripReasoning(body.choices?.[0]?.message?.content ?? "").trim();
+    const content = this.finalText(body.choices?.[0]?.message?.content ?? "");
     if (!content) throw new AIUpstreamError("groq", "EMPTY_RESPONSE", 502, true);
     return content;
   }
 
   async *streamAnswerWithModel(input: AnswerInput, model: string): AsyncIterable<string> {
-    const response = await this.request(model, advisorMessages(input), { stream: true, temperature: 0.22, maxTokens: 1000 });
+    const response = await this.request(model, advisorMessages(input), { stream: true, temperature: 0.42, maxTokens: 1000 });
     if (!response.body) throw new AIUpstreamError("groq", "EMPTY_STREAM", 502, true);
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
+    let rawContent = "";
+    let emittedLength = 0;
+
+    const emitVisibleDelta = function* (provider: GroqProvider, chunk: string) {
+      rawContent += chunk;
+      const visible = provider.stripReasoning(rawContent);
+      if (visible.length <= emittedLength) return;
+      const delta = visible.slice(emittedLength);
+      emittedLength = visible.length;
+      if (delta) yield delta;
+    };
 
     try {
       while (true) {
@@ -96,13 +115,25 @@ export class GroqProvider implements AIProvider {
           try { parsed = JSON.parse(data) as GroqChatResponse; } catch { continue; }
           const chunk = parsed.choices?.[0]?.delta?.content;
           if (typeof chunk === "string" && chunk) {
-            const safe = this.stripReasoning(chunk);
-            if (safe) yield safe;
+            yield* emitVisibleDelta(this, chunk);
           }
         }
       }
+
       const tail = decoder.decode();
       if (tail) buffer += tail;
+      // Flush a final non-newline SSE frame if the upstream closes without one.
+      const lastLine = buffer.trim();
+      if (lastLine.startsWith("data:")) {
+        const data = lastLine.slice(5).trim();
+        if (data && data !== "[DONE]") {
+          try {
+            const parsed = JSON.parse(data) as GroqChatResponse;
+            const chunk = parsed.choices?.[0]?.delta?.content;
+            if (typeof chunk === "string" && chunk) yield* emitVisibleDelta(this, chunk);
+          } catch { /* ignore malformed terminal frame */ }
+        }
+      }
     } finally {
       reader.releaseLock();
     }
