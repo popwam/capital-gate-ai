@@ -4,13 +4,16 @@ import { AIUpstreamError, advisorMessages, parseJsonArray, parseJsonObject, sani
 import { configuredGroqModels } from "./conversation-model-router";
 
 type GroqChatResponse = {
-  choices?: Array<{ message?: { content?: string }; delta?: { content?: string } }>;
+  choices?: Array<{ message?: { content?: string; reasoning?: string }; delta?: { content?: string; reasoning?: string } }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
   error?: { message?: string; type?: string; code?: string };
 };
 
 @Injectable()
 export class GroqProvider implements AIProvider {
+  private stripReasoning(value: string) {
+    return value.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<think>[\s\S]*$/gi, "").trim();
+  }
   private readonly apiKey = process.env.GROQ_API_KEY ?? "";
   private readonly endpoint = "https://api.groq.com/openai/v1/chat/completions";
   readonly defaultModel = process.env.GROQ_GENERAL_MODEL ?? process.env.GROQ_MODEL ?? "qwen/qwen3.6-27b";
@@ -35,6 +38,8 @@ export class GroqProvider implements AIProvider {
           temperature: options.temperature ?? 0.2,
           max_tokens: options.maxTokens ?? 1000,
           stream: options.stream ?? false,
+          ...(model.startsWith("qwen/") ? { reasoning_format: "hidden" } : {}),
+          ...(model.startsWith("openai/gpt-oss") ? { reasoning_effort: "none" } : {}),
           ...(options.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
         }),
         signal: AbortSignal.timeout(35_000),
@@ -57,7 +62,7 @@ export class GroqProvider implements AIProvider {
   async composeAnswerWithModel(input: AnswerInput, model: string) {
     const response = await this.request(model, advisorMessages(input), { temperature: 0.22, maxTokens: 1000 });
     const body = (await response.json()) as GroqChatResponse;
-    const content = body.choices?.[0]?.message?.content?.trim();
+    const content = this.stripReasoning(body.choices?.[0]?.message?.content ?? "").trim();
     if (!content) throw new AIUpstreamError("groq", "EMPTY_RESPONSE", 502, true);
     return content;
   }
@@ -90,7 +95,10 @@ export class GroqProvider implements AIProvider {
           let parsed: GroqChatResponse;
           try { parsed = JSON.parse(data) as GroqChatResponse; } catch { continue; }
           const chunk = parsed.choices?.[0]?.delta?.content;
-          if (typeof chunk === "string" && chunk) yield chunk;
+          if (typeof chunk === "string" && chunk) {
+            const safe = this.stripReasoning(chunk);
+            if (safe) yield safe;
+          }
         }
       }
       const tail = decoder.decode();
