@@ -55,9 +55,16 @@ type ImportBatch = {
 };
 
 type ImportPage = { items: ImportBatch[]; total: number };
-type AIHealth =
-  | Array<{ provider: string; configured: boolean; healthy: boolean; model?: string | null; errorCode?: string }>
-  | { provider?: string; configured?: boolean; healthy?: boolean; status?: string; model?: string | null; selectedModel?: string | null; errorCode?: string };
+type AIHealthItem = {
+  provider?: string;
+  configured?: boolean;
+  healthy?: boolean;
+  status?: string;
+  model?: string | null;
+  selectedModel?: string | null;
+  errorCode?: string;
+};
+type AIHealth = AIHealthItem | AIHealthItem[];
 
 type LeadSummary = { newLeads: number; highIntent: number; followUpsDue: number; thisWeek: number };
 
