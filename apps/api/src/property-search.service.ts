@@ -40,7 +40,18 @@ export class PropertySearchService {
         const key = `${plan.durationMonths ?? "x"}:${plan.name ?? ""}:${plan.installmentFrequency ?? ""}`;
         keyed.set(key, plan); // unit-level plan is later and overrides equivalent project plan
       }
-      const paymentPlans = [...keyed.values()];
+      const paymentPlans = [...keyed.values()].map(plan => {
+        const basePrice = unit.price == null ? null : Number(unit.price);
+        const explicit = plan.totalPriceOverride ?? plan.totalPrice;
+        const discountAmount = plan.discountAmount == null ? 0 : Number(plan.discountAmount);
+        const discountPercent = plan.discountPercent == null ? 0 : Number(plan.discountPercent);
+        const effectiveTotalPrice = explicit != null
+          ? Number(explicit)
+          : basePrice == null
+            ? null
+            : Math.max(0, basePrice - discountAmount - (basePrice * discountPercent / 100));
+        return { ...plan, effectiveTotalPrice };
+      });
       const bestPaymentPlan = chooseBestPaymentPlan(paymentPlans, unit.price, unit.currency, {
         preferredPaymentDurationMonths: intent?.preferredPaymentDurationMonths,
         maxDownPayment: intent?.maxDownPayment,

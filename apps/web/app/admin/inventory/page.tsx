@@ -15,6 +15,7 @@ type Unit = {
   project: { id: string; name: string; location?: { name: string } | null };
   developer: { id: string; name: string };
   sourceImport?: { id: string; name?: string | null; fileName: string } | null;
+  media?: Array<{ id: string; type: string; url: string; altTextAr?: string | null; altText?: string | null; isCover?: boolean }> | null;
 };
 type Page = { items: Unit[]; page: number; pageSize: number; total: number };
 export default function InventoryPage() {
@@ -33,6 +34,7 @@ export default function InventoryPage() {
   });
   const [selected, setSelected] = useState<string[]>([]);
   const [editing, setEditing] = useState<Unit | null>(null);
+  const [editingDetails, setEditingDetails] = useState<Unit | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const load = (page = 1) => {
@@ -49,6 +51,33 @@ export default function InventoryPage() {
   useEffect(() => {
     void load();
   }, []);
+  async function openEditor(unit: Unit) {
+    setEditing(unit);
+    setEditingDetails(null);
+    try {
+      const detail = await adminApi.get<Unit>(`/catalog/units/${unit.id}`);
+      setEditingDetails(detail);
+    } catch (e) {
+      setError(adminErrorMessage(e));
+    }
+  }
+  async function uploadUnitMedia(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!editing) return;
+    const form = new FormData(e.currentTarget);
+    form.append("unitId", editing.id);
+    try {
+      setBusy(true);
+      await adminApi.upload("/catalog/media", form);
+      const detail = await adminApi.get<Unit>(`/catalog/units/${editing.id}`);
+      setEditingDetails(detail);
+      e.currentTarget.reset();
+    } catch (err) {
+      setError(adminErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!editing) return;
@@ -264,7 +293,7 @@ export default function InventoryPage() {
                   </td>
                   <td className="p-3">
                     <button
-                      onClick={() => setEditing(unit)}
+                      onClick={() => void openEditor(unit)}
                       className="rounded-lg border p-2"
                     >
                       <Edit3 size={14} />
@@ -297,80 +326,47 @@ export default function InventoryPage() {
       </section>
       {editing && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4">
-          <form
-            onSubmit={save}
-            className="w-full max-w-xl rounded-2xl bg-white p-5"
-          >
+          <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-5">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-bold">
                 تعديل الوحدة <span dir="auto">{editing.externalUnitId}</span>
               </h2>
-              <button type="button" onClick={() => setEditing(null)}>
-                ×
-              </button>
+              <button type="button" onClick={() => { setEditing(null); setEditingDetails(null); }}>×</button>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="text-sm">
-                السعر
-                <input
-                  name="price"
-                  type="number"
-                  defaultValue={editing.price || ""}
-                  className="mt-1 h-11 w-full rounded-xl border px-3"
-                />
-              </label>
-              <label className="text-sm">
-                الحالة
-                <select
-                  name="status"
-                  defaultValue={editing.status}
-                  className="mt-1 h-11 w-full rounded-xl border px-3"
-                >
-                  {[
-                    "AVAILABLE",
-                    "RESERVED",
-                    "SOLD",
-                    "UNAVAILABLE",
-                    "CONTACT_SALES",
-                  ].map((x) => (
-                    <option key={x}>{x}</option>
-                  ))}
+            <form onSubmit={save}>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="text-sm">السعر<input name="price" type="number" defaultValue={editing.price || ""} className="mt-1 h-11 w-full rounded-xl border px-3"/></label>
+                <label className="text-sm">الحالة<select name="status" defaultValue={editing.status} className="mt-1 h-11 w-full rounded-xl border px-3">{["AVAILABLE","RESERVED","SOLD","UNAVAILABLE","CONTACT_SALES"].map((x) => <option key={x}>{x}</option>)}</select></label>
+                <label className="text-sm">نوع الوحدة<input name="unitType" defaultValue={editing.unitType || ""} className="mt-1 h-11 w-full rounded-xl border px-3"/></label>
+                <label className="text-sm">غرف النوم<input name="bedrooms" type="number" defaultValue={editing.bedrooms ?? ""} className="mt-1 h-11 w-full rounded-xl border px-3"/></label>
+                <label className="text-sm">المساحة المبنية<input name="builtUpArea" type="number" defaultValue={editing.builtUpArea || ""} className="mt-1 h-11 w-full rounded-xl border px-3"/></label>
+              </div>
+              <button disabled={busy} className="mt-5 h-11 w-full rounded-xl bg-forest font-bold text-white">حفظ التعديل وسجل التدقيق</button>
+            </form>
+
+            <div className="mt-5 border-t pt-4">
+              <h3 className="font-bold">صور الوحدة ومخططها</h3>
+              <p className="mt-1 text-xs text-[#68756f]">هذه الصور تخص الوحدة نفسها، وليست صور المشروع العامة. استخدم FLOOR_PLAN للمخطط الداخلي و IMAGE لصورة الوحدة.</p>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {(editingDetails?.media || []).map((media) => (
+                  <div key={media.id} className="overflow-hidden rounded-xl border">
+                    <img src={media.url} alt={media.altTextAr || media.altText || "صورة الوحدة"} className="h-24 w-full object-cover"/>
+                    <div className="p-2 text-[11px]">{media.type}</div>
+                  </div>
+                ))}
+              </div>
+              <form onSubmit={uploadUnitMedia} className="mt-3 grid gap-2 sm:grid-cols-2">
+                <input required name="file" type="file" accept="image/*" className="rounded-xl border p-2 text-sm"/>
+                <select name="type" defaultValue="FLOOR_PLAN" className="h-11 rounded-xl border px-3">
+                  <option value="FLOOR_PLAN">مخطط / تقسيم الوحدة</option>
+                  <option value="IMAGE">صورة الوحدة</option>
+                  <option value="MAP">خريطة مرتبطة بالوحدة</option>
                 </select>
-              </label>
-              <label className="text-sm">
-                نوع الوحدة
-                <input
-                  name="unitType"
-                  defaultValue={editing.unitType || ""}
-                  className="mt-1 h-11 w-full rounded-xl border px-3"
-                />
-              </label>
-              <label className="text-sm">
-                غرف النوم
-                <input
-                  name="bedrooms"
-                  type="number"
-                  defaultValue={editing.bedrooms ?? ""}
-                  className="mt-1 h-11 w-full rounded-xl border px-3"
-                />
-              </label>
-              <label className="text-sm">
-                المساحة المبنية
-                <input
-                  name="builtUpArea"
-                  type="number"
-                  defaultValue={editing.builtUpArea || ""}
-                  className="mt-1 h-11 w-full rounded-xl border px-3"
-                />
-              </label>
+                <input name="altTextAr" placeholder="وصف الصورة — مثال: تقسيم شقة 3 غرف" className="h-11 rounded-xl border px-3 sm:col-span-2"/>
+                <button disabled={busy} className="h-10 rounded-xl border border-forest font-bold text-forest sm:col-span-2">رفع صورة للوحدة</button>
+              </form>
             </div>
-            <button
-              disabled={busy}
-              className="mt-5 h-11 w-full rounded-xl bg-forest font-bold text-white"
-            >
-              حفظ التعديل وسجل التدقيق
-            </button>
-          </form>
+          </div>
         </div>
       )}
     </main>

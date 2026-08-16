@@ -1,10 +1,11 @@
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { Type } from "class-transformer";
-import { IsArray, IsBoolean, IsDateString, IsEmail, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUrl, MaxLength, Min } from "class-validator";
+import { IsArray, IsBoolean, IsDateString, IsEmail, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUrl, Max, MaxLength, Min } from "class-validator";
 import { AuditService } from "../audit.service";
 import { AdminAuthGuard } from "../auth/admin-auth.guard";
 import { PrismaService } from "../database/prisma.service";
+import { locateUnitOnMasterPlan } from "../providers/master-plan-vision";
 
 class DeveloperDetailsDto {
   @IsOptional() @IsString() @MaxLength(160) canonicalName?: string;
@@ -133,10 +134,25 @@ class ProjectGateDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) gateNumber?: number;
   @IsOptional() @Type(() => Number) @IsNumber() latitude?: number;
   @IsOptional() @Type(() => Number) @IsNumber() longitude?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) @Max(1) masterPlanX?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) @Max(1) masterPlanY?: number;
   @IsOptional() @IsString() googlePlaceId?: string;
   @IsOptional() @IsBoolean() isMain?: boolean;
   @IsOptional() @IsBoolean() isActive?: boolean;
   @IsOptional() @IsString() notes?: string;
+}
+class GateLocationDto {
+  @IsOptional() @Type(() => Number) @IsNumber() latitude?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() longitude?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) @Max(1) masterPlanX?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) @Max(1) masterPlanY?: number;
+  @IsIn(["GPS_MANUAL", "MASTER_PLAN_MANUAL", "IMPORT"]) source!: string;
+  @IsOptional() @IsBoolean() confirmed?: boolean;
+}
+type BoundaryPoint = { lat: number; lng: number };
+class ProjectBoundaryDto {
+  @IsArray() points!: BoundaryPoint[];
+  @IsIn(["GPS_MANUAL", "IMPORT"]) source!: string;
 }
 class ProjectZoneDto {
   @IsString() name!: string;
@@ -174,6 +190,18 @@ class UnitProximityDto {
   @IsOptional() @IsString() source?: string;
   @IsOptional() @IsBoolean() verified?: boolean;
   @IsOptional() @IsString() notes?: string;
+}
+
+class UnitMasterPlanLocationDto {
+  @IsIn(["SUGGEST", "CONFIRM", "REJECT", "CLEAR"]) action!: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) @Max(1) x?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) @Max(1) y?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) @Max(1) confidence?: number;
+  @IsOptional() @IsIn(["AI_VISION", "ADMIN_MANUAL", "IMPORT"]) source?: string;
+}
+class GateMasterPlanLocationDto {
+  @Type(() => Number) @IsNumber() @Min(0) @Max(1) x!: number;
+  @Type(() => Number) @IsNumber() @Min(0) @Max(1) y!: number;
 }
 
 @UseGuards(AdminAuthGuard)
@@ -242,7 +270,7 @@ export class RealEstateController {
   }
 
   @Get("projects/:id") project(@Param("id") id: string) {
-    return this.prisma.project.findUniqueOrThrow({ where: { id }, include: { developer: true, location: { include: { parent: true, aliases: true } }, amenities: { include: { amenity: true } }, gates: { orderBy: [{ isMain: "desc" }, { gateNumber: "asc" }, { name: "asc" }] }, zones: { include: { buildings: { orderBy: { name: "asc" } } }, orderBy: { name: "asc" } }, buildings: { include: { zone: true }, orderBy: { name: "asc" } }, investmentProfile: true, landmarks: { include: { location: true }, orderBy: { name: "asc" } }, competitorsFrom: { include: { competitorProject: { include: { developer: true, location: true } } } }, media: { orderBy: [{ isCover: "desc" }, { sortOrder: "asc" }] }, documents: { orderBy: { createdAt: "desc" } }, knowledgeItems: { where: { approvalStatus: "APPROVED" }, orderBy: { category: "asc" } }, _count: { select: { units: true, knowledgeItems: true } } } });
+    return this.prisma.project.findUniqueOrThrow({ where: { id }, include: { developer: true, location: { include: { parent: true, aliases: true } }, amenities: { include: { amenity: true } }, gates: { orderBy: [{ isMain: "desc" }, { gateNumber: "asc" }, { name: "asc" }] }, zones: { include: { buildings: { orderBy: { name: "asc" } } }, orderBy: { name: "asc" } }, buildings: { include: { zone: true }, orderBy: { name: "asc" } }, investmentProfile: true, landmarks: { include: { location: true }, orderBy: { name: "asc" } }, competitorsFrom: { include: { competitorProject: { include: { developer: true, location: true } } } }, media: { orderBy: [{ isCover: "desc" }, { sortOrder: "asc" }] }, documents: { orderBy: { createdAt: "desc" } }, paymentPlans: { where: { isActive: true }, orderBy: [{ durationMonths: "asc" }, { name: "asc" }] }, knowledgeItems: { where: { approvalStatus: "APPROVED" }, orderBy: { category: "asc" } }, _count: { select: { units: true, knowledgeItems: true } } } });
   }
   @Get("projects/:id/readiness") readiness(@Param("id") id: string) { return this.readinessFor(id); }
   @Patch("projects/:id") async updateProject(@Param("id") id: string, @Body() body: ProjectDetailsDto, @Req() req: any) {
@@ -291,7 +319,9 @@ export class RealEstateController {
   }
   @Post("projects/:id/gates") async createGate(@Param("id") projectId: string, @Body() body: ProjectGateDto, @Req() req: any) {
     if (body.isMain) await this.prisma.projectGate.updateMany({ where: { projectId }, data: { isMain: false } });
-    const item = await this.prisma.projectGate.create({ data: { ...body, projectId } });
+    const hasGps = body.latitude != null && body.longitude != null;
+    const hasPlan = body.masterPlanX != null && body.masterPlanY != null;
+    const item = await this.prisma.projectGate.create({ data: { ...body, projectId, locationSource: hasGps ? "GPS_MANUAL" : hasPlan ? "MASTER_PLAN_MANUAL" : undefined, confirmedAt: hasGps || hasPlan ? new Date() : undefined, confirmedByAdminId: hasGps || hasPlan ? req.admin.id : undefined } });
     await this.audit.record(req.admin.id, "PROJECT_GATE_CREATED", "ProjectGate", item.id, { projectId });
     return item;
   }
@@ -306,6 +336,51 @@ export class RealEstateController {
     await this.prisma.projectGate.delete({ where: { id } });
     await this.audit.record(req.admin.id, "PROJECT_GATE_DELETED", "ProjectGate", id);
     return { deleted: true };
+  }
+
+  @Patch("gates/:id/location") async setGateLocation(@Param("id") id: string, @Body() body: GateLocationDto, @Req() req: any) {
+    if (body.source === "GPS_MANUAL" && (body.latitude == null || body.longitude == null)) throw new BadRequestException("Latitude and longitude are required for GPS gate location.");
+    if (body.source === "MASTER_PLAN_MANUAL" && (body.masterPlanX == null || body.masterPlanY == null)) throw new BadRequestException("Master-plan x and y are required.");
+    const item = await this.prisma.projectGate.update({
+      where: { id },
+      data: {
+        latitude: body.latitude,
+        longitude: body.longitude,
+        masterPlanX: body.masterPlanX,
+        masterPlanY: body.masterPlanY,
+        locationSource: body.source,
+        confirmedAt: body.confirmed === false ? null : new Date(),
+        confirmedByAdminId: body.confirmed === false ? null : req.admin.id,
+      },
+    });
+    await this.audit.record(req.admin.id, "PROJECT_GATE_LOCATION_SET", "ProjectGate", id, { source: body.source, confirmed: body.confirmed !== false });
+    return item;
+  }
+
+  @Get("projects/:id/boundary") async boundary(@Param("id") projectId: string) {
+    const project = await this.prisma.project.findUniqueOrThrow({ where: { id: projectId }, select: { id: true, boundaryGeoJson: true, boundarySource: true, boundaryConfirmedAt: true } });
+    return project;
+  }
+
+  @Patch("projects/:id/boundary") async setBoundary(@Param("id") projectId: string, @Body() body: ProjectBoundaryDto, @Req() req: any) {
+    if (!Array.isArray(body.points) || body.points.length < 3) throw new BadRequestException("Project boundary requires at least 3 GPS points.");
+    const points = body.points.map((point, index) => {
+      const lat = Number((point as any)?.lat);
+      const lng = Number((point as any)?.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) throw new BadRequestException(`Invalid GPS boundary point at index ${index}.`);
+      return { lat, lng };
+    });
+    const ring = [...points.map(point => [point.lng, point.lat]), [points[0].lng, points[0].lat]];
+    const geoJson = { type: "Polygon", coordinates: [ring] } as Prisma.InputJsonValue;
+    const item = await this.prisma.project.update({ where: { id: projectId }, data: { boundaryGeoJson: geoJson, boundarySource: body.source, boundaryConfirmedAt: new Date(), boundaryConfirmedByAdminId: req.admin.id } });
+    await this.audit.record(req.admin.id, "PROJECT_BOUNDARY_CONFIRMED", "Project", projectId, { pointCount: points.length, source: body.source });
+    return { id: item.id, boundaryGeoJson: item.boundaryGeoJson, boundarySource: item.boundarySource, boundaryConfirmedAt: item.boundaryConfirmedAt };
+  }
+
+  @Delete("projects/:id/boundary") async clearBoundary(@Param("id") projectId: string, @Req() req: any) {
+    await this.prisma.project.update({ where: { id: projectId }, data: { boundaryGeoJson: Prisma.JsonNull, boundarySource: null, boundaryConfirmedAt: null, boundaryConfirmedByAdminId: null } });
+    await this.audit.record(req.admin.id, "PROJECT_BOUNDARY_CLEARED", "Project", projectId);
+    return { cleared: true };
   }
 
   @Post("projects/:id/zones") async createZone(@Param("id") projectId: string, @Body() body: ProjectZoneDto, @Req() req: any) {
@@ -361,6 +436,43 @@ export class RealEstateController {
     }
     const item = await this.prisma.unit.update({ where: { id }, data: body });
     await this.audit.record(req.admin.id, "UNIT_INTERNAL_LOCATION_UPDATED", "Unit", id);
+    return item;
+  }
+
+  @Post("projects/:id/master-plan/locate-unit/:unitId") async locateUnitOnPlan(@Param("id") projectId: string, @Param("unitId") unitId: string, @Req() req: any) {
+    const [unit, masterPlan] = await Promise.all([
+      this.prisma.unit.findFirstOrThrow({ where: { id: unitId, projectId }, select: { id: true, externalUnitId: true } }),
+      this.prisma.media.findFirst({ where: { projectId, type: "MASTER_PLAN" }, orderBy: [{ isCover: "desc" }, { sortOrder: "asc" }, { createdAt: "desc" }] }),
+    ]);
+    if (!masterPlan) throw new BadRequestException({ code: "MASTER_PLAN_NOT_FOUND", message: "ارفع صورة Master Plan للمشروع أولاً." });
+    const suggestion = await locateUnitOnMasterPlan(masterPlan.url, unit.externalUnitId);
+    if (!suggestion.found || suggestion.x == null || suggestion.y == null) return { found: false, confidence: suggestion.confidence ?? 0, matchedLabel: suggestion.matchedLabel ?? null };
+    const updated = await this.prisma.unit.update({
+      where: { id: unit.id },
+      data: { masterPlanX: suggestion.x, masterPlanY: suggestion.y, masterPlanLocationStatus: "SUGGESTED", masterPlanLocationSource: "AI_VISION", masterPlanConfidence: suggestion.confidence ?? null, masterPlanConfirmedAt: null, masterPlanConfirmedByAdminId: null },
+    });
+    await this.audit.record(req.admin.id, "UNIT_MASTER_PLAN_SUGGESTED", "Unit", unit.id, { projectId, confidence: suggestion.confidence ?? null, matchedLabel: suggestion.matchedLabel ?? null });
+    return { found: true, x: Number(updated.masterPlanX), y: Number(updated.masterPlanY), confidence: suggestion.confidence ?? null, matchedLabel: suggestion.matchedLabel ?? null };
+  }
+
+  @Patch("units/:id/master-plan-location") async setUnitMasterPlanLocation(@Param("id") id: string, @Body() body: UnitMasterPlanLocationDto, @Req() req: any) {
+    const current = await this.prisma.unit.findUniqueOrThrow({ where: { id } });
+    if ((body.action === "SUGGEST" || body.action === "CONFIRM") && (body.x == null || body.y == null)) throw new BadRequestException("x and y are required");
+    const data = body.action === "CLEAR"
+      ? { masterPlanX: null, masterPlanY: null, masterPlanLocationStatus: "UNLOCATED", masterPlanLocationSource: null, masterPlanConfidence: null, masterPlanConfirmedAt: null, masterPlanConfirmedByAdminId: null }
+      : body.action === "REJECT"
+        ? { masterPlanLocationStatus: "UNLOCATED", masterPlanLocationSource: null, masterPlanConfidence: null, masterPlanConfirmedAt: null, masterPlanConfirmedByAdminId: null }
+        : body.action === "CONFIRM"
+          ? { masterPlanX: body.x, masterPlanY: body.y, masterPlanLocationStatus: "CONFIRMED", masterPlanLocationSource: body.source ?? "ADMIN_MANUAL", masterPlanConfidence: body.confidence ?? current.masterPlanConfidence, masterPlanConfirmedAt: new Date(), masterPlanConfirmedByAdminId: req.admin.id }
+          : { masterPlanX: body.x, masterPlanY: body.y, masterPlanLocationStatus: "SUGGESTED", masterPlanLocationSource: body.source ?? "ADMIN_MANUAL", masterPlanConfidence: body.confidence ?? null, masterPlanConfirmedAt: null, masterPlanConfirmedByAdminId: null };
+    const item = await this.prisma.unit.update({ where: { id }, data });
+    await this.audit.record(req.admin.id, `UNIT_MASTER_PLAN_${body.action}`, "Unit", id, { x: body.x, y: body.y, source: body.source });
+    return item;
+  }
+
+  @Patch("gates/:id/master-plan-location") async setGateMasterPlanLocation(@Param("id") id: string, @Body() body: GateMasterPlanLocationDto, @Req() req: any) {
+    const item = await this.prisma.projectGate.update({ where: { id }, data: { masterPlanX: body.x, masterPlanY: body.y, locationSource: "MASTER_PLAN_MANUAL", confirmedAt: new Date(), confirmedByAdminId: req.admin.id } });
+    await this.audit.record(req.admin.id, "GATE_MASTER_PLAN_LOCATION_UPDATED", "ProjectGate", id, body);
     return item;
   }
 

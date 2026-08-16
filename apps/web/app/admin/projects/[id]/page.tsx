@@ -565,6 +565,9 @@ export default function ProjectDetails({
       "downPaymentAmount",
       "downPaymentPercent",
       "totalPrice",
+      "totalPriceOverride",
+      "discountAmount",
+      "discountPercent",
       "installmentAmount",
       "maintenanceAmount",
       "maintenancePercent",
@@ -1405,8 +1408,9 @@ export default function ProjectDetails({
       <section className="mt-6 grid gap-4 lg:grid-cols-2">
         <div className="rounded-2xl border bg-white p-5">
           <h2 className="font-bold">
-            الوسائط
+            صور المشروع العامة
           </h2>
+          <p className="mt-1 text-xs text-[#68756f]">صور الكمباوند والـ Master Plan والخريطة فقط. صور ومخططات كل وحدة تُرفع من صفحة المخزون على الوحدة نفسها.</p>
 
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
             {projectMedia.map(
@@ -1521,9 +1525,6 @@ export default function ProjectDetails({
             >
               <option value="IMAGE">
                 صورة
-              </option>
-              <option value="FLOOR_PLAN">
-                مخطط وحدة
               </option>
               <option value="MASTER_PLAN">
                 Master plan
@@ -1641,8 +1642,7 @@ export default function ProjectDetails({
         </h2>
 
         <p className="mt-1 text-sm text-[#68756f]">
-          تُدار من المشروع مباشرة ولا
-          تُنشأ تلقائياً من Excel.
+          اكتب سعر الوحدة الأساسي مرة واحدة في المخزون، ثم عرّف لكل مدة سداد المقدم والخصم أو السعر النهائي فقط. الخطة تُطبّق على كل وحدات المشروع ما لم توجد خطة خاصة بالوحدة.
         </p>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -1661,15 +1661,14 @@ export default function ProjectDetails({
                 </p>
 
                 <p className="mt-1 text-xs text-[#68756f]">
-                  {plan.durationMonths
-                    ? `${plan.durationMonths} شهر`
-                    : "مدة غير محددة"}
-
-                  {" · "}
-
-                  {plan.currency ||
-                    "EGP"}
+                  {plan.durationMonths ? `${plan.durationMonths} شهر` : "مدة غير محددة"}
+                  {" · "}{plan.currency || "EGP"}
                 </p>
+                {(plan.discountPercent || plan.discountAmount || plan.totalPriceOverride || plan.totalPrice) && (
+                  <p className="mt-2 rounded-lg bg-[#f5f4ef] p-2 text-xs">
+                    {plan.discountPercent ? `خصم ${Number(plan.discountPercent)}% من سعر الوحدة` : plan.discountAmount ? `خصم ${Number(plan.discountAmount).toLocaleString("en")} ${plan.currency || "EGP"}` : plan.totalPriceOverride || plan.totalPrice ? `سعر نهائي ثابت ${Number(plan.totalPriceOverride || plan.totalPrice).toLocaleString("en")} ${plan.currency || "EGP"}` : ""}
+                  </p>
+                )}
               </div>
             ),
           )}
@@ -1715,11 +1714,30 @@ export default function ProjectDetails({
           />
 
           <input
-            name="totalPrice"
+            name="totalPriceOverride"
             type="number"
             min="0"
             step="any"
-            placeholder="السعر الإجمالي إن كان ثابتاً"
+            placeholder="سعر نهائي ثابت للخطة (اختياري)"
+            className="h-11 rounded-xl border px-3"
+          />
+
+          <input
+            name="discountPercent"
+            type="number"
+            min="0"
+            max="100"
+            step="any"
+            placeholder="خصم % من سعر الوحدة"
+            className="h-11 rounded-xl border px-3"
+          />
+
+          <input
+            name="discountAmount"
+            type="number"
+            min="0"
+            step="any"
+            placeholder="خصم مبلغ ثابت"
             className="h-11 rounded-xl border px-3"
           />
 
@@ -1837,7 +1855,7 @@ export default function ProjectDetails({
         </form>
       </section>
 
-      <ProjectSpatialEditor projectId={id} />
+      <ProjectSpatialEditor projectId={id} media={projectMedia as any[]} />
     </main>
   );
 }

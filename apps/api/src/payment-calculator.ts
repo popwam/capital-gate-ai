@@ -8,6 +8,9 @@ export type PaymentPlanLike = {
   installmentAmount?: unknown;
   installmentFrequency?: string | null;
   totalPrice?: unknown;
+  totalPriceOverride?: unknown;
+  discountAmount?: unknown;
+  discountPercent?: unknown;
   currency?: string | null;
   maintenanceAmount?: unknown;
   maintenancePercent?: unknown;
@@ -27,7 +30,13 @@ function paymentsPerYear(frequency?: string | null) {
 
 export function quotePaymentPlan(plan: PaymentPlanLike, unitPrice: unknown, unitCurrency?: string | null) {
   const basePrice = num(unitPrice) ?? 0;
-  const totalPrice = num(plan.totalPrice) ?? basePrice;
+  const fixedTotalPrice = num(plan.totalPriceOverride) ?? num(plan.totalPrice);
+  const discountAmount = Math.max(0, num(plan.discountAmount) ?? 0);
+  const discountPercent = Math.max(0, num(plan.discountPercent) ?? 0);
+  const calculatedDiscount = fixedTotalPrice == null
+    ? discountAmount + (basePrice * discountPercent / 100)
+    : Math.max(0, basePrice - fixedTotalPrice);
+  const totalPrice = fixedTotalPrice ?? Math.max(0, basePrice - calculatedDiscount);
   const dpPercent = num(plan.downPaymentPercent);
   const explicitDp = num(plan.downPaymentAmount) ?? num(plan.downPayment);
   const downPaymentAmount = explicitDp ?? (dpPercent != null ? totalPrice * dpPercent / 100 : null);
@@ -51,6 +60,10 @@ export function quotePaymentPlan(plan: PaymentPlanLike, unitPrice: unknown, unit
     installmentFrequency: plan.installmentFrequency ?? "MONTHLY",
     monthlyEquivalent,
     maintenanceAmount,
+    basePrice,
+    discountAmount: calculatedDiscount,
+    discountPercent: basePrice > 0 ? calculatedDiscount / basePrice * 100 : discountPercent,
+    calculatedTotalPrice: fixedTotalPrice == null,
     calculatedDownPayment: explicitDp == null && dpPercent != null,
     calculatedInstallment: explicitInstallment == null && installmentAmount != null,
   };

@@ -106,6 +106,9 @@ class PaymentPlanDto {
   @IsOptional() @Type(() => Number) @IsNumber() downPaymentAmount?: number;
   @IsOptional() @Type(() => Number) @IsNumber() downPaymentPercent?: number;
   @IsOptional() @Type(() => Number) @IsNumber() totalPrice?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() totalPriceOverride?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() discountAmount?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() discountPercent?: number;
   @IsOptional() @IsIn(["MONTHLY", "QUARTERLY", "SEMI_ANNUAL", "ANNUAL", "CUSTOM"]) installmentFrequency?: string;
   @IsOptional() @IsIn(["EGP", "USD", "EUR", "AED", "SAR", "GBP"]) currency?: string;
   @IsOptional() @Type(() => Number) @IsNumber() maintenanceAmount?: number;

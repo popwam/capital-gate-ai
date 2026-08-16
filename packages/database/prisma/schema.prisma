@@ -220,6 +220,11 @@ model Project {
   googlePlaceId       String?
   latitude            Decimal?               @db.Decimal(10, 7)
   longitude           Decimal?               @db.Decimal(10, 7)
+  boundaryGeoJson     Json?
+  boundarySource      String?
+  boundaryConfirmedAt DateTime?
+  boundaryConfirmedByAdminId String?
+  boundaryConfirmedBy AdminUser?             @relation("ProjectBoundaryConfirmation", fields: [boundaryConfirmedByAdminId], references: [id], onDelete: SetNull)
   projectStatus       String?
   projectType         String?
   deliveryInformation String?
@@ -335,6 +340,14 @@ model Unit {
   offerText             String?
   latitude              Decimal?           @db.Decimal(10, 7)
   longitude             Decimal?           @db.Decimal(10, 7)
+  masterPlanX           Decimal?           @db.Decimal(7, 6)
+  masterPlanY           Decimal?           @db.Decimal(7, 6)
+  masterPlanLocationStatus String           @default("UNLOCATED")
+  masterPlanLocationSource String?
+  masterPlanConfidence  Decimal?           @db.Decimal(4, 3)
+  masterPlanConfirmedAt DateTime?
+  masterPlanConfirmedByAdminId String?
+  masterPlanConfirmedBy AdminUser?          @relation("MasterPlanUnitConfirmation", fields: [masterPlanConfirmedByAdminId], references: [id], onDelete: SetNull)
   internalLocationDescription String?
   projectZoneId         String?
   projectZone           ProjectZone?        @relation(fields: [projectZoneId], references: [id], onDelete: SetNull)
@@ -372,10 +385,16 @@ model ProjectGate {
   gateNumber    Int?
   latitude      Decimal? @db.Decimal(10, 7)
   longitude     Decimal? @db.Decimal(10, 7)
+  masterPlanX   Decimal? @db.Decimal(7, 6)
+  masterPlanY   Decimal? @db.Decimal(7, 6)
   googlePlaceId String?
   isMain        Boolean  @default(false)
   isActive      Boolean  @default(true)
   notes         String?
+  locationSource String?
+  confirmedAt   DateTime?
+  confirmedByAdminId String?
+  confirmedBy   AdminUser? @relation("ProjectGateConfirmation", fields: [confirmedByAdminId], references: [id], onDelete: SetNull)
   proximities   UnitProximity[]
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -476,6 +495,9 @@ model PaymentPlan {
   downPaymentAmount Decimal? @db.Decimal(16, 2)
   downPaymentPercent Decimal? @db.Decimal(7, 4)
   totalPrice        Decimal? @db.Decimal(16, 2)
+  totalPriceOverride Decimal? @db.Decimal(16, 2)
+  discountAmount    Decimal? @db.Decimal(16, 2)
+  discountPercent   Decimal? @db.Decimal(7, 4)
   installmentFrequency String?
   currency          String?
   maintenanceAmount Decimal? @db.Decimal(16, 2)
@@ -849,6 +871,9 @@ model AdminUser {
   verifiedLocationDistances LocationDistance[]
   verifiedPortfolioProjects DeveloperProjectPortfolio[]
   verifiedInvestmentProfiles ProjectInvestmentProfile[]
+  confirmedMasterPlanUnits Unit[] @relation("MasterPlanUnitConfirmation")
+  confirmedProjectBoundaries Project[] @relation("ProjectBoundaryConfirmation")
+  confirmedProjectGates ProjectGate[] @relation("ProjectGateConfirmation")
 }
 
 model DeveloperProjectPortfolio {
