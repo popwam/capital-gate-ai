@@ -230,17 +230,60 @@ export class RealEstateController {
   }
 
   @Get("dashboard") async dashboard() {
-    const [units, availableUnits, projects, developers, activeImports, importsNeedingInput, newLeads, followUps] = await this.prisma.$transaction([
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const [
+      units,
+      availableUnits,
+      reservedUnits,
+      soldUnits,
+      unavailableUnits,
+      projects,
+      developers,
+      activeImports,
+      importsNeedingInput,
+      newLeads,
+      followUps,
+      mappedUnits,
+      projectsWithBoundary,
+      activePaymentPlans,
+      pendingKnowledge,
+      conversations24h,
+    ] = await this.prisma.$transaction([
       this.prisma.unit.count({ where: { archivedAt: null } }),
       this.prisma.unit.count({ where: { archivedAt: null, status: "AVAILABLE" } }),
+      this.prisma.unit.count({ where: { archivedAt: null, status: "RESERVED" } }),
+      this.prisma.unit.count({ where: { archivedAt: null, status: "SOLD" } }),
+      this.prisma.unit.count({ where: { archivedAt: null, status: "UNAVAILABLE" } }),
       this.prisma.project.count({ where: { adminStatus: { not: "ARCHIVED" } } }),
       this.prisma.developer.count(),
       this.prisma.dataImport.count({ where: { status: { in: ["UPLOADED", "ANALYZING", "READY", "IMPORTING"] } } }),
       this.prisma.dataImport.count({ where: { status: "NEEDS_INPUT" } }),
       this.prisma.lead.count({ where: { status: "NEW" } }),
       this.prisma.lead.count({ where: { followUpAt: { lte: new Date() }, status: { notIn: ["WON", "LOST"] } } }),
+      this.prisma.unit.count({ where: { archivedAt: null, masterPlanLocationStatus: "CONFIRMED" } }),
+      this.prisma.project.count({ where: { adminStatus: { not: "ARCHIVED" }, boundaryConfirmedAt: { not: null } } }),
+      this.prisma.paymentPlan.count({ where: { isActive: true } }),
+      this.prisma.projectKnowledgeItem.count({ where: { approvalStatus: "PENDING" } }),
+      this.prisma.conversation.count({ where: { updatedAt: { gte: since24h } } }),
     ]);
-    return { units, availableUnits, projects, developers, activeImports, importsNeedingInput, newLeads, followUps };
+    return {
+      units,
+      availableUnits,
+      reservedUnits,
+      soldUnits,
+      unavailableUnits,
+      projects,
+      developers,
+      activeImports,
+      importsNeedingInput,
+      newLeads,
+      followUps,
+      mappedUnits,
+      projectsWithBoundary,
+      activePaymentPlans,
+      pendingKnowledge,
+      conversations24h,
+    };
   }
 
   @Get("developers/:id") developer(@Param("id") id: string) {
