@@ -1,106 +1,24 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Activity, CheckCircle2, XCircle } from "lucide-react";
+
+import { useEffect, useMemo, useState } from "react";
+import { Activity, Bot, CheckCircle2, CircleAlert, Gauge, Server, TimerReset } from "lucide-react";
 import { adminApi, adminErrorMessage } from "@/lib/api";
-type Health = {
-  provider: string;
-  configured: boolean;
-  healthy: boolean;
-  model: string | null;
-  errorCode?: string;
-};
-type Usage = {
-  periodDays: number;
-  byProvider: Array<{
-    provider: string;
-    success: boolean;
-    _count: { _all: number };
-    _avg: { latencyMs: number | null };
-  }>;
-};
+
+type Health = { provider: string; configured: boolean; healthy: boolean; model?: string | null; errorCode?: string };
+type Usage = { periodDays: number; byProvider: Array<{ provider: string; success: boolean; _count: { _all: number }; _avg: { latencyMs: number | null } }> };
+
 export default function SystemPage() {
-  const [health, setHealth] = useState<Health[]>([]);
-  const [usage, setUsage] = useState<Usage | null>(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    Promise.all([
-      adminApi.get<Health[]>("/system/ai-health"),
-      adminApi.get<Usage>("/system/ai-usage"),
-    ])
-      .then(([h, u]) => {
-        setHealth(h);
-        setUsage(u);
-      })
-      .catch((e) => setError(adminErrorMessage(e)));
-  }, []);
-  return (
-    <main className="min-h-screen bg-[#f6f5f1]" dir="rtl">
-      <header className="border-b bg-white px-5 py-5">
-        <div className="mx-auto max-w-6xl">
-          <h1 className="flex items-center gap-2 text-2xl font-bold">
-            <Activity />
-            حالة النظام والذكاء الاصطناعي
-          </h1>
-          <p className="mt-2 text-sm text-[#68756f]">
-            معلومات آمنة عن التهيئة والصحة بدون عرض أي مفاتيح سرية.
-          </p>
-        </div>
-      </header>
-      <section className="mx-auto max-w-6xl p-5">
-        {error && (
-          <div className="rounded-xl bg-red-50 p-4 text-red-800">{error}</div>
-        )}
-        <div className="grid gap-4 md:grid-cols-3">
-          {health.map((item) => (
-            <div
-              key={item.provider}
-              className="rounded-2xl border bg-white p-5"
-            >
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-bold">{item.provider}</h2>
-                {item.healthy ? (
-                  <CheckCircle2 className="text-green-700" />
-                ) : (
-                  <XCircle className="text-red-700" />
-                )}
-              </div>
-              <p className="mt-4 text-sm" dir="auto">
-                {item.model || "غير مهيأ"}
-              </p>
-              <p className="mt-2 text-xs text-[#78847e]">
-                مهيأ: {item.configured ? "نعم" : "لا"} · سليم:{" "}
-                {item.healthy ? "نعم" : "لا"}
-              </p>
-              {item.errorCode && (
-                <p className="mt-2 rounded-lg bg-red-50 p-2 text-xs text-red-700">
-                  {item.errorCode}
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
-        <div className="mt-6 rounded-2xl border bg-white p-5">
-          <h2 className="font-bold">
-            استخدام آخر {usage?.periodDays || 7} أيام
-          </h2>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {usage?.byProvider.map((row, i) => (
-              <div
-                key={`${row.provider}-${i}`}
-                className="rounded-xl bg-[#f0f2ef] p-4"
-              >
-                <p className="font-bold">{row.provider}</p>
-                <p className="mt-1 text-sm">
-                  {row.success ? "ناجح" : "فشل"}: {row._count._all}
-                </p>
-                <p className="text-xs text-[#78847e]">
-                  متوسط {Math.round(row._avg.latencyMs || 0)} ms
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-    </main>
-  );
+  const [health,setHealth]=useState<Health[]>([]); const [usage,setUsage]=useState<Usage|null>(null); const [error,setError]=useState("");
+  useEffect(()=>{Promise.all([adminApi.get<Health[]>("/system/ai-health"),adminApi.get<Usage>("/system/ai-usage")]).then(([h,u])=>{setHealth(Array.isArray(h)?h:[h]);setUsage(u)}).catch(e=>setError(adminErrorMessage(e)))},[]);
+  const totalRequests = useMemo(()=>usage?.byProvider.reduce((n,x)=>n+x._count._all,0)??0,[usage]);
+  const failures = useMemo(()=>usage?.byProvider.filter(x=>!x.success).reduce((n,x)=>n+x._count._all,0)??0,[usage]);
+  const avgLatency = useMemo(()=>{const values=(usage?.byProvider??[]).map(x=>x._avg.latencyMs).filter((x):x is number=>typeof x==="number");return values.length?Math.round(values.reduce((a,b)=>a+b,0)/values.length):0},[usage]);
+  return <main className="mx-auto max-w-[1480px] p-4 sm:p-6 lg:p-8" dir="rtl">
+    <section className="rounded-[24px] border border-[#dfe4e0] bg-white p-5 sm:p-6"><div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl bg-[#eaf2ee] text-[#315f50]"><Activity size={20}/></span><div><h2 className="text-[24px] font-bold">حالة النظام والذكاء الاصطناعي</h2><p className="mt-1 text-[13px] text-[#74817b]">صحة الموديلات والاستخدام بدون عرض أي مفاتيح أو بيانات سرية.</p></div></div></section>
+    {error&&<div className="mt-4 rounded-2xl border border-red-100 bg-red-50 p-4 text-[13px] text-red-800">{error}</div>}
+    <section className="mt-5 grid gap-3 sm:grid-cols-3"><Stat icon={Server} label="طلبات AI" value={totalRequests.toLocaleString("ar-EG")} hint={`آخر ${usage?.periodDays??0} يوم`}/><Stat icon={CircleAlert} label="طلبات فاشلة" value={failures.toLocaleString("ar-EG")} hint="مجمعة من سجل الاستخدام" warn={failures>0}/><Stat icon={TimerReset} label="متوسط الاستجابة" value={avgLatency?`${avgLatency} ms`:"—"} hint="متوسط تقريبي للمزودين"/></section>
+    <section className="mt-5 grid gap-4 lg:grid-cols-3">{health.map(item=><div key={item.provider} className="rounded-[22px] border border-[#dfe4e0] bg-white p-5"><div className="flex items-start justify-between gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-[#eef3f0] text-[#3a6556]"><Bot size={18}/></span>{item.healthy?<span className="flex items-center gap-1 rounded-full bg-[#e8f5ed] px-2.5 py-1 text-[11px] font-bold text-[#26704f]"><CheckCircle2 size={13}/> سليم</span>:<span className="flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-bold text-red-700"><CircleAlert size={13}/> يحتاج مراجعة</span>}</div><h3 className="mt-4 text-[16px] font-bold" dir="auto">{item.provider}</h3><p className="mt-1 truncate text-[12px] text-[#7c8882]" dir="auto">{item.model||"الموديل حسب الإعداد"}</p><div className="mt-4 grid grid-cols-2 gap-2 text-[12px]"><div className="rounded-xl bg-[#f6f8f6] p-3"><span className="text-[#82908a]">التهيئة</span><b className="mt-1 block">{item.configured?"مكتملة":"غير مكتملة"}</b></div><div className="rounded-xl bg-[#f6f8f6] p-3"><span className="text-[#82908a]">الصحة</span><b className="mt-1 block">{item.healthy?"متصل":"غير متصل"}</b></div></div>{item.errorCode&&<p className="mt-3 rounded-xl bg-[#fff5e8] p-3 text-[11px] text-[#8c611f]" dir="auto">{item.errorCode}</p>}</div>)}</section>
+    <section className="mt-5 rounded-[24px] border border-[#dfe4e0] bg-white"><div className="border-b px-5 py-4 sm:px-6"><h3 className="font-bold">الاستخدام حسب المزود</h3><p className="mt-1 text-[12px] text-[#7b8781]">إجمالي الطلبات والنجاح ومتوسط زمن الاستجابة.</p></div><div className="overflow-x-auto"><table className="w-full min-w-[680px] text-right text-[13px]"><thead className="bg-[#fafbf9] text-[#718079]"><tr><th className="px-5 py-3">المزود</th><th className="px-5 py-3">الحالة</th><th className="px-5 py-3">الطلبات</th><th className="px-5 py-3">متوسط الزمن</th></tr></thead><tbody className="divide-y">{(usage?.byProvider??[]).map((row,i)=><tr key={`${row.provider}-${row.success}-${i}`}><td className="px-5 py-3 font-bold" dir="auto">{row.provider}</td><td className="px-5 py-3">{row.success?"نجاح":"فشل"}</td><td className="px-5 py-3">{row._count._all.toLocaleString("ar-EG")}</td><td className="px-5 py-3">{row._avg.latencyMs?`${Math.round(row._avg.latencyMs)} ms`:"—"}</td></tr>)}</tbody></table></div></section>
+  </main>
 }
+function Stat({icon:Icon,label,value,hint,warn=false}:{icon:typeof Gauge;label:string;value:string;hint:string;warn?:boolean}){return <div className="rounded-[22px] border border-[#dfe4e0] bg-white p-4"><div className="flex items-center justify-between"><span className={`grid h-10 w-10 place-items-center rounded-xl ${warn?"bg-[#fff2e2] text-[#9a681f]":"bg-[#eef3f0] text-[#3b6557]"}`}><Icon size={18}/></span></div><p className="mt-4 text-[25px] font-bold">{value}</p><p className="mt-1 text-[13px] font-bold">{label}</p><p className="mt-1 text-[11px] text-[#7d8983]">{hint}</p></div>}

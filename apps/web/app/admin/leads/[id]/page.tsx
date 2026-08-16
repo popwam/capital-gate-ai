@@ -8,7 +8,6 @@ import {
   Phone,
   UserRound,
 } from "lucide-react";
-import { LogoMark } from "@/components/logo";
 import { adminApi } from "@/lib/api";
 const statuses = [
   "NEW",
@@ -75,16 +74,7 @@ export default function LeadDetail({
     );
   const s = lead.summary || {};
   return (
-    <main className="min-h-screen bg-[#f6f5f1]">
-      <header className="flex h-16 items-center justify-between border-b bg-white px-5">
-        <LogoMark />
-        <a
-          href="/admin/leads"
-          className="flex items-center gap-2 text-[9px] font-bold"
-        >
-          <ArrowLeft size={13} /> All leads
-        </a>
-      </header>
+    <main className="mx-auto max-w-[1480px] p-4 sm:p-6 lg:p-8" dir="rtl">
       <div className="mx-auto max-w-6xl p-4 sm:p-7">
         {error && (
           <div className="mb-4 rounded-xl bg-[#fbe9e5] p-3 text-[9px]">

@@ -118,16 +118,11 @@ export default function InventoryPage() {
     }
   }
   return (
-    <main className="min-h-screen bg-[#f6f5f1]" dir="rtl">
-      <header className="border-b bg-white px-5 py-5">
-        <div className="mx-auto max-w-7xl">
-          <h1 className="text-2xl font-bold">المخزون العقاري</h1>
-          <p className="mt-2 text-sm text-[#68756f]">
-            بحث وتعديل الوحدات المعتمدة مع سجل أسعار وإجراءات جماعية آمنة.
-          </p>
-        </div>
-      </header>
-      <section className="mx-auto max-w-7xl p-4 sm:p-7">
+    <main className="mx-auto max-w-[1480px] p-4 sm:p-6 lg:p-8" dir="rtl">
+      <section className="mb-5 rounded-[24px] border border-[#dfe4e0] bg-white p-5 sm:p-6">
+        <h2 className="text-[24px] font-bold">المخزون العقاري</h2><p className="mt-1 text-[13px] text-[#74817b]">ابحث وعدّل الوحدات، الأسعار، الحالة، خطط السداد والموقع داخل المستر بلان.</p>
+      </section>
+      <section>
         {error && (
           <div className="mb-4 rounded-xl bg-red-50 p-4 text-sm text-red-800">
             {error}

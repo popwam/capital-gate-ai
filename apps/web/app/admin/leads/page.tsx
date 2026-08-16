@@ -1,7 +1,6 @@
 "use client";
 import { FormEvent, useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, Filter, Search, Users } from "lucide-react";
-import { LogoMark } from "@/components/logo";
+import { ArrowRight, Filter, Search, Users } from "lucide-react";
 import { adminApi } from "@/lib/api";
 
 type Lead = {
@@ -101,39 +100,13 @@ export default function LeadsPage() {
     void load(1);
   }
   return (
-    <main className="min-h-screen bg-[#f6f5f1]">
-      <header className="flex h-16 items-center justify-between border-b bg-white px-5">
-        <LogoMark />
-        <a
-          href="/"
-          className="flex items-center gap-2 text-[9px] font-bold text-[#66736d]"
-        >
-          <ArrowLeft size={13} /> Customer app
-        </a>
-      </header>
-      <div className="mx-auto max-w-[1450px] p-4 sm:p-7">
-        <div className="flex items-end justify-between gap-4">
-          <div>
-            <p className="text-[9px] font-bold uppercase tracking-[.15em] text-coral">
-              Internal CRM
-            </p>
-            <h1 className="mt-2 text-[27px] font-bold tracking-[-.04em]">
-              Leads
-            </h1>
-            <p className="mt-1 text-[9px] text-[#78837e]">
-              {data.total} leads generated from verified customer conversations
-            </p>
-          </div>
-          <div className="grid h-11 w-11 place-items-center rounded-2xl bg-[#e3eee8] text-forest">
-            <Users size={19} />
-          </div>
-        </div>
-        <form
-          onSubmit={submit}
-          className="mt-6 rounded-[20px] border bg-white p-4"
-        >
+    <main className="mx-auto max-w-[1480px] p-4 sm:p-6 lg:p-8" dir="rtl">
+      <section className="rounded-[24px] border border-[#dfe4e0] bg-white p-5 sm:p-6">
+        <div className="flex items-end justify-between gap-4"><div><div className="flex items-center gap-2 text-[12px] font-bold text-[#4f7568]"><Users size={16}/> إدارة فرص البيع</div><h2 className="mt-2 text-[24px] font-bold">العملاء المحتملون</h2><p className="mt-1 text-[13px] text-[#74817b]">{data.total} فرصة ناتجة من محادثات العملاء، مع المتابعة والتعيين وسياق الاهتمام.</p></div></div>
+      </section>
+        <form onSubmit={submit} className="mt-5 rounded-[22px] border border-[#dfe4e0] bg-white p-4">
           <div className="flex items-center gap-2 text-[9px] font-bold">
-            <Filter size={13} /> Search and filters
+            <Filter size={13} /> البحث والفلاتر
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
             <label className="relative sm:col-span-2">
@@ -146,7 +119,7 @@ export default function LeadsPage() {
                 onChange={(e) =>
                   setFilters({ ...filters, search: e.target.value })
                 }
-                placeholder="Name, phone, project or unit"
+                placeholder="الاسم، الهاتف، المشروع أو الوحدة"
                 className="h-10 w-full rounded-xl border pl-9 pr-3 text-[9px]"
               />
             </label>

@@ -97,32 +97,20 @@ export default function DataPage() {
     }
   }
   return (
-    <main className="min-h-screen bg-[#f6f5f1]" dir="rtl">
-      <header className="border-b bg-white px-5 py-5">
-        <div className="mx-auto max-w-7xl">
-          <h1 className="text-2xl font-bold">إدارة البيانات والاستيراد</h1>
-          <p className="mt-2 text-sm text-[#68756f]">
-            تاريخ كامل لكل دفعة، ومراجعة التحديثات، والتراجع الآمن مع الحفاظ على
-            المصدر.
-          </p>
+    <main className="mx-auto max-w-[1480px] p-4 sm:p-6 lg:p-8" dir="rtl">
+      <section className="mb-5 rounded-[24px] border border-[#dfe4e0] bg-white p-5 sm:p-6">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+          <div><h2 className="text-[24px] font-bold">إدارة البيانات والاستيراد</h2><p className="mt-1 text-[13px] text-[#74817b]">تاريخ كل دفعة، التحديثات، المصدر، والتراجع الآمن بدون فقد بيانات.</p></div>
+          <a href="/admin/data/import" className="flex h-11 items-center justify-center gap-2 rounded-xl bg-forest px-4 text-[13px] font-bold text-white"><Upload size={16}/>استيراد ملف جديد</a>
         </div>
-      </header>
-      <section className="mx-auto max-w-7xl p-4 sm:p-7">
+      </section>
+      <section>
         {error && (
           <div className="mb-4 rounded-xl bg-red-50 p-4 text-sm text-red-800">
             {error}
           </div>
         )}
-        <div className="mb-4 flex items-center justify-between">
-          <p className="text-sm font-bold">{page.total} دفعة</p>
-          <a
-            href="/admin/data/import"
-            className="flex h-10 items-center gap-2 rounded-xl bg-forest px-4 text-sm font-bold text-white"
-          >
-            <Upload size={16} />
-            استيراد ملف جديد
-          </a>
-        </div>
+        <div className="mb-4 flex items-center justify-between"><p className="text-[13px] font-bold">{page.total} دفعة</p><p className="text-[12px] text-[#7b8781]">XLSX · XLS · CSV</p></div>
         <input
           ref={input}
           type="file"
