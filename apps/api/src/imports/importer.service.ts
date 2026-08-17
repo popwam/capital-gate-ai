@@ -32,6 +32,10 @@ import {
   AVAILABILITY_TYPES,
   CANONICAL_FIELDS,
   CANONICAL_VALUES,
+  CANONICAL_FIELD_MAP,
+  METADATA_CANONICAL_VALUES,
+  isCustomMetadataField,
+  customMetadataLabel,
   FINISHING_TYPES,
   parseImportDate,
   parsePaymentPlanComponentHeader,
@@ -44,6 +48,8 @@ import {
 
 const CANONICAL: string[] = [...CANONICAL_VALUES];
 const INVENTORY_CANONICAL = CANONICAL.filter((field) => !["downPayment", "installmentYears", "installmentAmount"].includes(field));
+const METADATA_CANONICAL = new Set<string>(METADATA_CANONICAL_VALUES);
+const supportedMappingTarget = (field: string) => INVENTORY_CANONICAL.includes(field) || isCustomMetadataField(field);
 const CRITICAL_MAPPINGS = new Set([
   "externalUnitId", "price", "currency", "builtUpArea", "landArea", "gardenArea",
   "unitType", "bedrooms", "bathrooms", "deliveryDate", "status", "finishingType",
@@ -1041,7 +1047,7 @@ export class ImporterService {
       return { items, total, page: Math.max(1, page), pageSize: take };
     }
     const staticOptions: Record<string, unknown> = { currencies: SUPPORTED_CURRENCIES, unitTypes: UNIT_TYPES, finishingTypes: FINISHING_TYPES, availability: AVAILABILITY_TYPES, canonicalFields: CANONICAL_FIELDS };
-    if (type in staticOptions) return { items: staticOptions[type], total: (staticOptions[type] as readonly unknown[]).length, page: 1, pageSize: 100 };
+    if (type in staticOptions) return { items: staticOptions[type], total: (staticOptions[type] as readonly unknown[]).length, page: 1, pageSize: (staticOptions[type] as readonly unknown[]).length };
     throw new BadRequestException("نوع الخيارات غير مدعوم.");
   }
 
@@ -1051,6 +1057,7 @@ export class ImporterService {
     if ((await this.prisma.dataImport.findUniqueOrThrow({ where: { id: importId }, select: { status: true } })).status === ImportStatus.COMPLETED)
       throw new BadRequestException("Use the correction workflow for a confirmed import.");
     const data: Prisma.ImportSheetUncheckedUpdateInput = {};
+    let projectLocationBackfill: { projectId: string; locationId: string } | null = null;
     if (body.action != null) {
       if (!["IMPORT", "IGNORE"].includes(String(body.action))) throw new BadRequestException("Invalid sheet action");
       data.action = String(body.action);
@@ -1073,8 +1080,26 @@ export class ImporterService {
         data.phaseId = phase.id;
       }
     }
-    if (body.developerId != null) data.developerId = String(body.developerId);
-    if (body.locationId != null) data.locationId = String(body.locationId);
+    if (body.developerId != null) {
+      const developerId = String(body.developerId);
+      if (body.projectId || sheet.projectId) {
+        const project = await this.prisma.project.findUnique({ where: { id: String(body.projectId ?? sheet.projectId) }, select: { developerId: true } });
+        if (project && project.developerId !== developerId) throw new BadRequestException("المطور المختار لا يملك المشروع المحدد.");
+      }
+      data.developerId = developerId;
+    }
+    if (body.locationId != null) {
+      const locationId = String(body.locationId);
+      const location = await this.prisma.location.findUnique({ where: { id: locationId }, select: { id: true } });
+      if (!location) throw new BadRequestException("اختر موقعاً موجوداً.");
+      const contextProjectId = String(body.projectId ?? sheet.projectId ?? "");
+      if (contextProjectId) {
+        const project = await this.prisma.project.findUnique({ where: { id: contextProjectId }, select: { locationId: true } });
+        if (project?.locationId && project.locationId !== locationId) throw new BadRequestException("موقع الجدول يجب أن يطابق موقع المشروع. عدّل المشروع نفسه إذا تغيّر موقعه.");
+        if (project && !project.locationId) projectLocationBackfill = { projectId: contextProjectId, locationId };
+      }
+      data.locationId = locationId;
+    }
     if (body.defaultCurrency != null) {
       const currency = String(body.defaultCurrency).toUpperCase();
       if (!SUPPORTED_CURRENCIES.includes(currency as any)) throw new BadRequestException("اختر عملة مدعومة.");
@@ -1112,7 +1137,10 @@ export class ImporterService {
     data.mappingVersion = { increment: 1 };
     data.previewMappingVersion = null;
     data.normalizedPreview = Prisma.DbNull;
-    await this.prisma.importSheet.update({ where: { id: sheetId }, data });
+    await this.prisma.$transaction(async (tx) => {
+      if (projectLocationBackfill) await tx.project.update({ where: { id: projectLocationBackfill.projectId }, data: { locationId: projectLocationBackfill.locationId } });
+      await tx.importSheet.update({ where: { id: sheetId }, data });
+    });
     await this.rebuildSheetIssues(sheetId);
     return this.refreshImportReadiness(importId);
   }
@@ -1137,7 +1165,7 @@ export class ImporterService {
     const columns = (sheet.columns ?? []) as Array<{ key: string }>;
     if (!columns.some((column) => column.key === sourceColumn)) throw new BadRequestException("اختر عموداً موجوداً في الجدول.");
     const target = canonicalField === "METADATA" ? "__METADATA__" : canonicalField === "IGNORE" ? "__IGNORE__" : canonicalField;
-    if (![...INVENTORY_CANONICAL, "__METADATA__", "__IGNORE__"].includes(target)) throw new BadRequestException("اختر معنى مدعوماً للعمود.");
+    if (!["__METADATA__", "__IGNORE__"].includes(target) && !supportedMappingTarget(target)) throw new BadRequestException("اختر معنى مدعوماً للعمود أو احفظه كمعلومة مخصصة.");
     const mappings = { ...((sheet.mappings ?? {}) as Record<string, string>), [sourceColumn]: target };
     const sources = { ...((sheet.mappingSources ?? {}) as Record<string, string>), [sourceColumn]: "ADMIN_APPROVED" };
     await this.prisma.importSheet.update({
@@ -1156,9 +1184,12 @@ export class ImporterService {
     const columns = (sheet.columns ?? []) as Array<{ key: string }>;
     if (!columns.some((column) => column.key === sourceColumn)) throw new BadRequestException("اختر عموداً موجوداً.");
     const target = canonicalField === "METADATA" ? "__METADATA__" : canonicalField === "IGNORE" ? "__IGNORE__" : canonicalField;
-    if (![...INVENTORY_CANONICAL, "__METADATA__", "__IGNORE__"].includes(target)) throw new BadRequestException("اختر معنى مدعوماً.");
+    if (!["__METADATA__", "__IGNORE__"].includes(target) && !supportedMappingTarget(target)) throw new BadRequestException("اختر معنى مدعوماً.");
     const oldMappings = (sheet.mappings ?? {}) as Record<string, string>;
-    if (oldMappings[sourceColumn] === "externalUnitId" || target === "externalUnitId") throw new BadRequestException("تصحيح كود الهوية يحتاج استيراد تحديث جديداً لتجنب دمج وحدات مختلفة.");
+    const previousTarget = oldMappings[sourceColumn];
+    const metadataTarget = (value?: string) => Boolean(value && (value === "__METADATA__" || isCustomMetadataField(value) || CANONICAL_FIELD_MAP.get(value)?.storage === "METADATA"));
+    if (metadataTarget(previousTarget) || metadataTarget(target)) throw new BadRequestException("تصحيح حقول metadata بعد اعتماد الدفعة يتم عبر استيراد تحديث جديد حتى نحافظ على provenance وsourceMetadata بدون فقد بيانات.");
+    if (previousTarget === "externalUnitId" || target === "externalUnitId") throw new BadRequestException("تصحيح كود الهوية يحتاج استيراد تحديث جديداً لتجنب دمج وحدات مختلفة.");
     const proposedMappings = { ...oldMappings, [sourceColumn]: target };
     return this.prisma.importCorrection.create({ data: { importId, importSheetId: sheetId, createdByAdminId: adminUserId, oldMappings: this.json(oldMappings), proposedMappings: this.json(proposedMappings) } });
   }
@@ -1331,8 +1362,8 @@ export class ImporterService {
       const durationMonths = input?.durationMonths == null || input.durationMonths === "" ? undefined : Number(input.durationMonths);
       const valueType = String(input?.valueType ?? "TOTAL_PRICE");
       const currency = input?.currency ? String(input.currency).toUpperCase() : undefined;
-      if (!analysis.headers.includes(header) || (durationMonths != null && (!Number.isInteger(durationMonths) || durationMonths < 18 || durationMonths > 180)))
-        throw new BadRequestException("اختر مدة سداد صحيحة بين 18 و180 شهراً.");
+      if (!analysis.headers.includes(header) || (durationMonths != null && (!Number.isInteger(durationMonths) || durationMonths < 1 || durationMonths > 360)))
+        throw new BadRequestException("اختر مدة سداد صحيحة بين شهر واحد و360 شهراً.");
       if (!["TOTAL_PRICE", "INSTALLMENT_AMOUNT", "DOWN_PAYMENT_AMOUNT", "DOWN_PAYMENT_PERCENT", "MAINTENANCE_AMOUNT", "MAINTENANCE_PERCENT"].includes(valueType))
         throw new BadRequestException("اختر نوع قيمة خطة السداد.");
       if (currency && !SUPPORTED_CURRENCIES.includes(currency as any))
@@ -1469,8 +1500,10 @@ export class ImporterService {
     for (const [source, target] of Object.entries((sheet.mappings ?? {}) as Record<string, string>)) {
       const raw = row[source];
       if (raw == null || raw === "" || target === "__IGNORE__") continue;
-      if (target === "__METADATA__") metadata[source] = raw;
-      else values[target] = raw;
+      if (target === "__METADATA__") { metadata[source] = raw; continue; }
+      if (isCustomMetadataField(target)) { metadata[customMetadataLabel(target) || source] = raw; continue; }
+      if (METADATA_CANONICAL.has(target) || CANONICAL_FIELD_MAP.get(target)?.storage === "METADATA") { metadata[target] = raw; continue; }
+      values[target] = raw;
     }
     return { values, metadata };
   }
@@ -2022,10 +2055,18 @@ export class ImporterService {
                 policy === "CONTACT_SALES" &&
                 (values[field] == null || values[field] === ""),
             );
-        const updateData = this.unitData(values, contactSales);
-        const sourceMetadata: Record<string, unknown> = Object.fromEntries((analysis.metadataColumns ?? []).filter(header => row[header] != null && row[header] !== "").map(header => [header, row[header]]));
-        sourceMetadata._provenance = { importId: id, filename: item.fileName, sheet: analysis.sheetName, row: rowIndex + 2, values: Object.entries(analysis.mappings).filter(([header]) => row[header] != null && row[header] !== "").map(([sourceColumn, mappedCanonicalField]) => ({ sourceColumn, originalValue: row[sourceColumn], mappedCanonicalField, adminMappingDecision: analysis.mappingSources[sourceColumn] ?? "KNOWN_RULE", aiSuggestion: (analysis.aiSuggestions as any[]).find((suggestion: any) => suggestion?.sourceColumn === sourceColumn) ?? null })) };
-        updateData.sourceMetadata = this.json(sourceMetadata);
+            const updateData = this.unitData(values, contactSales);
+            const sourceMetadata: Record<string, unknown> = Object.fromEntries(
+              (analysis.metadataColumns ?? []).filter((header) => row[header] != null && row[header] !== "").map((header) => [header, row[header]]),
+            );
+            for (const [sourceColumn, mappedCanonicalField] of Object.entries(analysis.mappings)) {
+              const raw = row[sourceColumn];
+              if (raw == null || raw === "") continue;
+              if (METADATA_CANONICAL.has(mappedCanonicalField)) sourceMetadata[mappedCanonicalField] = raw;
+              else if (isCustomMetadataField(mappedCanonicalField)) sourceMetadata[customMetadataLabel(mappedCanonicalField)!] = raw;
+            }
+            sourceMetadata._provenance = { importId: id, filename: item.fileName, sheet: analysis.sheetName, row: rowIndex + 2, values: Object.entries(analysis.mappings).filter(([header]) => row[header] != null && row[header] !== "").map(([sourceColumn, mappedCanonicalField]) => ({ sourceColumn, originalValue: row[sourceColumn], mappedCanonicalField, adminMappingDecision: analysis.mappingSources[sourceColumn] ?? "KNOWN_RULE", aiSuggestion: (analysis.aiSuggestions as any[]).find((suggestion: any) => suggestion?.sourceColumn === sourceColumn) ?? null })) };
+            updateData.sourceMetadata = this.json(sourceMetadata);
             const createData = {
               ...updateData,
               externalUnitId,

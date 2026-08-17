@@ -3,12 +3,14 @@ import { useEffect, useRef, useState } from "react";
 import {
   Download,
   Eye,
+  Plus,
   RefreshCw,
   RotateCcw,
   Trash2,
   Upload,
 } from "lucide-react";
 import { adminApi, adminErrorMessage } from "@/lib/api";
+import { ManualUnitEntry } from "@/components/manual-unit-entry";
 
 type Batch = {
   id: string;
@@ -41,6 +43,7 @@ export default function DataPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [target, setTarget] = useState<Batch | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const load = () =>
     adminApi
@@ -101,7 +104,10 @@ export default function DataPage() {
       <section className="mb-5 rounded-[24px] border border-[#dfe4e0] bg-white p-5 sm:p-6">
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
           <div><h2 className="text-[24px] font-bold">إدارة البيانات والاستيراد</h2><p className="mt-1 text-[13px] text-[#74817b]">تاريخ كل دفعة، التحديثات، المصدر، والتراجع الآمن بدون فقد بيانات.</p></div>
-          <a href="/admin/data/import" className="flex h-11 items-center justify-center gap-2 rounded-xl bg-forest px-4 text-[13px] font-bold text-white"><Upload size={16}/>استيراد ملف جديد</a>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button type="button" onClick={() => setManualOpen(true)} className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[#14211f] px-4 text-[13px] font-bold text-white"><Plus size={16}/>إضافة عقار / وحدة</button>
+            <a href="/admin/data/import" className="flex h-11 items-center justify-center gap-2 rounded-xl border border-forest bg-white px-4 text-[13px] font-bold text-forest"><Upload size={16}/>استيراد ملف</a>
+          </div>
         </div>
       </section>
       <section>
@@ -253,6 +259,7 @@ export default function DataPage() {
           )}
         </div>
       </section>
-    </main>
+          <ManualUnitEntry open={manualOpen} onClose={() => setManualOpen(false)} onCreated={() => void load()} />
+</main>
   );
 }

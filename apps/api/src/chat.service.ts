@@ -24,13 +24,13 @@ import { ApplicationCache } from "./cache/application-cache";
 
 type MessagePayload = {
   type:
-  | "text"
-  | "properties"
-  | "media"
-  | "documents"
-  | "map"
-  | "lead_prompt"
-  | "lead_created";
+    | "text"
+    | "properties"
+    | "media"
+    | "documents"
+    | "map"
+    | "lead_prompt"
+    | "lead_created";
   properties?: unknown[];
   media?: unknown[];
   documents?: unknown[];
@@ -68,7 +68,7 @@ export class ChatService {
     private readonly search: PropertySearchService,
     private readonly maps: MapsService,
     private readonly cache: ApplicationCache,
-  ) { }
+  ) {}
 
   private serialize(value: unknown) {
     return JSON.parse(JSON.stringify(value));
@@ -491,17 +491,15 @@ export class ChatService {
       ]);
       const stored = origins.length && destinations.length
         ? await this.prisma.locationDistance.findFirst({
-          where: {
-            OR: [
+            where: { OR: [
               { fromLocationId: { in: origins }, toLocationId: { in: destinations }, verifiedAt: { not: null } },
               { fromLocationId: { in: destinations }, toLocationId: { in: origins }, verifiedAt: { not: null } },
-            ]
-          },
-          include: { from: true, to: true },
-        })
+            ] },
+            include: { from: true, to: true },
+          })
         : null;
 
-      let originPoint: { latitude: number; longitude: number } | null = null;
+      let originPoint: { latitude:number; longitude:number } | null = null;
       if (selectedProject) {
         const latitude = Number(selectedProject.latitude ?? selectedProject.location?.latitude);
         const longitude = Number(selectedProject.longitude ?? selectedProject.location?.longitude);
@@ -529,13 +527,13 @@ export class ChatService {
           : null;
         route = liveRoute && destinationPlace
           ? {
-            source: "GOOGLE_ROUTES",
-            ...liveRoute,
-            from: originText ?? "المشروع",
-            to: destinationPlace.name,
-            destinationName: destinationPlace.name,
-            destinationAddress: destinationPlace.formattedAddress,
-          }
+              source: "GOOGLE_ROUTES",
+              ...liveRoute,
+              from: originText ?? "المشروع",
+              to: destinationPlace.name,
+              destinationName: destinationPlace.name,
+              destinationAddress: destinationPlace.formattedAddress,
+            }
           : { source: "UNAVAILABLE", reason: "ROUTE_DATA_UNAVAILABLE" };
       } else {
         route = { source: "UNAVAILABLE", reason: originPoint ? "DESTINATION_UNRESOLVED" : "PROJECT_COORDINATES_MISSING" };
@@ -584,11 +582,11 @@ export class ChatService {
       const interestedUnits = [...new Set([...priorUnitIds, ...unitIds])];
       const interestedProjects = interestedUnits.length
         ? (
-          await this.prisma.unit.findMany({
-            where: { id: { in: interestedUnits } },
-            select: { projectId: true },
-          })
-        ).map((item) => item.projectId)
+            await this.prisma.unit.findMany({
+              where: { id: { in: interestedUnits } },
+              select: { projectId: true },
+            })
+          ).map((item) => item.projectId)
         : [];
       const conversationSummary = {
         customerGoal: state.purpose,
@@ -614,31 +612,31 @@ export class ChatService {
       const lead =
         persistence === "update" && existingLead
           ? await this.prisma.lead.update({
-            where: { id: existingLead.id },
-            data: {
-              name: state.contactName || existingLead.name,
-              phone: state.contactPhone,
-              intentScore: state.purchaseIntent ?? existingLead.intentScore,
-              payload: leadPayload,
-              events: {
-                create: { type: "LEAD_UPDATED", payload: { channel: "WEB" } },
+              where: { id: existingLead.id },
+              data: {
+                name: state.contactName || existingLead.name,
+                phone: state.contactPhone,
+                intentScore: state.purchaseIntent ?? existingLead.intentScore,
+                payload: leadPayload,
+                events: {
+                  create: { type: "LEAD_UPDATED", payload: { channel: "WEB" } },
+                },
               },
-            },
-          })
+            })
           : await this.prisma.lead.create({
-            data: {
-              conversationId,
-              name: state.contactName || "Anonymous customer",
-              phone: state.contactPhone,
-              intent: "PURCHASE",
-              intentScore: state.purchaseIntent ?? 80,
-              payload: leadPayload,
-              source: "WEB_AI",
-              events: {
-                create: { type: "LEAD_CREATED", payload: { channel: "WEB" } },
+              data: {
+                conversationId,
+                name: state.contactName || "Anonymous customer",
+                phone: state.contactPhone,
+                intent: "PURCHASE",
+                intentScore: state.purchaseIntent ?? 80,
+                payload: leadPayload,
+                source: "WEB_AI",
+                events: {
+                  create: { type: "LEAD_CREATED", payload: { channel: "WEB" } },
+                },
               },
-            },
-          });
+            });
       await this.prisma.conversationState.upsert({
         where: { conversationId },
         create: {
@@ -736,7 +734,7 @@ export class ChatService {
     const contextMetrics = answerContextMetrics(answerInput);
     const directAnswer = deterministicResponse ?? this.directToolAnswer(state, payload, verifiedFacts);
     trace.requiresGroq = !directAnswer;
-    this.logger.log(`AIContextTrace ${JSON.stringify({ requestId: answerInput.requestId, conversationId, intent: contextKind, candidatesBeforeRanking: properties.length || verifiedFacts.length, candidatesSent: contextMetrics.resultCount, historyMessagesSent: contextMetrics.recentHistoryCount, contextBytes: contextMetrics.contextBytes, estimatedTokens: contextMetrics.estimatedInputTokens })}`);
+    this.logger.log(`AIContextTrace ${JSON.stringify({requestId:answerInput.requestId,conversationId,intent:contextKind,candidatesBeforeRanking:properties.length||verifiedFacts.length,candidatesSent:contextMetrics.resultCount,historyMessagesSent:contextMetrics.recentHistoryCount,contextBytes:contextMetrics.contextBytes,estimatedTokens:contextMetrics.estimatedInputTokens})}`);
     return {
       conversationId,
       answerInput,

@@ -63,7 +63,7 @@ class UpdateProjectDto {
   @IsOptional() @IsString() description?: string;
 }
 class CreateUnitDto {
-  @IsString() externalUnitId!: string;
+  @IsOptional() @IsString() externalUnitId?: string;
   @IsString() developerId!: string;
   @IsString() projectId!: string;
   @IsString() phaseId!: string;
@@ -134,7 +134,7 @@ class PaymentPlanDto {
   @IsOptional() @Type(() => Number) @IsNumber() downPayment?: number;
   @IsOptional() @Type(() => Number) @IsNumber() installmentYears?: number;
   @IsOptional() @Type(() => Number) @IsNumber() installmentAmount?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(180) durationMonths?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(360) durationMonths?: number;
   @IsOptional() @Type(() => Number) @IsNumber() downPaymentAmount?: number;
   @IsOptional() @Type(() => Number) @IsNumber() downPaymentPercent?: number;
   @IsOptional() @Type(() => Number) @IsNumber() totalPrice?: number;
@@ -142,7 +142,7 @@ class PaymentPlanDto {
   @IsOptional() @Type(() => Number) @IsNumber() discountAmount?: number;
   @IsOptional() @Type(() => Number) @IsNumber() discountPercent?: number;
   @IsOptional() @IsIn(["MONTHLY", "QUARTERLY", "SEMI_ANNUAL", "ANNUAL", "CUSTOM"]) installmentFrequency?: string;
-  @IsOptional() @IsIn(["EGP", "USD", "EUR", "AED", "SAR", "GBP"]) currency?: string;
+  @IsOptional() @IsIn(["EGP", "USD", "EUR", "AED", "SAR", "GBP", "QAR", "KWD", "BHD", "OMR"]) currency?: string;
   @IsOptional() @Type(() => Number) @IsNumber() maintenanceAmount?: number;
   @IsOptional() @Type(() => Number) @IsNumber() maintenancePercent?: number;
   @IsOptional() @IsIn(["CASH", "INSTALLMENT"]) planType?: string;
@@ -332,7 +332,7 @@ export class CatalogController {
     const item = await this.prisma.unit.create({
       data: {
         ...body,
-        externalUnitId: body.externalUnitId.trim(),
+        externalUnitId: body.externalUnitId?.trim() || `MANUAL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
         currency: body.currency || "EGP",
         deliveryDate: body.deliveryDate ? new Date(body.deliveryDate) : undefined,
         phase: body.phase || phase?.name,

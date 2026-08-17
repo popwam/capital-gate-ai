@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { LogOut, Menu, Plus, X } from "lucide-react";
+import { LogOut, Menu, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { AdminSectionNav } from "./admin-section-nav";
 import { LogoMark } from "./logo";
@@ -74,9 +74,7 @@ export function AdminShell({ children, privateEntry = false }: { children: React
                 <p className="hidden truncate text-[12px] text-[#718079] sm:block">{subtitle}</p>
               </div>
             </div>
-            <a href="/admin/data/import" className="flex h-10 shrink-0 items-center gap-2 rounded-xl bg-[#14211f] px-3.5 text-[13px] font-bold text-white shadow-sm hover:bg-[#1b302c]">
-              <Plus size={16} /> <span className="hidden sm:inline">استيراد جديد</span>
-            </a>
+<div className="h-10" aria-hidden="true" />
           </div>
         </header>
         <div className="min-w-0">{children}</div>

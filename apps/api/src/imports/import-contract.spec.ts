@@ -1,6 +1,6 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
-import { normalizeFinishing, parseImportDate, parsePaymentPlanComponentHeader, parsePaymentPlanHeader } from "./import-contract";
+import { CANONICAL_FIELDS, CORE_UNIT_CANONICAL_VALUES, METADATA_CANONICAL_VALUES, customMetadataLabel, isCustomMetadataField, normalizeFinishing, parseImportDate, parsePaymentPlanComponentHeader, parsePaymentPlanHeader } from "./import-contract";
 
 test("payment-plan columns parse years, months, decimals, Arabic and arbitrary durations", () => {
   assert.equal(parsePaymentPlanHeader("Properties Unit Price 8 Y")?.durationMonths, 96);
@@ -31,4 +31,21 @@ test("known finishing values normalize without losing the original source proven
   assert.equal(normalizeFinishing("Semi-Finished"), "SEMI_FINISHED");
   assert.equal(normalizeFinishing("Core & Shell"), "CORE_AND_SHELL");
   assert.equal(normalizeFinishing("Furnished"), "FURNISHED");
+});
+
+
+test("real-estate canonical vocabulary is broad and keeps extended fields without schema loss", () => {
+  assert.ok(CANONICAL_FIELDS.length >= 200);
+  assert.ok(CORE_UNIT_CANONICAL_VALUES.includes("externalUnitId"));
+  assert.ok(METADATA_CANONICAL_VALUES.includes("pricePerSqm"));
+  assert.ok(METADATA_CANONICAL_VALUES.includes("expectedYield"));
+  assert.ok(METADATA_CANONICAL_VALUES.includes("commercialActivity"));
+  assert.ok(METADATA_CANONICAL_VALUES.includes("titleDeedStatus"));
+  assert.ok(METADATA_CANONICAL_VALUES.includes("warehouseClearHeight"));
+});
+
+test("custom import fields can be typed instead of selected from the taxonomy", () => {
+  assert.equal(isCustomMetadataField("META:Owner mobile"), true);
+  assert.equal(customMetadataLabel("META:Owner mobile"), "Owner mobile");
+  assert.equal(isCustomMetadataField("Owner mobile"), false);
 });

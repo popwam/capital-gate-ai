@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 export type SheetRole = "INVENTORY" | "PAYMENT_PLAN" | "PRICE_LIST" | "PROJECT_INFO" | "SUMMARY" | "AMENITIES" | "LOCATIONS" | "AVAILABILITY" | "KNOWLEDGE" | "MIXED" | "UNKNOWN";
 export type MappingConfidence = "HIGH" | "MEDIUM" | "LOW";
 export type CellValue = string | number | boolean | Date | null;
-export type SemanticField = "externalUnitId" | "project" | "developer" | "phase" | "building" | "zone" | "floor" | "unitType" | "bedrooms" | "bathrooms" | "builtUpArea" | "landArea" | "gardenArea" | "terraceArea" | "price" | "currency" | "downPayment" | "installmentYears" | "installmentAmount" | "deliveryDate" | "finishingType" | "status";
+export type SemanticField = "externalUnitId" | "project" | "developer" | "phase" | "cluster" | "building" | "buildingCode" | "zone" | "floor" | "unitType" | "unitSubType" | "bedrooms" | "bathrooms" | "builtUpArea" | "netArea" | "grossArea" | "landArea" | "gardenArea" | "roofArea" | "terraceArea" | "balconyArea" | "price" | "originalPrice" | "pricePerSqm" | "currency" | "downPayment" | "downPaymentPercent" | "installmentYears" | "installmentMonths" | "installmentAmount" | "deliveryDate" | "deliveryYear" | "finishingType" | "status" | "maintenance" | "maintenancePercent" | "clubFees" | "discount" | "discountPercent" | "view" | "orientation" | "parkingSpaces" | "propertyUse" | "commercialActivity" | "rentalPrice" | "expectedYield" | "paidAmount" | "remainingAmount" | "notes";
 
 export interface HeaderCandidate { row: number; confidence: number; score: number; validHeaderCount: number; domainMatches: number; rejected: Array<{ value: string; reason: string }>; }
 export interface DetectedColumn { key: string; columnIndex: number; originalHeader: string; normalizedHeader: string; semanticField?: SemanticField; confidence: number; confidenceLevel: MappingConfidence; samples: CellValue[]; }
@@ -51,8 +51,36 @@ const semanticRules: Array<[SemanticField, RegExp, number]> = [
   ["downPayment", /^(?:down\s*payment|dp|المقدم|مقدم)$/iu, .91],
   ["installmentYears", /^(?:installment\s*(?:years|duration)|payment\s*years|years|سنوات\s*التقسيط|مده\s*السداد)$/iu, .88],
   ["installmentAmount", /^(?:installment(?:\s*amount)?|قسط|قيمه\s*القسط)$/iu, .88],
-  ["phase", /^(?:phase|المرحله)$/iu, .94], ["building", /^(?:building|building\s*no|المبني|رقم\s*المبني)$/iu, .94],
-  ["zone", /^(?:zone|cluster|district|المنطقه|المجموعه)$/iu, .82], ["floor", /^(?:floor|الدور)$/iu, .95],
+  ["phase", /^(?:phase|المرحله)$/iu, .94],
+  ["cluster", /^(?:cluster|community|الكلاستر|المجموعه|المجتمع)$/iu, .91],
+  ["building", /^(?:building|building\s*no|المبني|رقم\s*المبني)$/iu, .94],
+  ["buildingCode", /^(?:building\s*(?:code|id)|كود\s*المبني)$/iu, .93],
+  ["zone", /^(?:zone|district|المنطقه|الزون)$/iu, .87], ["floor", /^(?:floor|level|الدور)$/iu, .95],
+  ["unitSubType", /^(?:unit\s*sub\s*type|subtype|model|unit\s*model|موديل\s*الوحده|النوع\s*الفرعي)$/iu, .91],
+  ["netArea", /^(?:net\s*area|net\s*sqm|المساحه\s*الصافيه)$/iu, .95],
+  ["grossArea", /^(?:gross\s*area|gross\s*sqm|المساحه\s*الاجماليه)$/iu, .94],
+  ["roofArea", /^(?:roof\s*area|roof|روف|مساحه\s*الروف)$/iu, .93],
+  ["balconyArea", /^(?:balcony\s*area|balcony|مساحه\s*البلكونه)$/iu, .92],
+  ["originalPrice", /^(?:original\s*price|list\s*price|price\s*before\s*discount|السعر\s*قبل\s*الخصم)$/iu, .93],
+  ["pricePerSqm", /^(?:price\s*(?:per|\/)\s*(?:sqm|m2|meter)|sqm\s*price|سعر\s*المتر)$/iu, .97],
+  ["deliveryYear", /^(?:delivery\s*year|handover\s*year|سنه\s*التسليم|سنه\s*الاستلام)$/iu, .95],
+  ["downPaymentPercent", /^(?:down\s*payment\s*%|dp\s*%|نسبه\s*المقدم)$/iu, .96],
+  ["installmentMonths", /^(?:installment\s*months|payment\s*months|شهور\s*التقسيط|مده\s*السداد\s*بالشهور)$/iu, .92],
+  ["maintenance", /^(?:maintenance|maintenance\s*fees?|صيانه|وديعه\s*الصيانه)$/iu, .93],
+  ["maintenancePercent", /^(?:maintenance\s*%|نسبه\s*الصيانه)$/iu, .96],
+  ["clubFees", /^(?:club\s*fees?|clubhouse\s*fees?|رسوم\s*النادي)$/iu, .94],
+  ["discount", /^(?:discount|discount\s*amount|خصم|قيمه\s*الخصم)$/iu, .91],
+  ["discountPercent", /^(?:discount\s*%|discount\s*percent|نسبه\s*الخصم)$/iu, .96],
+  ["view", /^(?:view|unit\s*view|اطلاله|الاطلاله)$/iu, .92],
+  ["orientation", /^(?:orientation|direction|اتجاه|الاتجاه)$/iu, .90],
+  ["parkingSpaces", /^(?:parking\s*(?:spaces?|slots?)|parking|جراج|اماكن\s*الركن)$/iu, .89],
+  ["propertyUse", /^(?:property\s*use|usage|use|استخدام\s*العقار|النشاط)$/iu, .86],
+  ["commercialActivity", /^(?:commercial\s*activity|activity|business\s*activity|النشاط\s*التجاري)$/iu, .91],
+  ["rentalPrice", /^(?:rent|rental\s*price|asking\s*rent|الايجار|قيمه\s*الايجار)$/iu, .92],
+  ["expectedYield", /^(?:expected\s*yield|yield|roi|العائد|العائد\s*المتوقع)$/iu, .91],
+  ["paidAmount", /^(?:paid\s*amount|amount\s*paid|المدفوع|المبلغ\s*المدفوع)$/iu, .94],
+  ["remainingAmount", /^(?:remaining\s*amount|outstanding|المتبقي|المبلغ\s*المتبقي)$/iu, .93],
+  ["notes", /^(?:notes?|remarks?|comment|ملاحظات|ملحوظات)$/iu, .90],
 ];
 
 export function detectSemanticColumn(header: string) {

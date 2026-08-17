@@ -1,7 +1,7 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import * as XLSX from "xlsx";
-import { analyzeWorkbook, detectTableAt, invalidHeaderReason, rawSheetMatrix, recordsForTable } from "./workbook-analysis";
+import { analyzeWorkbook, detectSemanticColumn, detectTableAt, invalidHeaderReason, rawSheetMatrix, recordsForTable } from "./workbook-analysis";
 
 function workbook(sheets: Array<{ name: string; rows: unknown[][]; merges?: string[] }>) {
   const book = XLSX.utils.book_new();
@@ -117,4 +117,13 @@ test("manual header override rebuilds records from the selected row", () => {
   const book = workbook([{ name: "Data", rows: [["Title"], [], ["Unit Number", "Price"], ["A-1", 1_000_000]] }]);
   const table = detectTableAt(rawSheetMatrix(book.Sheets.Data), "Data", 3, 1)!;
   assert.deepEqual(recordsForTable(book, table), [{ "Unit Number": "A-1", Price: 1_000_000 }]);
+});
+
+
+test("extended real-estate headers auto-map before admin review", () => {
+  assert.equal(detectSemanticColumn("Price per sqm")?.field, "pricePerSqm");
+  assert.equal(detectSemanticColumn("سنة التسليم")?.field, "deliveryYear");
+  assert.equal(detectSemanticColumn("Commercial Activity")?.field, "commercialActivity");
+  assert.equal(detectSemanticColumn("Expected Yield")?.field, "expectedYield");
+  assert.equal(detectSemanticColumn("المبلغ المتبقي")?.field, "remainingAmount");
 });
