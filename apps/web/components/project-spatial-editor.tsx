@@ -8,7 +8,7 @@ type Point = { x: number; y: number };
 type Phase = { id: string; name: string; nameAr?: string | null; code?: string | null; masterPlanPolygon?: Point[] | null };
 type Building = { id: string; name: string; nameAr?: string | null; code?: string | null; phaseId?: string | null; masterPlanPolygon?: Point[] | null };
 type Gate = { id: string; name: string; nameAr?: string | null; gateNumber?: number | null; phaseId?: string | null; masterPlanX?: number | string | null; masterPlanY?: number | string | null; isMain?: boolean };
-type Media = { id: string; type: string; url: string; isCover?: boolean; sortOrder?: number };
+type Media = { id: string; type: string; url: string; isCover?: boolean; sortOrder?: number | null };
 type Suggestion = {
   building: { id: string; name: string; nameAr?: string | null; code?: string | null; phaseId?: string | null };
   candidates: Array<{ id: string; externalUnitId: string; confidence: number; reason: string; projectBuildingId?: string | null }>;
