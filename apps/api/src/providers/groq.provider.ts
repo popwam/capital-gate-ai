@@ -24,7 +24,7 @@ export class GroqProvider implements AIProvider {
   }
   private readonly apiKey = process.env.GROQ_API_KEY ?? "";
   private readonly endpoint = "https://api.groq.com/openai/v1/chat/completions";
-  readonly defaultModel = process.env.GROQ_GENERAL_MODEL ?? process.env.GROQ_MODEL ?? "qwen/qwen3.6-27b";
+  readonly defaultModel = configuredGroqModels().general;
 
   validateConfiguration() {
     if (!this.apiKey) throw new Error("GROQ_API_KEY is required");
@@ -44,10 +44,14 @@ export class GroqProvider implements AIProvider {
           model,
           messages,
           temperature: options.temperature ?? 0.2,
-          max_tokens: options.maxTokens ?? 1000,
+          max_completion_tokens: options.maxTokens ?? 1200,
           stream: options.stream ?? false,
-          ...(model.startsWith("qwen/") ? { reasoning_format: "hidden" } : {}),
-          ...(model.startsWith("openai/gpt-oss") ? { reasoning_effort: "none" } : {}),
+          ...(model.startsWith("qwen/") ? { reasoning_effort: "default", include_reasoning: false } : {}),
+          ...(model === configuredGroqModels().reasoning && model.startsWith("openai/gpt-oss")
+            ? { reasoning_effort: "medium", include_reasoning: false }
+            : model.startsWith("openai/gpt-oss")
+              ? { reasoning_effort: "low", include_reasoning: false }
+              : {}),
           ...(options.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
         }),
         signal: AbortSignal.timeout(35_000),
@@ -60,8 +64,24 @@ export class GroqProvider implements AIProvider {
       let body: GroqChatResponse | undefined;
       try { body = (await response.json()) as GroqChatResponse; } catch { body = undefined; }
       const status = response.status;
-      const code = status === 413 ? "HTTP_413" : status === 429 ? "HTTP_429" : status >= 500 ? `HTTP_${status}` : body?.error?.code || `HTTP_${status}`;
-      throw new AIUpstreamError("groq", code, status, status === 408 || status === 409 || status === 413 || status === 429 || status >= 500);
+      const upstreamCode = body?.error?.code || body?.error?.type;
+      const message = body?.error?.message?.toLowerCase() ?? "";
+      const modelUnavailable = status === 404 || upstreamCode === "model_not_found" || /model.+(?:not found|decommission|unavailable|does not exist)/i.test(message);
+      const code = modelUnavailable
+        ? "MODEL_UNAVAILABLE"
+        : status === 413
+          ? "HTTP_413"
+          : status === 429
+            ? "HTTP_429"
+            : status >= 500
+              ? `HTTP_${status}`
+              : upstreamCode || `HTTP_${status}`;
+      throw new AIUpstreamError(
+        "groq",
+        code,
+        status,
+        modelUnavailable || [408, 409, 413, 422, 424, 429, 498, 499].includes(status) || status >= 500,
+      );
     }
 
     return response;

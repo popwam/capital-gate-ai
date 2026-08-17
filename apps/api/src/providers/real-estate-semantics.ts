@@ -7,6 +7,11 @@ export function normalizeRealEstateSemantics(source: string, extracted: Structur
   const text = numberText(source.toLowerCase()).replace(/م²|م٢/g, "متر");
   const next: StructuredIntent = { ...previous, ...extracted, requestedMedia: extracted.requestedMedia, exactRouteRequested: extracted.exactRouteRequested, routeOrigin: extracted.routeOrigin, routeDestination: extracted.routeDestination, temporaryIntent: undefined, aggregationDimension: undefined };
 
+  const explicitResale = /(?:ريسيل|ري\s*سيل|إعادة\s*بيع|اعادة\s*بيع|resale|secondary\s*market)/iu.test(text);
+  const explicitPrimary = /(?:primary|من\s+المطور|بيع\s+أول|بيع\s+اول|أول\s+بيع|اول\s+بيع|new\s+from\s+(?:the\s+)?developer)/iu.test(text);
+  if (explicitResale) next.inventoryMarket = "RESALE";
+  else if (explicitPrimary) next.inventoryMarket = "PRIMARY";
+
   const clearArea = /(?:مش فارقة|مش مهم(?:ة)?|الغ[يِ]|شيل|من غير)\s+(?:لي\s+)?(?:المساحة|مساحة)/u.test(text);
   if (clearArea) { delete next.minimumArea; delete next.maximumArea; delete next.builtUpAreaMin; delete next.builtUpAreaMax; delete next.targetBuiltUpArea; }
 

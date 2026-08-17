@@ -46,8 +46,11 @@ export function adminErrorMessage(error: unknown) {
 }
 
 export function getDeviceToken() {
-  let token = localStorage.getItem("maqar-device-id");
-  if (!token) { token = `${crypto.randomUUID()}-${crypto.randomUUID()}`; localStorage.setItem("maqar-device-id", token); }
+  let token = localStorage.getItem("cgai-device-id");
+  if (!token) {
+    token = localStorage.getItem("maqar-device-id") || `${crypto.randomUUID()}-${crypto.randomUUID()}`;
+    localStorage.setItem("cgai-device-id", token);
+  }
   return token;
 }
 

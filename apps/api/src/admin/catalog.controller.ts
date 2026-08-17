@@ -72,6 +72,7 @@ class UpdateUnitDto {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) price?: number;
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsEnum(UnitStatus) status?: UnitStatus;
+  @IsOptional() @IsBoolean() isResale?: boolean;
   @IsOptional() @IsDateString() deliveryDate?: string;
   @IsOptional() @IsString() finishingType?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) downPayment?: number;
@@ -292,6 +293,8 @@ export class CatalogController {
       where.status = query.status as UnitStatus;
     if (query.unitType)
       where.unitType = { contains: query.unitType, mode: "insensitive" };
+    if (query.isResale === "true" || query.isResale === "false")
+      where.isResale = query.isResale === "true";
     if (query.unitCode)
       where.externalUnitId = { contains: query.unitCode, mode: "insensitive" };
     if (query.bedrooms) where.bedrooms = Number(query.bedrooms);

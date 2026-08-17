@@ -439,13 +439,17 @@ export class RealEstateController {
     });
     const ring = [...points.map(point => [point.lng, point.lat]), [points[0].lng, points[0].lat]];
     const geoJson = { type: "Polygon", coordinates: [ring] } as Prisma.InputJsonValue;
-    const item = await this.prisma.project.update({ where: { id: projectId }, data: { boundaryGeoJson: geoJson, boundarySource: body.source, boundaryConfirmedAt: new Date(), boundaryConfirmedByAdminId: req.admin.id } });
+    // The project center follows the drawn boundary so admins never need to type
+    // latitude/longitude just to make project location and map features work.
+    const latitude = points.reduce((sum, point) => sum + point.lat, 0) / points.length;
+    const longitude = points.reduce((sum, point) => sum + point.lng, 0) / points.length;
+    const item = await this.prisma.project.update({ where: { id: projectId }, data: { boundaryGeoJson: geoJson, boundarySource: body.source, boundaryConfirmedAt: new Date(), boundaryConfirmedByAdminId: req.admin.id, latitude, longitude } });
     await this.audit.record(req.admin.id, "PROJECT_BOUNDARY_CONFIRMED", "Project", projectId, { pointCount: points.length, source: body.source });
     return { id: item.id, boundaryGeoJson: item.boundaryGeoJson, boundarySource: item.boundarySource, boundaryConfirmedAt: item.boundaryConfirmedAt };
   }
 
   @Delete("projects/:id/boundary") async clearBoundary(@Param("id") projectId: string, @Req() req: any) {
-    await this.prisma.project.update({ where: { id: projectId }, data: { boundaryGeoJson: Prisma.JsonNull, boundarySource: null, boundaryConfirmedAt: null, boundaryConfirmedByAdminId: null } });
+    await this.prisma.project.update({ where: { id: projectId }, data: { boundaryGeoJson: Prisma.JsonNull, boundarySource: null, boundaryConfirmedAt: null, boundaryConfirmedByAdminId: null, latitude: null, longitude: null } });
     await this.audit.record(req.admin.id, "PROJECT_BOUNDARY_CLEARED", "Project", projectId);
     return { cleared: true };
   }

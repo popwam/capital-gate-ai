@@ -5,12 +5,15 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: "#17211e",
-        forest: "#153e35",
-        sand: "#f3efe7",
-        coral: "#e86f51"
+        ink: "#14211f",
+        forest: "#173f3b",
+        sand: "#f5f2eb",
+        coral: "#b08c52"
       },
-      boxShadow: { soft: "0 14px 45px rgba(20, 42, 34, .10)" }
+      boxShadow: {
+        soft: "0 18px 55px rgba(20, 41, 39, .10)",
+        premium: "0 26px 80px rgba(20, 41, 39, .14)"
+      }
     }
   },
   plugins: []

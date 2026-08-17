@@ -53,7 +53,7 @@ type ImportData = {
   workflow: ImportWorkflow;
   sheets: ImportSheetData[];
 };
-type ImportSheetData = { id:string; sheetName:string; tableId?:string|null; classification:string; confidence:number; action:"IMPORT"|"IGNORE"; headerRow?:number|null; startRow?:number|null; endRow?:number|null; rowsDetected:number; projectId?:string|null; developerId?:string|null; locationId?:string|null; defaultCurrency?:string|null; defaultUnitType?:string|null; columns?:Array<{key:string;originalHeader:string;samples?:unknown[]}>; mappings?:Record<string,string>; mappingSources?:Record<string,string>; sourcePreview?:Array<Record<string,unknown>>; mappingVersion:number; previewMappingVersion?:number|null; project?:{name:string}|null };
+type ImportSheetData = { id:string; sheetName:string; tableId?:string|null; classification:string; confidence:number; action:"IMPORT"|"IGNORE"; headerRow?:number|null; startRow?:number|null; endRow?:number|null; rowsDetected:number; projectId?:string|null; developerId?:string|null; locationId?:string|null; defaultCurrency?:string|null; defaultUnitType?:string|null; defaultIsResale?:boolean; columns?:Array<{key:string;originalHeader:string;samples?:unknown[]}>; mappings?:Record<string,string>; mappingSources?:Record<string,string>; sourcePreview?:Array<Record<string,unknown>>; mappingVersion:number; previewMappingVersion?:number|null; project?:{name:string}|null };
 type Location = {
   id: string;
   name: string;
@@ -168,6 +168,7 @@ export function ImportAssistant() {
   }
   async function updateSheet(sheetId:string,data:Record<string,unknown>){if(!item)return;setLoading(true);setError("");try{setItem(await adminApi.patch<ImportData>(`/imports/${item.id}/sheets/${sheetId}`,data))}catch(e){setError(adminErrorMessage(e))}finally{setLoading(false)}}
   async function updateAllSheets(data:Record<string,unknown>){if(!item)return;setLoading(true);setError("");try{setItem(await adminApi.patch<ImportData>(`/imports/${item.id}/sheets`,data))}catch(e){setError(adminErrorMessage(e))}finally{setLoading(false)}}
+  async function markAllSheetsInventory(){if(!item)return;setLoading(true);setError("");try{setItem(await adminApi.patch<ImportData>(`/imports/${item.id}/sheets/all-inventory`,{}))}catch(e){setError(adminErrorMessage(e))}finally{setLoading(false)}}
   async function updateSheetMapping(sheetId:string,sourceColumn:string,canonicalField:string){if(!item)return;setLoading(true);setError("");try{if(item.status==="COMPLETED"){const correction=await adminApi.post<{id:string}>(`/imports/${item.id}/sheets/${sheetId}/corrections`,{sourceColumn,canonicalField});const preview=await adminApi.post<{affected:number;conflicts:number;unchanged:number;changes:Array<{unitId:string;externalUnitId:string;conflict:boolean}>}>(`/imports/${item.id}/corrections/${correction.id}/preview`);const decisions:Record<string,string>={};for(const change of preview.changes.filter(change=>change.conflict)){const decision=globalThis.prompt(`تعارض في الوحدة ${change.externalUnitId}. اكتب APPLY لتطبيق القيمة المصححة، KEEP للاحتفاظ بالقيمة الحالية، أو SKIP لتخطي السجل.`,"KEEP")?.toUpperCase();decisions[change.unitId]=decision==="APPLY"?"APPLY_CORRECTED":decision==="SKIP"?"SKIP":"KEEP_CURRENT"}if(globalThis.confirm(`معاينة التصحيح: ${preview.affected} وحدة ستتأثر، ${preview.conflicts} تعارضات، ${preview.unchanged} بلا تغيير. هل تريد تطبيق القرارات؟`)){await adminApi.post(`/imports/${item.id}/corrections/${correction.id}/confirm`,{decisions});setItem(await adminApi.get<ImportData>(`/imports/${item.id}`))}}else setItem(await adminApi.patch<ImportData>(`/imports/${item.id}/sheets/${sheetId}/mapping`,{sourceColumn,canonicalField}))}catch(e){setError(adminErrorMessage(e))}finally{setLoading(false)}}
   async function confirm() {
     if (!item) return;
@@ -223,14 +224,14 @@ export function ImportAssistant() {
             </button>
             <div>
               <h1 className="text-[14px] font-bold">Inventory import</h1>
-              <p className="text-[9px] text-[#83908a]">
+              <p className="text-[12px] text-[#83908a]">
                 Upload data and answer only what could not be verified
               </p>
             </div>
           </div>
           <a
             href="/"
-            className="flex items-center gap-1 text-[10px] font-bold text-[#61706a]"
+            className="flex items-center gap-1 text-[12px] font-bold text-[#61706a]"
           >
             <ArrowLeft size={13} /> Customer app
           </a>
@@ -244,14 +245,14 @@ export function ImportAssistant() {
               ["Leads This Week", leadSummary.thisWeek],
             ].map(([label, value]) => (
               <a href="/admin/leads" key={label} className="rounded-[16px] border bg-white p-4">
-                <p className="text-[7px] font-bold uppercase tracking-wide text-[#89938e]">{label}</p>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-[#89938e]">{label}</p>
                 <p className="mt-2 text-[20px] font-bold">{value}</p>
               </a>
             ))}
           </div>
           <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
             <div>
-              <div className="mb-2 flex items-center gap-2 text-[9px] font-bold uppercase tracking-[.14em] text-coral">
+              <div className="mb-2 flex items-center gap-2 text-[12px] font-bold uppercase tracking-[.14em] text-coral">
                 <Sparkles size={12} /> AI Import Assistant
               </div>
               <h2 className="text-[22px] font-bold tracking-[-.035em] sm:text-[28px]">
@@ -268,7 +269,7 @@ export function ImportAssistant() {
             <button
               onClick={() => inputRef.current?.click()}
               disabled={loading}
-              className="flex h-10 items-center gap-2 rounded-xl bg-forest px-4 text-[9px] font-bold text-white"
+              className="flex h-10 items-center gap-2 rounded-xl bg-forest px-4 text-[12px] font-bold text-white"
             >
               <UploadCloud size={14} />
               {loading
@@ -279,7 +280,7 @@ export function ImportAssistant() {
             </button>
           </div>
           {error && (
-            <div className="mb-4 rounded-xl border border-[#efc7be] bg-[#fbe9e5] px-4 py-3 text-[10px] font-semibold text-[#8f3f30]">
+            <div className="mb-4 rounded-xl border border-[#efc7be] bg-[#fbe9e5] px-4 py-3 text-[12px] font-semibold text-[#8f3f30]">
               {error}
             </div>
           )}
@@ -299,12 +300,12 @@ export function ImportAssistant() {
                         <p className="text-[11px] font-bold">
                           Import assistant
                         </p>
-                        <p className="mt-0.5 text-[8px] font-semibold text-[#749087]">
+                        <p className="mt-0.5 text-[11px] font-semibold text-[#749087]">
                           {item.fileName}
                         </p>
                       </div>
                     </div>
-                    <span className="rounded-full bg-[#f1f0eb] px-2.5 py-1 text-[8px] font-bold">
+                    <span className="rounded-full bg-[#f1f0eb] px-2.5 py-1 text-[11px] font-bold">
                       {item.status}
                     </span>
                   </div>
@@ -314,9 +315,9 @@ export function ImportAssistant() {
                         text={`وجدت ${item.rowsDetected} صفاً في «${item.analysis?.sheetName || "الملف"}». تم التعرف على ${Object.keys(item.analysis?.mappings || {}).length} أعمدة، وسأطلب منك فقط القرارات التي تحتاج مراجعة.`}
                       />
                       {!!item.sheets?.length && (
-                        <SheetReview item={item} projects={selectorOptions.projects} updateSheet={updateSheet} updateAll={updateAllSheets} updateMapping={updateSheetMapping} loading={loading}/>
+                        <SheetReview item={item} projects={selectorOptions.projects} updateSheet={updateSheet} markAllInventory={markAllSheetsInventory} updateMapping={updateSheetMapping} loading={loading}/>
                       )}
-                      {item.status!=="COMPLETED"&&item.sheets?.some(sheet=>sheet.action==="IMPORT"&&sheet.projectId)&&<button type="button" disabled={loading} onClick={()=>{const source=item.sheets.find(sheet=>sheet.action==="IMPORT"&&sheet.projectId)!;updateAllSheets({projectId:source.projectId,defaultCurrency:source.defaultCurrency,defaultUnitType:source.defaultUnitType})}} className="rounded-xl border border-forest px-4 py-2 text-sm font-bold text-forest">تطبيق سياق أول جدول على كل الجداول المختارة</button>}
+                      {item.status!=="COMPLETED"&&item.sheets?.some(sheet=>sheet.action==="IMPORT"&&sheet.projectId)&&<button type="button" disabled={loading} onClick={()=>{const source=item.sheets.find(sheet=>sheet.action==="IMPORT"&&sheet.projectId)!;updateAllSheets({projectId:source.projectId,defaultCurrency:source.defaultCurrency,defaultUnitType:source.defaultUnitType,defaultIsResale:source.defaultIsResale})}} className="rounded-xl border border-forest px-4 py-2 text-sm font-bold text-forest">تطبيق سياق أول جدول على كل الجداول المختارة</button>}
                       {!item.sheets?.length && (
                         <WorkbookReview item={item} chooseTable={chooseTable} loading={loading}/>
                       )}
@@ -359,7 +360,7 @@ export function ImportAssistant() {
                       <button
                         onClick={confirm}
                         disabled={loading}
-                        className="mx-auto flex h-11 w-full max-w-[680px] items-center justify-center gap-2 rounded-xl bg-coral text-[10px] font-bold text-white"
+                        className="mx-auto flex h-11 w-full max-w-[680px] items-center justify-center gap-2 rounded-xl bg-coral text-[12px] font-bold text-white"
                       >
                         <CheckCircle2 size={15} /> تأكيد الاستيراد
                       </button>
@@ -371,15 +372,15 @@ export function ImportAssistant() {
                   <Issues issues={item.issues} />
                   {!item.workflow.canPreview && item.workflow.blockingReasons.length > 0 && (
                     <div className="rounded-[18px] border border-amber-200 bg-amber-50 p-4" dir="rtl">
-                      <p className="text-[10px] font-bold">المطلوب قبل المعاينة</p>
-                      <ul className="mt-3 list-disc space-y-1 ps-4 text-[9px] text-amber-900">
+                      <p className="text-[12px] font-bold">المطلوب قبل المعاينة</p>
+                      <ul className="mt-3 list-disc space-y-1 ps-4 text-[12px] text-amber-900">
                         {item.workflow.blockingReasons.map((reason, index) => <li key={`${reason}-${index}`} dir="auto">{reason}</li>)}
                       </ul>
                     </div>
                   )}
                   <div className="rounded-[18px] border border-[#dedfd9] bg-[#e7f0eb] p-4">
-                    <p className="text-[10px] font-bold">Safe by default</p>
-                    <p className="mt-1 text-[9px] leading-4 text-[#66736d]">
+                    <p className="text-[12px] font-bold">Safe by default</p>
+                    <p className="mt-1 text-[12px] leading-4 text-[#66736d]">
                       Blocking issues prevent confirmation. Source files and
                       every import decision remain auditable.
                     </p>
@@ -442,7 +443,7 @@ function AdminNav() {
             await adminApi.logout();
             location.href = "/admin/login";
           }}
-          className="flex h-10 w-full items-center gap-3 rounded-xl px-3 text-[10px] text-white/65"
+          className="flex h-10 w-full items-center gap-3 rounded-xl px-3 text-[12px] text-white/65"
         >
           <Settings size={15} /> Sign out
         </button>
@@ -463,7 +464,7 @@ function EmptyUpload({ onClick }: { onClick: () => void }) {
         <h3 className="mt-5 text-[16px] font-bold">
           Upload an availability workbook
         </h3>
-        <p className="mx-auto mt-2 max-w-sm text-[10px] leading-5 text-[#7b8781]">
+        <p className="mx-auto mt-2 max-w-sm text-[12px] leading-5 text-[#7b8781]">
           XLSX, legacy XLS and CSV are supported. Maximum 20 MB and 10,000 rows.
         </p>
       </div>
@@ -592,19 +593,19 @@ function Answer({
           <div className="mt-2 flex flex-wrap gap-1.5">
             <button
               onClick={() => submit("LEAVE_EMPTY")}
-              className="rounded-full border px-3 py-1.5 text-[8px] font-bold"
+              className="rounded-full border px-3 py-1.5 text-[11px] font-bold"
             >
               Leave empty
             </button>
             <button
               onClick={() => submit("EXCLUDE_ROWS")}
-              className="rounded-full border px-3 py-1.5 text-[8px] font-bold"
+              className="rounded-full border px-3 py-1.5 text-[11px] font-bold"
             >
               Exclude affected rows
             </button>
             <button
               onClick={() => submit("CONTACT_SALES")}
-              className="rounded-full border px-3 py-1.5 text-[8px] font-bold"
+              className="rounded-full border px-3 py-1.5 text-[11px] font-bold"
             >
               Mark Contact Sales
             </button>
@@ -690,11 +691,11 @@ function StepBar({ workflow }: { workflow: ImportWorkflow }) {
           const state = importStepState(workflow, i);
           return <li key={s} className="flex flex-1 items-center last:flex-none" aria-current={state.active ? "step" : undefined}>
             <span
-              className={`grid h-6 min-w-6 place-items-center rounded-full px-1 text-[8px] font-bold ${state.complete ? "bg-forest text-white" : state.active ? "border-2 border-coral text-coral" : "bg-[#eee] text-[#999]"}`}
+              className={`grid h-6 min-w-6 place-items-center rounded-full px-1 text-[11px] font-bold ${state.complete ? "bg-forest text-white" : state.active ? "border-2 border-coral text-coral" : "bg-[#eee] text-[#999]"}`}
             >
               {state.complete ? <Check size={11} /> : state.count > 0 ? state.count : i + 1}
             </span>
-            <span className="ml-2 text-[8px] font-bold">{s}</span>
+            <span className="ml-2 text-[11px] font-bold">{s}</span>
             {i < 4 && (
               <div
                 className={`mx-3 h-px flex-1 ${state.complete ? "bg-forest" : "bg-[#ddd]"}`}
@@ -709,7 +710,7 @@ function StepBar({ workflow }: { workflow: ImportWorkflow }) {
 function Analysis({ item }: { item: ImportData }) {
   return (
     <div className="rounded-[18px] border bg-white p-4">
-      <p className="text-[10px] font-bold">Workbook analysis</p>
+      <p className="text-[12px] font-bold">Workbook analysis</p>
       <div className="mt-4 grid grid-cols-3 gap-2">
         {[
           [item.rowsDetected, "Rows"],
@@ -718,7 +719,7 @@ function Analysis({ item }: { item: ImportData }) {
         ].map(([n, l]) => (
           <div key={String(l)} className="rounded-xl bg-[#f4f3ee] px-3 py-2.5">
             <p className="text-[14px] font-bold">{n}</p>
-            <p className="text-[7px] uppercase text-[#8b958f]">{l}</p>
+            <p className="text-[11px] uppercase text-[#8b958f]">{l}</p>
           </div>
         ))}
       </div>
@@ -727,8 +728,83 @@ function Analysis({ item }: { item: ImportData }) {
 }
 const IMPORT_FIELD_LABELS:Record<string,string>={externalUnitId:"كود الوحدة",phase:"المرحلة",cluster:"المجموعة",building:"المبنى",floor:"الدور",unitType:"نوع الوحدة",unitSubType:"النوع الفرعي",bedrooms:"غرف النوم",bathrooms:"الحمامات",builtUpArea:"المساحة المبنية",landArea:"مساحة الأرض",gardenArea:"مساحة الحديقة",roofArea:"مساحة السطح",terraceArea:"مساحة التراس",price:"السعر الرسمي",currency:"العملة",status:"حالة الوحدة",deliveryDate:"تاريخ التسليم",deliveryYears:"سنوات التسليم",finishingType:"نوع التشطيب",maintenance:"الصيانة",clubFees:"رسوم النادي",discount:"الخصم",offerText:"العرض",METADATA:"معلومة إضافية",IGNORE:"تجاهل العمود",__METADATA__:"معلومة إضافية",__IGNORE__:"تجاهل العمود"};
 const IMPORT_FIELDS=Object.entries(IMPORT_FIELD_LABELS).filter(([value])=>!value.startsWith("__") && !["METADATA","IGNORE"].includes(value));
-function SheetReview({item,projects,updateSheet,updateAll,updateMapping,loading}:{item:ImportData;projects:SelectorItem[];updateSheet:(id:string,data:Record<string,unknown>)=>void;updateAll:(data:Record<string,unknown>)=>void;updateMapping:(id:string,column:string,target:string)=>void;loading:boolean}){
-  return <section className="space-y-3 rounded-2xl border bg-[#fbfaf7] p-4" dir="rtl"><div><h3 className="font-bold">مراجعة الشيتات</h3><p className="mt-1 text-xs text-[#68756f]">اختر الجداول التي تريد استيرادها. الشيتات المتجاهلة لا تنشئ أسئلة أو وحدات أو خطط سداد.</p></div>{item.sheets.map(sheet=><details key={sheet.id} open={sheet.action==="IMPORT"} className="rounded-xl border bg-white p-3"><summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3"><span><b dir="auto">{sheet.sheetName}</b>{sheet.tableId&&<small className="ms-2 text-[#748079]">صفوف {sheet.startRow}–{sheet.endRow}</small>}<small className="mt-1 block text-[#748079]">{sheet.classification} · ثقة {sheet.confidence}% · {sheet.rowsDetected} صف</small></span><span className="flex rounded-lg border p-1"><button type="button" disabled={loading} onClick={event=>{event.preventDefault();updateSheet(sheet.id,{action:"IMPORT"})}} className={`rounded-md px-3 py-2 text-xs font-bold ${sheet.action==="IMPORT"?"bg-forest text-white":""}`}>استيراد</button><button type="button" disabled={loading} onClick={event=>{event.preventDefault();updateSheet(sheet.id,{action:"IGNORE"})}} className={`rounded-md px-3 py-2 text-xs font-bold ${sheet.action==="IGNORE"?"bg-[#ece9e1]":""}`}>تجاهل</button></span></summary>{sheet.action==="IMPORT"&&<div className="mt-4 space-y-4 border-t pt-4"><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4"><label className="text-xs font-bold">المشروع<select value={sheet.projectId||""} onChange={event=>updateSheet(sheet.id,{projectId:event.target.value})} className="mt-1 h-11 w-full rounded-xl border px-2"><option value="">اختر المشروع</option>{projects.map(project=><option key={project.id} value={project.id}>{project.name}</option>)}</select></label><label className="text-xs font-bold">العملة<select value={sheet.defaultCurrency||""} onChange={event=>updateSheet(sheet.id,{defaultCurrency:event.target.value})} className="mt-1 h-11 w-full rounded-xl border px-2"><option value="">من عمود الملف</option>{["EGP","USD","EUR","AED","SAR","GBP"].map(value=><option key={value}>{value}</option>)}</select></label><label className="text-xs font-bold">نوع الوحدة الافتراضي<select value={sheet.defaultUnitType||""} onChange={event=>updateSheet(sheet.id,{defaultUnitType:event.target.value})} className="mt-1 h-11 w-full rounded-xl border px-2"><option value="">بدون افتراض</option>{["APARTMENT","VILLA","TOWNHOUSE","TWIN_HOUSE","CHALET","OFFICE","CLINIC","RETAIL","COMMERCIAL","ADMINISTRATIVE","MEDICAL","OTHER"].map(value=><option key={value}>{value}</option>)}</select></label><label className="text-xs font-bold">صف العناوين<div className="mt-1 flex gap-1"><input id={`header-${sheet.id}`} type="number" min="1" defaultValue={sheet.headerRow||1} className="h-11 min-w-0 flex-1 rounded-xl border px-2"/><button type="button" onClick={()=>{const input=document.getElementById(`header-${sheet.id}`) as HTMLInputElement;updateSheet(sheet.id,{headerRow:Number(input.value)})}} className="rounded-xl border px-3">تطبيق</button></div></label></div><div><h4 className="text-sm font-bold">معاينة المصدر</h4><div className="mt-2 overflow-x-auto"><table className="min-w-full text-xs"><thead><tr>{(sheet.columns||[]).map(column=><th key={column.key} className="whitespace-nowrap border p-2 text-start" dir="auto">{column.originalHeader}</th>)}</tr></thead><tbody>{(sheet.sourcePreview||[]).slice(0,5).map((row,index)=><tr key={index}>{(sheet.columns||[]).map(column=><td key={column.key} className="max-w-44 truncate border p-2" dir="auto">{row[column.key]==null?"—":String(row[column.key])}</td>)}</tr>)}</tbody></table></div></div><div><h4 className="text-sm font-bold">مراجعة الأعمدة</h4><div className="mt-2 space-y-2">{(sheet.columns||[]).map(column=><div key={column.key} className="grid items-center gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_1fr_220px]"><div><b dir="auto">{column.originalHeader}</b><small className="mt-1 block truncate text-[#748079]" dir="auto">{(column.samples||[]).map(String).join(" · ")||"لا توجد عينات"}</small></div><span className="text-xs">{IMPORT_FIELD_LABELS[sheet.mappings?.[column.key]||""]||"يحتاج مراجعة"}<small className="block text-[#748079]">{sheet.mappingSources?.[column.key]||"غير محدد"}</small></span><select value={(sheet.mappings?.[column.key]||"").replace(/^__|__$/g,"")} onChange={event=>updateMapping(sheet.id,column.key,event.target.value)} className="h-10 rounded-lg border px-2 text-sm"><option value="">تعديل المعنى</option>{IMPORT_FIELDS.map(([value,label])=><option key={value} value={value}>{label}</option>)}<option value="METADATA">معلومة إضافية</option><option value="IGNORE">تجاهل العمود</option></select></div>)}</div></div>{sheet.previewMappingVersion!=null&&sheet.previewMappingVersion!==sheet.mappingVersion&&<p className="rounded-lg bg-amber-50 p-3 text-xs font-bold text-amber-800">تم تعديل التفسير. يجب إنشاء المعاينة مرة أخرى.</p>}</div>}</details>)}</section>;
+function SheetReview({item,projects,updateSheet,markAllInventory,updateMapping,loading}:{item:ImportData;projects:SelectorItem[];updateSheet:(id:string,data:Record<string,unknown>)=>void;markAllInventory:()=>void;updateMapping:(id:string,column:string,target:string)=>void;loading:boolean}){
+  const imported = item.sheets.filter((sheet) => sheet.action === "IMPORT").length;
+  return (
+    <section className="space-y-3 rounded-2xl border bg-[#fbfaf7] p-4" dir="rtl">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="font-bold">مراجعة شيتات المخزون</h3>
+          <p className="mt-1 text-xs leading-6 text-[#68756f]">كل Sheet مستقل. لو الملف كله Inventory استخدم الزر مرة واحدة بدل مراجعة كل صفحة يدويًا.</p>
+        </div>
+        {item.status !== "COMPLETED" && (
+          <button type="button" disabled={loading || imported === item.sheets.length} onClick={markAllInventory} className="rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-40">
+            اعتبر كل الشيتات مخزون
+          </button>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-2 text-[11px] font-bold text-[#68756f]">
+        <span className="rounded-full bg-white px-3 py-1.5">{item.sheets.length} Sheet</span>
+        <span className="rounded-full bg-white px-3 py-1.5">{imported} للاستيراد</span>
+      </div>
+      {item.sheets.map((sheet) => (
+        <details key={sheet.id} open={sheet.action === "IMPORT"} className="rounded-xl border bg-white p-3">
+          <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3">
+            <span>
+              <span className="flex flex-wrap items-center gap-2">
+                <b dir="auto">{sheet.sheetName}</b>
+                {sheet.defaultIsResale && <small className="rounded-full bg-[#f2eadc] px-2 py-1 font-bold text-[#765b31]">Resale</small>}
+              </span>
+              {sheet.tableId && <small className="mt-1 block text-[#748079]">صفوف {sheet.startRow}–{sheet.endRow}</small>}
+              <small className="mt-1 block text-[#748079]">{sheet.classification} · ثقة {sheet.confidence}% · {sheet.rowsDetected} صف</small>
+            </span>
+            <span className="flex rounded-lg border p-1">
+              <button type="button" disabled={loading} onClick={(event)=>{event.preventDefault();updateSheet(sheet.id,{action:"IMPORT"})}} className={`rounded-md px-3 py-2 text-xs font-bold ${sheet.action==="IMPORT"?"bg-forest text-white":""}`}>استيراد</button>
+              <button type="button" disabled={loading} onClick={(event)=>{event.preventDefault();updateSheet(sheet.id,{action:"IGNORE"})}} className={`rounded-md px-3 py-2 text-xs font-bold ${sheet.action==="IGNORE"?"bg-[#ece9e1]":""}`}>تجاهل</button>
+            </span>
+          </summary>
+          {sheet.action === "IMPORT" && (
+            <div className="mt-4 space-y-4 border-t pt-4">
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                <label className="text-xs font-bold">المشروع
+                  <select value={sheet.projectId||""} onChange={(event)=>updateSheet(sheet.id,{projectId:event.target.value})} className="mt-1 h-11 w-full rounded-xl border px-2 text-sm">
+                    <option value="">اختر المشروع</option>{projects.map((project)=><option key={project.id} value={project.id}>{project.name}</option>)}
+                  </select>
+                </label>
+                <label className="text-xs font-bold">العملة
+                  <select value={sheet.defaultCurrency||""} onChange={(event)=>updateSheet(sheet.id,{defaultCurrency:event.target.value})} className="mt-1 h-11 w-full rounded-xl border px-2 text-sm">
+                    <option value="">من عمود الملف</option>{["EGP","USD","EUR","AED","SAR","GBP"].map((value)=><option key={value}>{value}</option>)}
+                  </select>
+                </label>
+                <label className="text-xs font-bold">نوع الوحدة الافتراضي
+                  <select value={sheet.defaultUnitType||""} onChange={(event)=>updateSheet(sheet.id,{defaultUnitType:event.target.value})} className="mt-1 h-11 w-full rounded-xl border px-2 text-sm">
+                    <option value="">بدون افتراض</option>{["APARTMENT","VILLA","TOWNHOUSE","TWIN_HOUSE","CHALET","OFFICE","CLINIC","RETAIL","COMMERCIAL","ADMINISTRATIVE","MEDICAL","OTHER"].map((value)=><option key={value}>{value}</option>)}
+                  </select>
+                </label>
+                <label className="text-xs font-bold">تصنيف البيع
+                  <button type="button" disabled={loading} onClick={()=>updateSheet(sheet.id,{defaultIsResale:!sheet.defaultIsResale})} className={`mt-1 flex h-11 w-full items-center justify-between rounded-xl border px-3 text-sm ${sheet.defaultIsResale?"border-[#b08c52] bg-[#f7f0e5] text-[#71562e]":"bg-white"}`}>
+                    <span>{sheet.defaultIsResale ? "Resale" : "Primary"}</span><span className={`h-5 w-9 rounded-full p-0.5 ${sheet.defaultIsResale?"bg-[#b08c52]":"bg-[#d9dfdc]"}`}><span className={`block h-4 w-4 rounded-full bg-white transition ${sheet.defaultIsResale?"translate-x-0":"-translate-x-4"}`}/></span>
+                  </button>
+                </label>
+                <label className="text-xs font-bold">صف العناوين
+                  <div className="mt-1 flex gap-1"><input id={`header-${sheet.id}`} type="number" min="1" defaultValue={sheet.headerRow||1} className="h-11 min-w-0 flex-1 rounded-xl border px-2 text-sm"/><button type="button" onClick={()=>{const input=document.getElementById(`header-${sheet.id}`) as HTMLInputElement;updateSheet(sheet.id,{headerRow:Number(input.value)})}} className="rounded-xl border px-3">تطبيق</button></div>
+                </label>
+              </div>
+              <div>
+                <h4 className="text-sm font-bold">معاينة المصدر</h4>
+                <div className="mt-2 overflow-x-auto"><table className="min-w-full text-xs"><thead><tr>{(sheet.columns||[]).map((column)=><th key={column.key} className="whitespace-nowrap border p-2 text-start" dir="auto">{column.originalHeader}</th>)}</tr></thead><tbody>{(sheet.sourcePreview||[]).slice(0,5).map((row,index)=><tr key={index}>{(sheet.columns||[]).map((column)=><td key={column.key} className="max-w-44 truncate border p-2" dir="auto">{row[column.key]==null?"—":String(row[column.key])}</td>)}</tr>)}</tbody></table></div>
+              </div>
+              <div>
+                <h4 className="text-sm font-bold">مراجعة الأعمدة</h4>
+                <div className="mt-2 space-y-2">{(sheet.columns||[]).map((column)=><div key={column.key} className="grid items-center gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_1fr_220px]"><div><b dir="auto">{column.originalHeader}</b><small className="mt-1 block truncate text-[#748079]" dir="auto">{(column.samples||[]).map(String).join(" · ")||"لا توجد عينات"}</small></div><span className="text-xs">{IMPORT_FIELD_LABELS[sheet.mappings?.[column.key]||""]||"يحتاج مراجعة"}<small className="block text-[#748079]">{sheet.mappingSources?.[column.key]||"غير محدد"}</small></span><select value={(sheet.mappings?.[column.key]||"").replace(/^__|__$/g,"")} onChange={(event)=>updateMapping(sheet.id,column.key,event.target.value)} className="h-10 rounded-lg border px-2 text-sm"><option value="">تعديل المعنى</option>{IMPORT_FIELDS.map(([value,label])=><option key={value} value={value}>{label}</option>)}<option value="METADATA">معلومة إضافية</option><option value="IGNORE">تجاهل العمود</option></select></div>)}</div>
+              </div>
+              {sheet.previewMappingVersion!=null && sheet.previewMappingVersion!==sheet.mappingVersion && <p className="rounded-lg bg-amber-50 p-3 text-xs font-bold text-amber-800">تم تعديل التفسير. يجب إنشاء المعاينة مرة أخرى.</p>}
+            </div>
+          )}
+        </details>
+      ))}
+    </section>
+  );
 }
 function WorkbookReview({ item, chooseTable, loading }: { item: ImportData; chooseTable: (sheetName: string, headerRow: number) => void; loading: boolean }) {
   const analysis = item.analysis?.workbookAnalysis;
@@ -750,7 +826,7 @@ function MappingReview({ item }: { item: ImportData }) {
 function Issues({ issues }: { issues: Issue[] }) {
   return (
     <div className="rounded-[18px] border bg-white p-4">
-      <p className="text-[10px] font-bold">Issues</p>
+      <p className="text-[12px] font-bold">Issues</p>
       <div className="mt-4 space-y-3">
         {issues.length ? (
           issues.map((i) => (
@@ -759,15 +835,15 @@ function Issues({ issues }: { issues: Issue[] }) {
                 className={`mt-1 h-2 w-2 rounded-full ${i.resolvedAt ? "bg-[#3d8c6c]" : i.severity === "BLOCKING" ? "bg-coral" : "bg-[#e3ad52]"}`}
               />
               <div>
-                <p className="text-[8px] font-bold">{i.message}</p>
-                <p className="text-[7px] text-[#8b958f]">
+                <p className="text-[11px] font-bold">{i.message}</p>
+                <p className="text-[11px] text-[#8b958f]">
                   {i.resolvedAt ? "Resolved" : i.severity}
                 </p>
               </div>
             </div>
           ))
         ) : (
-          <p className="text-[8px] text-[#8b958f]">No issues detected</p>
+          <p className="text-[11px] text-[#8b958f]">No issues detected</p>
         )}
       </div>
     </div>

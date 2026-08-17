@@ -32,6 +32,7 @@ export type StructuredIntent = {
   language: string;
   dialect?: "EGYPTIAN_ARABIC" | "MSA" | "ENGLISH" | "MIXED";
   purpose?: "LIVING" | "INVESTMENT";
+  inventoryMarket?: "PRIMARY" | "RESALE";
   locations?: string[];
   propertyTypes?: string[];
   bedrooms?: number;

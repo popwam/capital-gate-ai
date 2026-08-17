@@ -152,9 +152,17 @@ export class HybridAIProvider implements AIProvider {
   }
 
   private shouldFallback(error: unknown) {
-    return error instanceof AIUpstreamError
-      ? error.status === 413 || error.status === 429 || error.retryable || !error.status
-      : true;
+    if (!(error instanceof AIUpstreamError)) return true;
+    // Authentication / org permission errors are account-level and should not fan out
+    // across every model. A missing/decommissioned model is model-level and should.
+    if (error.status === 401 || error.status === 403) return false;
+    return error.code === "MODEL_UNAVAILABLE" || error.retryable || !error.status;
+  }
+
+  private openAIFallbackEnabled() {
+    return process.env.OPENAI_FALLBACK_ENABLED === "true"
+      && Boolean(process.env.OPENAI_API_KEY?.trim())
+      && Boolean(process.env.OPENAI_TEXT_MODEL?.trim());
   }
 
   private is413(error: unknown) {
@@ -261,7 +269,17 @@ export class HybridAIProvider implements AIProvider {
       return await this.composeWithGroqRoute(input, route);
     } catch (groqError) {
       fallbackInput = this.is413(groqError) ? compactAnswerInput(input, "aggressive") : compactAnswerInput(input, "normal");
-      this.logger.warn("All selected Groq models unavailable; using OpenAI fallback");
+      if (!this.openAIFallbackEnabled()) {
+        this.logger.warn("All selected Groq models unavailable; OpenAI fallback disabled; using Workers AI");
+        try {
+          return await this.workers.composeAnswer(fallbackInput);
+        } catch (workersError) {
+          this.traceFailure(fallbackInput, "workers", this.workers.primaryModel, "WORKERS_RESPONSE_FALLBACK", workersError, false, false);
+          unavailable("workers", workersError);
+        }
+      }
+
+      this.logger.warn("All selected Groq models unavailable; using opt-in OpenAI fallback");
       const started = Date.now();
 
       try {
@@ -275,7 +293,7 @@ export class HybridAIProvider implements AIProvider {
         })}`);
         await this.usage?.record({
           provider: "openai",
-          model: process.env.OPENAI_TEXT_MODEL || "gpt-5-mini",
+          model: process.env.OPENAI_TEXT_MODEL || "unconfigured",
           taskType: "customer_answer",
           latencyMs: Date.now() - started,
           success: true,
@@ -283,7 +301,7 @@ export class HybridAIProvider implements AIProvider {
         });
         return result;
       } catch (openaiError) {
-        this.traceFailure(fallbackInput, "openai", process.env.OPENAI_TEXT_MODEL || "gpt-5-mini", "OPENAI_FALLBACK", openaiError, true, false);
+        this.traceFailure(fallbackInput, "openai", process.env.OPENAI_TEXT_MODEL || "unconfigured", "OPENAI_FALLBACK", openaiError, true, false);
         this.logger.warn("OpenAI generation unavailable; using Workers AI compatibility fallback");
         try {
           return await this.workers.composeAnswer(fallbackInput);
@@ -327,12 +345,21 @@ export class HybridAIProvider implements AIProvider {
       }
     }
 
-    if (lastError && !this.shouldFallback(lastError)) unavailable("groq", lastError);
-    this.logger.warn("All selected Groq stream models unavailable; using OpenAI stream fallback");
-
     const openAIInput = lastError && this.is413(lastError)
       ? compactAnswerInput(input, "aggressive")
       : compactAnswerInput(input, "normal");
+    if (!this.openAIFallbackEnabled()) {
+      this.logger.warn("Groq stream unavailable; OpenAI fallback disabled; using Workers AI");
+      try {
+        yield await this.workers.composeAnswer(openAIInput);
+        return;
+      } catch (workersError) {
+        this.traceFailure(openAIInput, "workers", this.workers.primaryModel, "WORKERS_RESPONSE_FALLBACK", workersError, false, false);
+        unavailable("workers", workersError);
+      }
+    }
+
+    this.logger.warn("Groq stream unavailable; using opt-in OpenAI stream fallback");
     const started = Date.now();
 
     try {
@@ -348,7 +375,7 @@ export class HybridAIProvider implements AIProvider {
       })}`);
       await this.usage?.record({
         provider: "openai",
-        model: process.env.OPENAI_TEXT_MODEL || "gpt-5-mini",
+        model: process.env.OPENAI_TEXT_MODEL || "unconfigured",
         taskType: "customer_stream",
         latencyMs: Date.now() - started,
         success: true,
@@ -356,7 +383,7 @@ export class HybridAIProvider implements AIProvider {
       });
       return;
     } catch (openaiError) {
-      this.traceFailure(openAIInput, "openai", process.env.OPENAI_TEXT_MODEL || "gpt-5-mini", "OPENAI_FALLBACK", openaiError, true, false);
+      this.traceFailure(openAIInput, "openai", process.env.OPENAI_TEXT_MODEL || "unconfigured", "OPENAI_FALLBACK", openaiError, true, false);
       this.logger.warn("OpenAI stream unavailable; using Workers AI compatibility fallback");
       try {
         yield await this.workers.composeAnswer(openAIInput);
@@ -368,15 +395,19 @@ export class HybridAIProvider implements AIProvider {
   }
 
   async health(): Promise<AIHealth[]> {
-    const base = await Promise.all([this.workers.health(), this.groq.health(), this.openai.health()]);
+    // OpenAI is an explicit paid fallback. Do not ping it from the dashboard unless
+    // the operator has deliberately enabled that fallback.
+    const base = await Promise.all([this.workers.health(), this.groq.health()]);
+    const openAI = this.openAIFallbackEnabled() ? [await this.openai.health()] : [];
     const models = configuredGroqModels();
     return [
       ...base,
+      ...openAI,
       {
         provider: "groq-router",
         configured: Boolean(process.env.GROQ_API_KEY),
         healthy: Boolean(process.env.GROQ_API_KEY),
-        model: `${models.arabic} | ${models.general} | ${models.reasoning}`,
+        model: `fast=${models.fast} | general=${models.general} | reasoning=${models.reasoning} | vision=${process.env.GROQ_VISION_MODEL || "qwen/qwen3.6-27b"}`,
       },
     ];
   }

@@ -1066,6 +1066,10 @@ export class ImporterService {
       data.defaultCurrency = currency;
     }
     if (body.defaultUnitType !== undefined) data.defaultUnitType = body.defaultUnitType ? normalizeUnitType(body.defaultUnitType) : null;
+    if (body.defaultIsResale !== undefined) {
+      const value = typeof body.defaultIsResale === "boolean" ? body.defaultIsResale : String(body.defaultIsResale).toLowerCase() === "true";
+      data.defaultIsResale = value;
+    }
     if (body.headerRow != null) {
       const headerRow = Number(body.headerRow);
       if (!Number.isInteger(headerRow) || headerRow < 1) throw new BadRequestException("اختر صف عناوين صحيحاً.");
@@ -1101,6 +1105,12 @@ export class ImporterService {
   async updateSelectedSheets(importId: string, body: Record<string, unknown>) {
     const sheets = await this.prisma.importSheet.findMany({ where: { importId, action: "IMPORT" }, select: { id: true } });
     for (const sheet of sheets) await this.updateImportSheet(importId, sheet.id, body);
+    return this.get(importId);
+  }
+
+  async markAllSheetsAsInventory(importId: string) {
+    const sheets = await this.prisma.importSheet.findMany({ where: { importId }, select: { id: true } });
+    for (const sheet of sheets) await this.updateImportSheet(importId, sheet.id, { action: "IMPORT" });
     return this.get(importId);
   }
 
@@ -1430,6 +1440,7 @@ export class ImporterService {
     const values: Record<string, unknown> = {};
     if (sheet.defaultCurrency) values.currency = sheet.defaultCurrency;
     if (sheet.defaultUnitType) values.unitType = sheet.defaultUnitType;
+    values.isResale = Boolean(sheet.defaultIsResale);
     const metadata: Record<string, unknown> = {};
     for (const [source, target] of Object.entries((sheet.mappings ?? {}) as Record<string, string>)) {
       const raw = row[source];
@@ -1766,6 +1777,7 @@ export class ImporterService {
       terraceArea: this.number(values.terraceArea),
       price: this.number(values.price),
       currency: text("currency"),
+      isResale: values.isResale === true || String(values.isResale ?? "").toLowerCase() === "true",
       status: contactSales
         ? UnitStatus.CONTACT_SALES
         : values.status != null

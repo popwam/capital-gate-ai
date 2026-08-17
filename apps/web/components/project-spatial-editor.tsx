@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { adminApi, adminErrorMessage } from "@/lib/api";
+import { ProjectBoundaryMap } from "@/components/project-boundary-map";
 
 type Unit = { id:string; externalUnitId:string; unitType?:string|null; building?:string|null; floor?:string|null; latitude?:number|string|null; longitude?:number|string|null; projectBuildingId?:string|null; projectZoneId?:string|null; masterPlanX?:number|string|null; masterPlanY?:number|string|null; masterPlanLocationStatus?:string|null };
 type Gate = { id:string; name:string; nameAr?:string|null; gateNumber?:number|null; latitude?:number|string|null; longitude?:number|string|null; masterPlanX?:number|string|null; masterPlanY?:number|string|null; isMain?:boolean|null };
@@ -10,7 +11,7 @@ type Zone = { id:string; name:string; nameAr?:string|null; buildings?:Building[]
 type Media = { id:string; type:string; url:string };
 type BoundaryPoint = { lat:number; lng:number };
 type CalibrationAnchor = { x:number; y:number; latitude:number; longitude:number; boundaryIndex?:number };
-type ProjectData = { gates?:Gate[]; zones?:Zone[]; buildings?:Building[]; boundaryGeoJson?:{type?:string;coordinates?:number[][][]}|null; boundarySource?:string|null; boundaryConfirmedAt?:string|null; masterPlanCalibration?:{anchors?:CalibrationAnchor[]}|null };
+type ProjectData = { latitude?:number|string|null; longitude?:number|string|null; gates?:Gate[]; zones?:Zone[]; buildings?:Building[]; boundaryGeoJson?:{type?:string;coordinates?:number[][][]}|null; boundarySource?:string|null; boundaryConfirmedAt?:string|null; masterPlanCalibration?:{anchors?:CalibrationAnchor[]}|null };
 type UnitPage = { items:Unit[]; total:number };
 type PendingPoint = { x:number; y:number } | null;
 
@@ -24,21 +25,15 @@ function boundaryPoints(value?:ProjectData["boundaryGeoJson"]):BoundaryPoint[]{
   return points;
 }
 
-function BoundaryPreview({points}:{points:BoundaryPoint[]}){
-  if(points.length<2)return <div className="grid h-40 place-items-center rounded-2xl bg-[#f5f4ef] text-sm text-[#77827d]">أضف 3 نقاط GPS على الأقل لرسم حدود المشروع.</div>;
-  const lats=points.map(p=>p.lat),lngs=points.map(p=>p.lng),minLat=Math.min(...lats),maxLat=Math.max(...lats),minLng=Math.min(...lngs),maxLng=Math.max(...lngs),w=Math.max(.000001,maxLng-minLng),h=Math.max(.000001,maxLat-minLat);
-  const pos=(p:BoundaryPoint)=>({x:12+((p.lng-minLng)/w)*276,y:148-((p.lat-minLat)/h)*130});
-  return <svg viewBox="0 0 300 160" className="h-40 w-full rounded-2xl bg-[#f5f4ef]"><polygon points={points.map(p=>{const q=pos(p);return `${q.x},${q.y}`}).join(" ")} fill="rgba(24,59,51,.12)" stroke="currentColor" strokeWidth="2"/>{points.map((p,i)=>{const q=pos(p);return <g key={i}><circle cx={q.x} cy={q.y} r="4" fill="currentColor"/><text x={q.x+6} y={q.y-5} fontSize="9">{i+1}</text></g>})}</svg>;
-}
-
 export function ProjectSpatialEditor({projectId,media=[]}:{projectId:string;media?:Media[]}){
   const plan=useMemo(()=>media.find(x=>x.type==="MASTER_PLAN"),[media]);
   const imageRef=useRef<HTMLImageElement>(null);
   const [units,setUnits]=useState<Unit[]>([]),[gates,setGates]=useState<Gate[]>([]),[zones,setZones]=useState<Zone[]>([]),[buildings,setBuildings]=useState<Building[]>([]),[boundary,setBoundary]=useState<BoundaryPoint[]>([]),[anchors,setAnchors]=useState<CalibrationAnchor[]>([]);
+  const [projectCenter,setProjectCenter]=useState<BoundaryPoint|null>(null);
   const [pending,setPending]=useState<PendingPoint>(null),[entityType,setEntityType]=useState<"BUILDING"|"UNITS"|"GATE">("BUILDING"),[selectedBuildingId,setSelectedBuildingId]=useState(""),[selectedGateId,setSelectedGateId]=useState(""),[selectedUnitIds,setSelectedUnitIds]=useState<string[]>([]),[unitFilter,setUnitFilter]=useState(""),[calibrationMode,setCalibrationMode]=useState(false),[boundaryIndex,setBoundaryIndex]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState("");
 
   const fetchUnits=async()=>{const first=await adminApi.get<UnitPage>(`/catalog/units?projectId=${encodeURIComponent(projectId)}&page=1&pageSize=100`);const all=[...(first.items??[])];const pages=Math.ceil((first.total??all.length)/100);for(let page=2;page<=pages;page++){const next=await adminApi.get<UnitPage>(`/catalog/units?projectId=${encodeURIComponent(projectId)}&page=${page}&pageSize=100`);all.push(...(next.items??[]))}return all};
-  const load=async()=>{try{const [allUnits,project]=await Promise.all([fetchUnits(),adminApi.get<ProjectData>(`/real-estate/projects/${projectId}`)]);setUnits(allUnits);setGates(project.gates??[]);setZones(project.zones??[]);setBuildings(project.buildings??project.zones?.flatMap(z=>z.buildings??[])??[]);setBoundary(boundaryPoints(project.boundaryGeoJson));setAnchors(Array.isArray(project.masterPlanCalibration?.anchors)?project.masterPlanCalibration!.anchors!:[]);}catch(e){setError(adminErrorMessage(e))}};
+  const load=async()=>{try{const [allUnits,project]=await Promise.all([fetchUnits(),adminApi.get<ProjectData>(`/real-estate/projects/${projectId}`)]);setUnits(allUnits);setGates(project.gates??[]);setZones(project.zones??[]);setBuildings(project.buildings??project.zones?.flatMap(z=>z.buildings??[])??[]);setBoundary(boundaryPoints(project.boundaryGeoJson));const lat=Number(project.latitude),lng=Number(project.longitude);setProjectCenter(Number.isFinite(lat)&&Number.isFinite(lng)?{lat,lng}:null);setAnchors(Array.isArray(project.masterPlanCalibration?.anchors)?project.masterPlanCalibration!.anchors!:[]);}catch(e){setError(adminErrorMessage(e))}};
   useEffect(()=>{void load()},[projectId]);
 
   const normalizedPoint=(clientX:number,clientY:number)=>{if(!imageRef.current)return null;const r=imageRef.current.getBoundingClientRect();return{x:Math.max(0,Math.min(1,(clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(clientY-r.top)/r.height))}};
@@ -54,13 +49,12 @@ export function ProjectSpatialEditor({projectId,media=[]}:{projectId:string;medi
 
   async function addBuilding(event:FormEvent<HTMLFormElement>){event.preventDefault();const form=new FormData(event.currentTarget);try{setBusy(true);const item=await adminApi.post<Building>(`/real-estate/projects/${projectId}/buildings`,{name:String(form.get("name")||"").trim(),nameAr:String(form.get("nameAr")||"").trim()||undefined,code:String(form.get("code")||"").trim()||undefined,zoneId:String(form.get("zoneId")||"")||undefined});setSelectedBuildingId(item.id);event.currentTarget.reset();await load()}catch(e){setError(adminErrorMessage(e))}finally{setBusy(false)}}
   async function addGate(event:FormEvent<HTMLFormElement>){event.preventDefault();const form=new FormData(event.currentTarget);try{setBusy(true);const item=await adminApi.post<Gate>(`/real-estate/projects/${projectId}/gates`,{name:String(form.get("name")||"").trim(),nameAr:String(form.get("nameAr")||"").trim()||undefined,gateNumber:String(form.get("gateNumber")||"")?Number(form.get("gateNumber")):undefined,isMain:form.get("isMain")==="on"});setSelectedGateId(item.id);event.currentTarget.reset();await load()}catch(e){setError(adminErrorMessage(e))}finally{setBusy(false)}}
-  const addBoundaryPoint=(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const form=new FormData(event.currentTarget),lat=Number(form.get("lat")),lng=Number(form.get("lng"));if(!Number.isFinite(lat)||!Number.isFinite(lng))return;setBoundary(p=>[...p,{lat,lng}]);event.currentTarget.reset()};
-  const saveBoundary=async()=>{if(boundary.length<3)return setError("أضف 3 نقاط GPS على الأقل.");try{setBusy(true);await adminApi.patch(`/real-estate/projects/${projectId}/boundary`,{points:boundary,source:"GPS_MANUAL"});await load()}catch(e){setError(adminErrorMessage(e))}finally{setBusy(false)}};
+  const saveBoundary=async()=>{if(boundary.length<3)return setError("أضف 3 نقاط GPS على الأقل.");try{setBusy(true);await adminApi.patch(`/real-estate/projects/${projectId}/boundary`,{points:boundary,source:"MAP_DRAWN"});await load()}catch(e){setError(adminErrorMessage(e))}finally{setBusy(false)}};
 
   return <section className="mt-6 space-y-5" dir="rtl">
     <div className="rounded-[24px] border bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-extrabold">حدود المشروع ومعايرة الـ Master Plan</h2><p className="mt-1 text-sm leading-7 text-[#68756f]">الـ GPS هو المرجع الحقيقي. بعد حفظ حدود الكمباوند، اربط 3 نقاط أو أكثر من الحدود بنفس الأماكن على صورة الـ Master Plan؛ بعدها أي مبنى أو وحدة تحطها على الصورة يطلع لها Latitude/Longitude تلقائيًا.</p></div><span className={`rounded-full px-3 py-1 text-xs font-bold ${anchors.length>=3?"bg-emerald-50 text-emerald-800":"bg-amber-50 text-amber-800"}`}>{anchors.length>=3?`تمت المعايرة · ${anchors.length} نقاط`:`المعايرة ناقصة · ${anchors.length}/3`}</span></div>
-      <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_380px]"><BoundaryPreview points={boundary}/><div className="space-y-3"><form onSubmit={addBoundaryPoint} className="grid grid-cols-2 gap-2"><input name="lat" required type="number" step="any" placeholder="Latitude" className="h-11 rounded-xl border px-3"/><input name="lng" required type="number" step="any" placeholder="Longitude" className="h-11 rounded-xl border px-3"/><button className="col-span-2 h-11 rounded-xl border font-bold">+ إضافة نقطة GPS</button></form><div className="max-h-32 overflow-auto rounded-xl border">{boundary.map((p,i)=><div key={i} className="flex items-center justify-between border-b px-3 py-2 text-xs"><span dir="ltr">#{i+1} {p.lat.toFixed(7)}, {p.lng.toFixed(7)}</span><button type="button" onClick={()=>setBoundary(v=>v.filter((_,x)=>x!==i))} className="text-red-700">حذف</button></div>)}</div><button disabled={busy||boundary.length<3} type="button" onClick={saveBoundary} className="h-11 w-full rounded-xl bg-forest font-bold text-white disabled:opacity-40">حفظ حدود GPS</button></div></div>
+      <div className="mt-4 space-y-3"><ProjectBoundaryMap points={boundary} onChange={setBoundary} center={projectCenter}/><div className="flex flex-wrap items-center gap-2"><button type="button" disabled={busy||!boundary.length} onClick={()=>setBoundary(points=>points.slice(0,-1))} className="h-10 rounded-xl border px-4 text-sm font-bold disabled:opacity-40">تراجع عن آخر نقطة</button><button type="button" disabled={busy||!boundary.length} onClick={()=>setBoundary([])} className="h-10 rounded-xl border px-4 text-sm font-bold text-red-700 disabled:opacity-40">مسح الرسم</button><span className="text-xs text-[#68756f]">{boundary.length} نقطة</span><button disabled={busy||boundary.length<3} type="button" onClick={saveBoundary} className="me-auto h-10 rounded-xl bg-forest px-5 text-sm font-bold text-white disabled:opacity-40">حفظ حدود المشروع</button></div></div>
     </div>
 
     <div className="rounded-[24px] border bg-white p-5">

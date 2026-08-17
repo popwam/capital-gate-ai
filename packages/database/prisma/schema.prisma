@@ -329,6 +329,7 @@ model Unit {
   price                 Decimal?           @db.Decimal(16, 2)
   currency              String?
   status                UnitStatus         @default(AVAILABLE)
+  isResale              Boolean            @default(false)
   deliveryDate          DateTime?
   deliveryYears         Decimal?           @db.Decimal(4, 1)
   finishingType         String?
@@ -371,6 +372,7 @@ model Unit {
 
   @@unique([developerId, projectId, externalUnitId])
   @@index([projectId, status, price, bedrooms])
+  @@index([isResale, status])
   @@index([projectZoneId])
   @@index([projectBuildingId])
 }
@@ -647,6 +649,7 @@ model ImportSheet {
   location              Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
   defaultCurrency       String?
   defaultUnitType       String?
+  defaultIsResale       Boolean     @default(false)
   columns               Json?
   mappings              Json?
   mappingSources        Json?

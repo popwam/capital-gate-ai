@@ -8,7 +8,7 @@ import { ImporterService } from "./importer.service";
 import { ImportHttpException, importErrorDetails } from "./import-errors";
 
 class ResolutionDto { @IsString() @IsNotEmpty() field!: string; @Allow() value!: unknown; }
-class SheetUpdateDto { @Allow() action?: unknown; @Allow() headerRow?: unknown; @Allow() projectId?: unknown; @Allow() developerId?: unknown; @Allow() locationId?: unknown; @Allow() defaultCurrency?: unknown; @Allow() defaultUnitType?: unknown; }
+class SheetUpdateDto { @Allow() action?: unknown; @Allow() headerRow?: unknown; @Allow() projectId?: unknown; @Allow() developerId?: unknown; @Allow() locationId?: unknown; @Allow() defaultCurrency?: unknown; @Allow() defaultUnitType?: unknown; @Allow() defaultIsResale?: unknown; }
 class SheetMappingDto { @IsString() @IsNotEmpty() sourceColumn!: string; @IsString() @IsNotEmpty() canonicalField!: string; }
 class CorrectionDto extends SheetMappingDto {}
 class CorrectionDecisionDto { @Allow() decisions?: Record<string,string>; }
@@ -42,6 +42,7 @@ export class ImportsController {
   }
   @Post(":id/resolve") resolve(@Param("id") id: string, @Body() body: ResolutionDto) { return this.imports.resolve(id, body.field, body.value); }
   @Patch(":id/sheets") updateSelectedSheets(@Param("id") id:string,@Body() body:SheetUpdateDto){return this.imports.updateSelectedSheets(id,body as Record<string,unknown>);}
+  @Patch(":id/sheets/all-inventory") allSheetsInventory(@Param("id") id:string){return this.imports.markAllSheetsAsInventory(id);}
   @Patch(":id/sheets/:sheetId") updateSheet(@Param("id") id: string, @Param("sheetId") sheetId: string, @Body() body: SheetUpdateDto) { return this.imports.updateImportSheet(id, sheetId, body as Record<string, unknown>); }
   @Patch(":id/sheets/:sheetId/mapping") updateSheetMapping(@Param("id") id: string, @Param("sheetId") sheetId: string, @Body() body: SheetMappingDto) { return this.imports.updateImportSheetMapping(id, sheetId, body.sourceColumn, body.canonicalField); }
   @Post(":id/sheets/:sheetId/corrections") async createCorrection(@Param("id") id:string,@Param("sheetId") sheetId:string,@Body() body:CorrectionDto,@Req() req:any){const result=await this.imports.createCorrection(id,sheetId,body.sourceColumn,body.canonicalField,req.admin.id);await this.audit.record(req.admin.id,"IMPORT_CORRECTION_CREATED","DataImport",id,{correctionId:result.id,sheetId,sourceColumn:body.sourceColumn,canonicalField:body.canonicalField});return result;}

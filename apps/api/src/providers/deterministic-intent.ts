@@ -53,6 +53,8 @@ export function deterministicIntent(messages: AIMessage[], previous: StructuredI
   const paymentYears = text.match(/(?:تقسيط|سداد|على|payment).*?(\d+(?:[.,]\d+)?)\s*(?:سنه|سنة|سنين|years?|y\b)/iu);
   const paymentMonths = text.match(/(?:تقسيط|سداد|على|payment).*?(\d+)\s*(?:شهر|شهور|months?|mo\b)/iu);
   const sales = detectExplicitSalesSignals(source);
+  const resale = /(?:ريسيل|ري\s*سيل|إعادة\s*بيع|اعادة\s*بيع|resale|secondary\s*market)/iu.test(text);
+  const primary = /(?:primary|من\s+المطور|بيع\s+أول|بيع\s+اول|أول\s+بيع|اول\s+بيع|new\s+from\s+(?:the\s+)?developer)/iu.test(text);
   const route = detectExplicitRouteRequest(source);
   return {
     ...previous,
@@ -62,7 +64,8 @@ export function deterministicIntent(messages: AIMessage[], previous: StructuredI
     routeDestination: route?.routeDestination,
     language: hasArabic ? "ar-EG" : "en",
     dialect: hasArabic && hasLatin ? "MIXED" : hasArabic ? "EGYPTIAN_ARABIC" : "ENGLISH",
-    purpose: /(?:استثمار|investment|resale)/i.test(text) ? "INVESTMENT" : previous.purpose,
+    purpose: /(?:استثمار|investment|resale|ريسيل|إعادة\s*بيع|اعادة\s*بيع)/iu.test(text) ? "INVESTMENT" : previous.purpose,
+    inventoryMarket: resale ? "RESALE" : primary ? "PRIMARY" : previous.inventoryMarket,
     bedrooms: bedroom ? Number(bedroom[1]) : previous.bedrooms,
     preferredFloor: floor ? Number(floor[1]) : previous.preferredFloor,
     preferredPhase: phase?.[1]?.trim() ?? previous.preferredPhase,

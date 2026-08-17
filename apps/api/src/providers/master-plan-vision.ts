@@ -26,7 +26,7 @@ export async function locateUnitOnMasterPlan(imageUrl: string, unitLabel: string
       body: JSON.stringify({
         model,
         temperature: 0,
-        max_tokens: 450,
+        max_completion_tokens: 450,
         response_format: { type: "json_object" },
         messages: [
           {

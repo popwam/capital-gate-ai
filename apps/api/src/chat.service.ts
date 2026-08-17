@@ -190,74 +190,9 @@ export class ChatService {
     }
     if (intent === "VIEWING_REQUEST" && state.externalUnitId) return facts.length ? (ar ? `تمام، لقيت الوحدة ${state.externalUnitId}. عشان نرتب المعاينة محتاج اسمك ورقم الموبايل.` : `I found unit ${state.externalUnitId}. To arrange the viewing, I need your name and phone number.`) : (ar ? `ملقيتش وحدة متاحة بالكود ${state.externalUnitId}.` : `I could not find an available unit with ID ${state.externalUnitId}.`);
 
-    if (intent === "PROJECT_DETAILS") {
-      const names = [...new Set(facts.flatMap((fact: any) => {
-        const name = fact?.project?.nameAr ?? fact?.project?.nameEn ?? fact?.project?.name ?? fact?.nameAr ?? fact?.nameEn ?? fact?.name;
-        return name ? [String(name)] : [];
-      }))];
-      const developers = [...new Set(facts.flatMap((fact: any) => {
-        const developer = fact?.developer ?? fact?.project?.developer;
-        const name = developer?.nameAr ?? developer?.nameEn ?? developer?.brandName ?? developer?.name;
-        return name ? [String(name)] : [];
-      }))];
-      if (names.length) {
-        const projectText = ar ? `المشروع${names.length > 1 ? "ات" : ""}: ${names.join("، ")}` : `Project${names.length > 1 ? "s" : ""}: ${names.join(", ")}`;
-        const developerText = developers.length ? (ar ? `، والمطور${developers.length > 1 ? "ين" : ""}: ${developers.join("، ")}` : `; developer${developers.length > 1 ? "s" : ""}: ${developers.join(", ")}`) : "";
-        return `${projectText}${developerText}.`;
-      }
-    }
-
-    if (intent === "DEVELOPER_DETAILS") {
-      const aggregate = facts.find((fact: any) => fact?.dimension === "DEVELOPER") as any;
-      const aggregateNames = Array.isArray(aggregate?.values) ? aggregate.values.map((value: any) => value?.nameAr ?? value?.nameEn ?? value?.brandName ?? value?.name).filter(Boolean) : [];
-      const contextualNames = facts.flatMap((fact: any) => {
-        const developer = fact?.developer ?? fact?.project?.developer;
-        const name = developer?.nameAr ?? developer?.nameEn ?? developer?.brandName ?? developer?.name ?? fact?.developerName;
-        return name ? [String(name)] : [];
-      });
-      const names = [...new Set([...aggregateNames, ...contextualNames])];
-      if (names.length) return ar ? `المطور${names.length > 1 ? "ين" : ""}: ${names.join("، ")}.` : `Developer${names.length > 1 ? "s" : ""}: ${names.join(", ")}.`;
-    }
-
-    if (intent === "INVENTORY_AGGREGATION") {
-      const aggregate = first;
-      const values = Array.isArray(aggregate?.values) ? aggregate.values : [];
-      if (!values.length) return ar ? "مفيش بيانات مطابقة في نطاق البحث الحالي." : "No matching data is available in the current search scope.";
-      if (aggregate?.dimension === "DEVELOPER") {
-        const names = values.map((value: any) => value?.nameAr ?? value?.nameEn ?? value?.brandName ?? value?.name).filter(Boolean);
-        return ar ? `المطورين المتاح عندهم مخزون في النطاق الحالي: ${names.join("، ")}.` : `Developers with inventory in the current scope: ${names.join(", ")}.`;
-      }
-      if (aggregate?.dimension === "PROJECT") {
-        const names = values.map((value: any) => value?.nameAr ?? value?.nameEn ?? value?.name).filter(Boolean);
-        return ar ? `المشروعات المتاحة في النطاق الحالي: ${names.join("، ")}.` : `Projects in the current scope: ${names.join(", ")}.`;
-      }
-      if (aggregate?.dimension === "UNIT_TYPE") return ar ? `أنواع الوحدات المتاحة: ${values.join("، ")}.` : `Available unit types: ${values.join(", ")}.`;
-      if (aggregate?.dimension === "BEDROOM_COUNT") return ar ? `أعداد غرف النوم المتاحة: ${values.join("، ")}.` : `Available bedroom counts: ${values.join(", ")}.`;
-      if (aggregate?.dimension === "PAYMENT_DURATION") return ar ? `مدد السداد المتاحة: ${values.map((months: any) => `${months} شهر`).join("، ")}.` : `Available payment durations: ${values.map((months: any) => `${months} months`).join(", ")}.`;
-    }
-
-    if (intent === "PAYMENT_PLAN") {
-      const unit = facts.find((fact: any) => Array.isArray(fact?.paymentPlans) && fact.paymentPlans.length) as any;
-      if (!unit) return ar ? "لسه مفيش نظام سداد موثق للوحدة دي عندي." : "There is no verified payment plan for this unit yet.";
-      const basePrice = Number(unit.price ?? 0);
-      const plan = unit.bestPaymentPlan ?? [...unit.paymentPlans].sort((a: any, b: any) => Number(b.durationMonths ?? 0) - Number(a.durationMonths ?? 0))[0];
-      const total = Number(plan.totalPrice ?? basePrice ?? 0);
-      const dpPercent = plan.downPaymentPercent != null ? Number(plan.downPaymentPercent) : null;
-      const dpAmount = plan.downPaymentAmount != null ? Number(plan.downPaymentAmount) : (dpPercent != null && total ? total * dpPercent / 100 : null);
-      const remaining = total && dpAmount != null ? Math.max(0, total - dpAmount) : null;
-      const frequency = String(plan.installmentFrequency ?? "").toUpperCase();
-      const stepMonths: Record<string, number> = { MONTHLY: 1, QUARTERLY: 3, SEMI_ANNUAL: 6, SEMIANNUAL: 6, ANNUAL: 12, YEARLY: 12 };
-      const count = plan.durationMonths && stepMonths[frequency] ? Math.max(1, Math.round(Number(plan.durationMonths) / stepMonths[frequency])) : null;
-      const calculatedInstallment = plan.monthlyEquivalent != null ? Number(plan.monthlyEquivalent) : plan.installmentAmount != null ? Number(plan.installmentAmount) : (remaining != null && count ? remaining / count : null);
-      const money = (value: number | null) => value == null || !Number.isFinite(value) ? null : `${Math.round(value).toLocaleString("en")} ${plan.currency ?? unit.currency ?? "EGP"}`;
-      const parts = [
-        plan.durationMonths ? (ar ? `المدة ${plan.durationMonths} شهر` : `${plan.durationMonths} months`) : null,
-        dpAmount != null ? (ar ? `المقدم ${money(dpAmount)}${dpPercent != null ? ` (${dpPercent}%)` : ""}` : `down payment ${money(dpAmount)}${dpPercent != null ? ` (${dpPercent}%)` : ""}`) : null,
-        calculatedInstallment != null ? (ar ? `${plan.installmentAmount == null ? "القسط المحسوب تقريبًا" : "القسط"} ${money(calculatedInstallment)}${frequency ? ` / ${frequency.toLowerCase()}` : ""}` : `${plan.installmentAmount == null ? "calculated installment approx." : "installment"} ${money(calculatedInstallment)}${frequency ? ` / ${frequency.toLowerCase()}` : ""}`) : null,
-        total ? (ar ? `إجمالي سعر الخطة ${money(total)}` : `plan total ${money(total)}`) : null,
-      ].filter(Boolean);
-      return parts.length ? parts.join(ar ? "، " : ", ") + "." : (ar ? "نظام السداد موجود لكن تفاصيله الرقمية مش كاملة في البيانات الموثقة." : "A payment plan exists, but its verified numeric details are incomplete.");
-    }
+    // Project/developer explanations, inventory breakdowns and payment plans intentionally
+    // continue to Cg Ai. The database facts stay deterministic, while the model turns
+    // them into a useful explanation instead of a terse database dump.
 
     return undefined;
   }
@@ -546,7 +481,7 @@ export class ChatService {
       const registeredEndpoint = Boolean(selectedProject || origins.length || destinations.length);
       const route = stored
         ? {
-            source: "ADMIN_VERIFIED",
+            source: stored.distanceType === "GOOGLE_ROUTES" ? "GOOGLE_ROUTES" : "ADMIN_VERIFIED",
             distanceKm: stored.distanceKm,
             estimatedMinutes: stored.estimatedMinutes,
             from: stored.from.name,

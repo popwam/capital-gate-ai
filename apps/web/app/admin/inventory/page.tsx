@@ -11,6 +11,7 @@ type Unit = {
   price?: string | null;
   currency?: string | null;
   status: string;
+  isResale: boolean;
   updatedAt: string;
   project: { id: string; name: string; location?: { name: string } | null };
   developer: { id: string; name: string };
@@ -31,6 +32,7 @@ export default function InventoryPage() {
     unitType: "",
     minPrice: "",
     maxPrice: "",
+    saleType: "",
   });
   const [selected, setSelected] = useState<string[]>([]);
   const [editing, setEditing] = useState<Unit | null>(null);
@@ -39,7 +41,12 @@ export default function InventoryPage() {
   const [busy, setBusy] = useState(false);
   const load = (page = 1) => {
     const q = new URLSearchParams({
-      ...filters,
+      unitCode: filters.unitCode,
+      status: filters.status,
+      unitType: filters.unitType,
+      minPrice: filters.minPrice,
+      maxPrice: filters.maxPrice,
+      ...(filters.saleType ? { isResale: filters.saleType } : {}),
       page: String(page),
       pageSize: "50",
     });
@@ -84,10 +91,9 @@ export default function InventoryPage() {
     const form = new FormData(e.currentTarget);
     setBusy(true);
     try {
-      await adminApi.patch(
-        `/catalog/units/${editing.id}`,
-        Object.fromEntries([...form.entries()].filter(([, v]) => v !== "")),
-      );
+      const payload = Object.fromEntries([...form.entries()].filter(([, v]) => v !== "")) as Record<string, unknown>;
+      if (payload.isResale != null) payload.isResale = payload.isResale === "true";
+      await adminApi.patch(`/catalog/units/${editing.id}`, payload);
       setEditing(null);
       load(data.page);
     } catch (e) {
@@ -133,7 +139,7 @@ export default function InventoryPage() {
             e.preventDefault();
             load(1);
           }}
-          className="mb-4 grid gap-2 rounded-2xl border bg-white p-4 sm:grid-cols-6"
+          className="mb-4 grid gap-2 rounded-2xl border bg-white p-4 sm:grid-cols-2 lg:grid-cols-7"
         >
           <input
             placeholder="كود الوحدة"
@@ -166,6 +172,15 @@ export default function InventoryPage() {
             ].map((x) => (
               <option key={x}>{x}</option>
             ))}
+          </select>
+          <select
+            value={filters.saleType}
+            onChange={(e) => setFilters({ ...filters, saleType: e.target.value })}
+            className="h-11 rounded-xl border px-3 text-sm"
+          >
+            <option value="">Primary + Resale</option>
+            <option value="false">Primary فقط</option>
+            <option value="true">Resale فقط</option>
           </select>
           <input
             type="number"
@@ -229,6 +244,7 @@ export default function InventoryPage() {
                   "المساحة",
                   "السعر",
                   "الحالة",
+                  "السوق",
                   "مصدر البيانات",
                   "تعديل",
                 ].map((x) => (
@@ -279,6 +295,11 @@ export default function InventoryPage() {
                   <td className="p-3">
                     <span className="rounded-full bg-[#e7efe9] px-2 py-1 text-xs font-bold">
                       {unit.status}
+                    </span>
+                  </td>
+                  <td className="p-3">
+                    <span className={`rounded-full px-2 py-1 text-xs font-bold ${unit.isResale ? "bg-[#f2eadc] text-[#71562e]" : "bg-[#edf2ef] text-[#3d5b51]"}`}>
+                      {unit.isResale ? "Resale" : "Primary"}
                     </span>
                   </td>
                   <td className="p-3 text-xs" dir="auto">
@@ -333,6 +354,7 @@ export default function InventoryPage() {
                 <label className="text-sm">السعر<input name="price" type="number" defaultValue={editing.price || ""} className="mt-1 h-11 w-full rounded-xl border px-3"/></label>
                 <label className="text-sm">الحالة<select name="status" defaultValue={editing.status} className="mt-1 h-11 w-full rounded-xl border px-3">{["AVAILABLE","RESERVED","SOLD","UNAVAILABLE","CONTACT_SALES"].map((x) => <option key={x}>{x}</option>)}</select></label>
                 <label className="text-sm">نوع الوحدة<input name="unitType" defaultValue={editing.unitType || ""} className="mt-1 h-11 w-full rounded-xl border px-3"/></label>
+                <label className="text-sm">السوق<select name="isResale" defaultValue={String(editing.isResale)} className="mt-1 h-11 w-full rounded-xl border px-3"><option value="false">Primary</option><option value="true">Resale</option></select></label>
                 <label className="text-sm">غرف النوم<input name="bedrooms" type="number" defaultValue={editing.bedrooms ?? ""} className="mt-1 h-11 w-full rounded-xl border px-3"/></label>
                 <label className="text-sm">المساحة المبنية<input name="builtUpArea" type="number" defaultValue={editing.builtUpArea || ""} className="mt-1 h-11 w-full rounded-xl border px-3"/></label>
               </div>

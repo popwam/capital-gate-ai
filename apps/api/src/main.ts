@@ -1,3 +1,12 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { loadEnvFile } from "node:process";
+
+const rootEnvPath = resolve(__dirname, "../../../.env");
+
+if (existsSync(rootEnvPath)) {
+  loadEnvFile(rootEnvPath);
+}
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";

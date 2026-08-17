@@ -63,7 +63,7 @@ export class PropertySearchService {
   }
 
   private async normalizedWhere(intent: StructuredIntent): Promise<Prisma.UnitWhereInput | null> {
-    if (intent.extractionDegraded && !intent.locations?.length && intent.budgetMin == null && intent.budgetMax == null && intent.bedrooms == null && !intent.propertyTypes?.length && intent.builtUpAreaMin == null && intent.minimumArea == null && !intent.aggregationDimension) return null;
+    if (intent.extractionDegraded && !intent.locations?.length && intent.budgetMin == null && intent.budgetMax == null && intent.bedrooms == null && !intent.propertyTypes?.length && intent.builtUpAreaMin == null && intent.minimumArea == null && !intent.aggregationDimension && !intent.inventoryMarket) return null;
     const locationIds = await this.resolveLocations(intent.locations);
     if (intent.locations?.length && !locationIds.length) return null;
     const rejectedLocationIds = await this.resolveLocations(intent.rejectedLocations);
@@ -73,6 +73,7 @@ export class PropertySearchService {
     }
     const where: Prisma.UnitWhereInput = { status: UnitStatus.AVAILABLE, archivedAt: null };
     if (intent.bedrooms != null) where.bedrooms = intent.bedrooms;
+    if (intent.inventoryMarket) where.isResale = intent.inventoryMarket === "RESALE";
     if (intent.bathrooms != null) where.bathrooms = { gte: intent.bathrooms };
     const priceMin = intent.priceMin ?? intent.budgetMin;
     const priceMax = intent.priceMax ?? intent.budgetMax;
@@ -129,6 +130,7 @@ export class PropertySearchService {
     const locationIds = await this.resolveLocations(intent.locations);
     return {
       unitType: intent.propertyTypes ?? [],
+      inventoryMarket: intent.inventoryMarket ?? null,
       builtUpAreaMin: intent.builtUpAreaMin ?? intent.minimumArea ?? null,
       builtUpAreaMax: intent.builtUpAreaMax ?? intent.maximumArea ?? null,
       priceMin: intent.priceMin ?? intent.budgetMin ?? null,

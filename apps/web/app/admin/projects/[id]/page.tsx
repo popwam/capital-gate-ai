@@ -270,8 +270,6 @@ export default function ProjectDetails({
       "builtUpPercentage",
       "minArea",
       "maxArea",
-      "latitude",
-      "longitude",
     ]) {
       if (
         data[key] === "" ||
@@ -821,11 +819,6 @@ export default function ProjectDetails({
               [
                 "deliveryYear",
                 "سنة التسليم",
-              ],
-              ["latitude", "خط العرض"],
-              [
-                "longitude",
-                "خط الطول",
               ],
             ].map(([key, label]) => (
               <label

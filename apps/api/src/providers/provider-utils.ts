@@ -40,6 +40,7 @@ export function sanitizeIntent(raw:Record<string,unknown>,previous:StructuredInt
     language:text("language")??previous.language??"ar-EG",
     dialect:oneOf("dialect",["EGYPTIAN_ARABIC","MSA","ENGLISH","MIXED"] as const)??previous.dialect,
     purpose:oneOf("purpose",["LIVING","INVESTMENT"] as const)??previous.purpose,
+    inventoryMarket:oneOf("inventoryMarket",["PRIMARY","RESALE"] as const)??previous.inventoryMarket,
     locations:texts("locations")??previous.locations,
     rejectedLocations:texts("rejectedLocations")??previous.rejectedLocations,
     propertyTypes:texts("propertyTypes")??previous.propertyTypes,
