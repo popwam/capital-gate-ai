@@ -1,6 +1,6 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
-import { CANONICAL_FIELDS, CORE_UNIT_CANONICAL_VALUES, METADATA_CANONICAL_VALUES, customMetadataLabel, isCustomMetadataField, normalizeFinishing, parseImportDate, parsePaymentPlanComponentHeader, parsePaymentPlanHeader } from "./import-contract";
+import { CANONICAL_FIELDS, CORE_UNIT_CANONICAL_VALUES, METADATA_CANONICAL_VALUES, customMetadataLabel, isCustomMetadataField, normalizeFinishing, parseDeliveryDurationYears, parseImportDate, parsePaymentPlanComponentHeader, parsePaymentPlanHeader, refineCanonicalFieldBySamples } from "./import-contract";
 
 test("payment-plan columns parse years, months, decimals, Arabic and arbitrary durations", () => {
   assert.equal(parsePaymentPlanHeader("Properties Unit Price 8 Y")?.durationMonths, 96);
@@ -25,6 +25,15 @@ test("delivery parser accepts explicit day-first, ISO, Excel serial and Date val
   assert.equal(parseImportDate("31-02-2027"), undefined);
   assert.ok(parseImportDate(46_000) instanceof Date);
   assert.equal(parseImportDate(new Date(2027, 1, 28))?.toISOString(), "2027-02-28T00:00:00.000Z");
+});
+
+
+test("delivery duration values are not mistaken for calendar dates", () => {
+  assert.equal(parseDeliveryDurationYears("2 Years"), 2);
+  assert.equal(parseDeliveryDurationYears("24 months"), 2);
+  assert.equal(parseDeliveryDurationYears("١٨ شهر"), 1.5);
+  assert.equal(refineCanonicalFieldBySamples("deliveryDate", ["2 Years", "2 Years", "2 Years"]), "deliveryYears");
+  assert.equal(refineCanonicalFieldBySamples("deliveryDate", ["2027-02-28", "2028-01-01"]), "deliveryDate");
 });
 
 test("known finishing values normalize without losing the original source provenance", () => {

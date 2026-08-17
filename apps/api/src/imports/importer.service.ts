@@ -38,6 +38,8 @@ import {
   customMetadataLabel,
   FINISHING_TYPES,
   parseImportDate,
+  parseDeliveryDurationYears,
+  refineCanonicalFieldBySamples,
   parsePaymentPlanComponentHeader,
   SUPPORTED_CURRENCIES,
   UNIT_TYPES,
@@ -46,6 +48,7 @@ import {
   PaymentPlanValueType,
 } from "./import-contract";
 
+const IMPORT_PREVIEW_ENGINE_VERSION = 2;
 const CANONICAL: string[] = [...CANONICAL_VALUES];
 const INVENTORY_CANONICAL = CANONICAL.filter((field) => !["downPayment", "installmentYears", "installmentAmount"].includes(field));
 const METADATA_CANONICAL = new Set<string>(METADATA_CANONICAL_VALUES);
@@ -212,7 +215,8 @@ export class ImporterService {
         ? { field: column.semanticField, confidence: column.confidence }
         : detectSemanticColumn(column.originalHeader);
       const prior = remembered.find((mapping) => mapping.normalizedColumn === this.normalize(column.originalHeader));
-      const canonical = prior?.canonicalField ?? KNOWN[this.normalize(column.originalHeader)] ?? detected?.field;
+      const detectedCanonical = KNOWN[this.normalize(column.originalHeader)] ?? detected?.field;
+      const canonical = prior?.canonicalField ?? (detectedCanonical ? refineCanonicalFieldBySamples(detectedCanonical, column.samples ?? []) : undefined);
       if (!canonical) continue;
       if (["downPayment", "installmentYears", "installmentAmount"].includes(canonical)) {
         mappings[column.key] = "__METADATA__";
@@ -221,7 +225,7 @@ export class ImporterService {
       }
       if (INVENTORY_CANONICAL.includes(canonical)) {
         mappings[column.key] = canonical;
-        sources[column.key] = prior ? "ADMIN_APPROVED_MEMORY" : "KNOWN_RULE";
+        sources[column.key] = prior ? "ADMIN_APPROVED_MEMORY" : canonical !== detectedCanonical ? "KNOWN_RULE_VALUE_SHAPE" : "KNOWN_RULE";
       }
     }
     return { mappings, sources };
@@ -399,7 +403,7 @@ export class ImporterService {
     const canPreview = unresolvedBlockingCount === 0 && missingCriticalMappings.length === 0 && missingContext.length === 0 && (item.sheets?.length ? sheetsValid : contextValid);
     const preview = item.preview as Record<string, unknown> | null;
     const previewExists = Boolean(preview);
-    const previewValid = previewExists && (item.sheets?.length
+    const previewValid = previewExists && Number(preview?.engineVersion ?? 0) === IMPORT_PREVIEW_ENGINE_VERSION && (item.sheets?.length
       ? selectedSheets.every((sheet) => sheet.previewMappingVersion === sheet.mappingVersion)
       : true);
     const canConfirm = canPreview && previewValid && preview?.canConfirm === true;
@@ -1503,19 +1507,42 @@ export class ImporterService {
       if (target === "__METADATA__") { metadata[source] = raw; continue; }
       if (isCustomMetadataField(target)) { metadata[customMetadataLabel(target) || source] = raw; continue; }
       if (METADATA_CANONICAL.has(target) || CANONICAL_FIELD_MAP.get(target)?.storage === "METADATA") { metadata[target] = raw; continue; }
+      if (target === "deliveryDate") {
+        const date = parseImportDate(raw);
+        const durationYears = date ? undefined : parseDeliveryDurationYears(raw);
+        if (durationYears != null) { values.deliveryYears = durationYears; metadata.deliverySourceValue = raw; continue; }
+      }
+      if (target === "deliveryYears") {
+        const durationYears = parseDeliveryDurationYears(raw);
+        values.deliveryYears = durationYears ?? raw;
+        continue;
+      }
       values[target] = raw;
     }
     return { values, metadata };
   }
 
   private sheetValueErrors(values: Record<string, unknown>) {
-    const errors: string[] = [];
-    if (!String(values.externalUnitId ?? "").trim()) errors.push("externalUnitId");
+    const errors: Array<{ field: string; code: string }> = [];
+    if (!String(values.externalUnitId ?? "").trim()) errors.push({ field: "externalUnitId", code: "MISSING_IDENTITY" });
     for (const field of ["bedrooms", "bathrooms", "builtUpArea", "landArea", "gardenArea", "roofArea", "terraceArea", "price", "maintenance", "clubFees", "discount"])
-      if (values[field] != null && values[field] !== "" && this.number(values[field]) == null) errors.push(field);
-    if (values.deliveryDate != null && values.deliveryDate !== "" && !parseImportDate(values.deliveryDate)) errors.push("deliveryDate");
-    if (values.currency && !SUPPORTED_CURRENCIES.includes(String(values.currency).toUpperCase() as any)) errors.push("currency");
+      if (values[field] != null && values[field] !== "" && this.number(values[field]) == null) errors.push({ field, code: "INVALID_NUMBER" });
+    if (values.deliveryDate != null && values.deliveryDate !== "" && !parseImportDate(values.deliveryDate)) errors.push({ field: "deliveryDate", code: "INVALID_DATE" });
+    if (values.deliveryYears != null && values.deliveryYears !== "" && parseDeliveryDurationYears(values.deliveryYears) == null && this.number(values.deliveryYears) == null) errors.push({ field: "deliveryYears", code: "INVALID_DURATION" });
+    if (values.currency && !SUPPORTED_CURRENCIES.includes(String(values.currency).toUpperCase() as any)) errors.push({ field: "currency", code: "INVALID_CURRENCY" });
     return errors;
+  }
+
+  private summarizeSheetValidation(rows: Array<{ rowNumber: number; errors: Array<{ field: string; code: string }> }>) {
+    const grouped = new Map<string, { field: string; code: string; count: number; sampleRows: number[] }>();
+    for (const row of rows) for (const error of row.errors) {
+      const key = `${error.field}:${error.code}`;
+      const current = grouped.get(key) ?? { ...error, count: 0, sampleRows: [] };
+      current.count += 1;
+      if (current.sampleRows.length < 5) current.sampleRows.push(row.rowNumber);
+      grouped.set(key, current);
+    }
+    return [...grouped.values()].sort((a, b) => b.count - a.count);
   }
 
   private async previewSheets(item: any) {
@@ -1531,53 +1558,73 @@ export class ImporterService {
     for (const sheet of selected) {
       const rows = recordsForTable(workbook, this.persistedTable(sheet));
       const phases = await this.prisma.projectPhase.findMany({ where: { projectId: sheet.projectId! }, select: { id: true, code: true, name: true, nameAr: true, nameEn: true } });
-      const normalized = rows.map((row) => {
+      const columns = (sheet.columns ?? []) as Array<{ key: string; originalHeader: string; samples?: unknown[] }>;
+      const mappings = (sheet.mappings ?? {}) as Record<string, string>;
+      const mappingAdjustments = columns.flatMap((column) => {
+        const mapped = mappings[column.key];
+        if (!mapped) return [];
+        const effective = refineCanonicalFieldBySamples(mapped, column.samples ?? []);
+        return effective !== mapped ? [{ sourceColumn: column.originalHeader, sourceKey: column.key, mappedField: mapped, effectiveField: effective, reason: "VALUE_SHAPE" }] : [];
+      });
+      const normalized = rows.map((row, index) => {
         const entry = this.valuesForSheet(row, sheet);
         const resolved = this.resolveStructuredPhase(entry.values, phases, sheet.phaseId);
         if (resolved.phaseId) entry.values.phaseId = resolved.phaseId;
-        return { ...entry, phaseUnmatched: resolved.unmatched };
+        const errors = this.sheetValueErrors(entry.values);
+        if (resolved.unmatched) errors.push({ field: "phase", code: "UNMATCHED_PHASE" });
+        return { ...entry, phaseUnmatched: resolved.unmatched, rowNumber: Number(sheet.headerRow ?? 1) + index + 1, errors };
       });
-      const validRows = normalized.filter(({ values, phaseUnmatched }) => !phaseUnmatched && this.sheetValueErrors(values).length === 0);
-      const invalidRows = normalized.length - validRows.length;
+      const readyRows = normalized.filter(({ errors }) => errors.length === 0);
+      const blockedRows = normalized.filter(({ errors }) => errors.length > 0);
+      const validationSummary = this.summarizeSheetValidation(blockedRows);
       let duplicates = 0;
-      for (const { values } of validRows) {
+      for (const { values } of readyRows) {
         const key = `${sheet.projectId}:${String(values.externalUnitId).trim()}`;
         if (seen.has(key)) duplicates++;
         seen.add(key);
       }
-      const identifiers = validRows.map(({ values }) => String(values.externalUnitId).trim());
-      const existing = await this.prisma.unit.count({ where: { projectId: sheet.projectId!, developerId: sheet.developerId!, externalUnitId: { in: identifiers } } });
+      const identifiers = readyRows.map(({ values }) => String(values.externalUnitId).trim());
+      const existing = identifiers.length ? await this.prisma.unit.count({ where: { projectId: sheet.projectId!, developerId: sheet.developerId!, externalUnitId: { in: identifiers } } }) : 0;
       const summary = {
         sheetId: sheet.id,
         sheetName: sheet.sheetName,
         projectId: sheet.projectId,
         project: sheet.project?.name,
         rowsFound: rows.length,
-        valid: validRows.length,
-        invalidRows,
+        sourceRows: rows.length,
+        readyRows: readyRows.length,
+        needsReviewRows: blockedRows.length,
+        valid: readyRows.length,
+        invalidRows: blockedRows.length,
         duplicates,
-        newUnits: validRows.length - existing,
+        newUnits: readyRows.length - existing,
         existingUnits: existing,
+        validationSummary,
+        mappingAdjustments,
         mappingVersion: sheet.mappingVersion,
         sourcePreview: sheet.sourcePreview,
-        normalizedRows: validRows.slice(0, 10).map(({ values }) => values),
+        normalizedRows: readyRows.slice(0, 10).map(({ values }) => values),
       };
       summaries.push(summary);
-      totalValid += validRows.length;
-      totalInvalid += invalidRows + duplicates;
-      totalNew += validRows.length - existing;
+      totalValid += readyRows.length;
+      totalInvalid += blockedRows.length + duplicates;
+      totalNew += readyRows.length - existing;
       totalExisting += existing;
       await this.prisma.importSheet.update({ where: { id: sheet.id }, data: { normalizedPreview: this.json(summary), previewMappingVersion: sheet.mappingVersion } });
     }
     const preview = {
+      engineVersion: IMPORT_PREVIEW_ENGINE_VERSION,
       sheets: summaries,
       selectedSheetCount: selected.length,
+      sourceRows: summaries.reduce((sum, sheet) => sum + Number(sheet.sourceRows ?? 0), 0),
+      readyRows: totalValid,
+      needsReviewRows: totalInvalid,
       valid: totalValid,
       invalidRows: totalInvalid,
       newUnits: totalNew,
       existingUnits: totalExisting,
       paymentPlanCount: 0,
-      blockingIssues: 0,
+      blockingIssues: totalInvalid,
       canConfirm: totalInvalid === 0 && selected.length > 0,
     };
     await this.prisma.dataImport.update({ where: { id: item.id }, data: { preview: this.json(preview), status: preview.canConfirm ? ImportStatus.READY : ImportStatus.NEEDS_INPUT } });
@@ -1688,6 +1735,7 @@ export class ImporterService {
       });
     }
     const preview = {
+      engineVersion: IMPORT_PREVIEW_ENGINE_VERSION,
       project: analysis.metadata.projectName || item.project?.name,
       developer: analysis.metadata.developerName || item.developer?.name,
       locationId: analysis.metadata.locationId,
@@ -1758,6 +1806,7 @@ export class ImporterService {
     for (const field of ["bedrooms", "bathrooms", "builtUpArea", "landArea", "gardenArea", "roofArea", "terraceArea", "price", "downPayment", "installmentYears", "installmentAmount", "maintenance"])
       if (values[field] != null && values[field] !== "" && this.number(values[field]) == null) errors.push({ field, code: "INVALID_NUMBER" });
     if (values.deliveryDate != null && values.deliveryDate !== "" && !parseImportDate(values.deliveryDate)) errors.push({ field: "deliveryDate", code: "INVALID_DATE" });
+    if (values.deliveryYears != null && values.deliveryYears !== "" && parseDeliveryDurationYears(values.deliveryYears) == null && this.number(values.deliveryYears) == null) errors.push({ field: "deliveryYears", code: "INVALID_DURATION" });
     const currency = String(values.currency ?? analysis.defaultValues.currency ?? "").toUpperCase();
     if (!SUPPORTED_CURRENCIES.includes(currency as any)) errors.push({ field: "currency", code: "INVALID_CURRENCY" });
     for (const [sourceColumn, mapping] of Object.entries(analysis.paymentPlanMappings ?? {})) {
@@ -1772,8 +1821,14 @@ export class ImporterService {
     for (const [header, field] of Object.entries(analysis.mappings))
       if (row[header] != null && row[header] !== "") {
         const raw = row[header];
-        values[field] =
-          analysis.valueMappings[field]?.[this.normalize(String(raw))] ?? raw;
+        const mapped = analysis.valueMappings[field]?.[this.normalize(String(raw))] ?? raw;
+        if (field === "deliveryDate") {
+          const date = parseImportDate(mapped);
+          const durationYears = date ? undefined : parseDeliveryDurationYears(mapped);
+          if (durationYears != null) { values.deliveryYears = durationYears; continue; }
+        }
+        if (field === "deliveryYears") { values.deliveryYears = parseDeliveryDurationYears(mapped) ?? mapped; continue; }
+        values[field] = mapped;
       }
     return values;
   }
@@ -1848,7 +1903,7 @@ export class ImporterService {
           ? this.status(values.status)
           : undefined,
       deliveryDate,
-      deliveryYears: this.number(values.deliveryYears),
+      deliveryYears: parseDeliveryDurationYears(values.deliveryYears) ?? this.number(values.deliveryYears),
       finishingType:
         values.finishingType == null
           ? undefined

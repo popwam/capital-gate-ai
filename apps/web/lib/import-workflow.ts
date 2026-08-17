@@ -22,16 +22,14 @@ export type ImportWorkflow = {
 };
 
 /**
- * The import is intentionally staged by the admin decisions that matter, not by backend status names.
- * This keeps large workbooks predictable: source -> tables -> scope -> columns -> preview -> commit.
+ * The admin should think in four decisions, not backend state names:
+ * source -> project scope -> field meaning -> preview/commit.
  */
 export const IMPORT_STEPS = [
   "المصدر",
-  "الجداول",
-  "المشروع والمرحلة",
-  "مطابقة الحقول",
-  "المعاينة",
-  "الاعتماد",
+  "السياق",
+  "الحقول",
+  "المعاينة والاعتماد",
 ] as const;
 
 export type ImportNextAction = "RESOLVE" | "GENERATE_PREVIEW" | "REGENERATE_PREVIEW" | "VIEW_PREVIEW" | "CONFIRM_IMPORT" | "NONE";
@@ -57,17 +55,16 @@ export function importStepState(workflow: ImportWorkflow, index: number) {
   let activeIndex = 0;
   if (workflow.stage === "COMPLETE") activeIndex = IMPORT_STEPS.length;
   else if (workflow.stage === "FAILED") activeIndex = 0;
-  else if (workflow.selectedSheetCount === 0 || workflow.activeTableCount === 0) activeIndex = 1;
-  else if (workflow.missingContext.length > 0) activeIndex = 2;
-  else if (workflow.unresolvedBlockingCount > 0 || workflow.missingCriticalMappings.length > 0) activeIndex = 3;
-  else if (!workflow.previewExists || !workflow.previewValid) activeIndex = 4;
-  else activeIndex = 5;
+  else if (workflow.selectedSheetCount === 0 || workflow.activeTableCount === 0) activeIndex = 0;
+  else if (workflow.missingContext.length > 0) activeIndex = 1;
+  else if (workflow.unresolvedBlockingCount > 0 || workflow.missingCriticalMappings.length > 0) activeIndex = 2;
+  else activeIndex = 3;
 
   const contextCount = workflow.missingContext.length;
-  const fieldCount = Math.max(0, workflow.unresolvedBlockingCount - contextCount);
+  const fieldCount = Math.max(0, workflow.unresolvedBlockingCount - contextCount) + workflow.missingCriticalMappings.length;
   return {
     complete: index < activeIndex,
     active: index === activeIndex,
-    count: index === 2 ? contextCount : index === 3 ? fieldCount : 0,
+    count: index === 1 ? contextCount : index === 2 ? fieldCount : 0,
   };
 }

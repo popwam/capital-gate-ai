@@ -171,13 +171,14 @@ export function ImportAssistant() {
       <section className="min-w-0">
         <div className="mx-auto max-w-[1250px] p-4 sm:p-7">
           <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-            <div>
+            <div className="min-w-0">
               <div className="mb-2 flex items-center gap-2 text-[12px] font-bold tracking-[.08em] text-coral">
                 <Sparkles size={12} /> استيراد ذكي مع مراجعة بشرية
               </div>
               <h2 className="text-[22px] font-bold tracking-[-.035em] sm:text-[28px]">
-                {item ? "راجع الجداول قبل إضافة أي بيانات" : "أضف وحدة مباشرة أو استورد أي ملف مخزون"}
+                {item ? "راجع الاستيراد ثم اعتمده" : "أضف وحدة مباشرة أو استورد ملف مخزون"}
               </h2>
+              {item && <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#68756f]"><span className="max-w-full truncate rounded-full border bg-white px-3 py-1.5" dir="auto">{item.fileName}</span><span className="rounded-full bg-[#e8f0ec] px-3 py-1.5 font-bold text-forest">{item.status}</span></div>}
             </div>
             <input
               ref={inputRef}
@@ -186,12 +187,12 @@ export function ImportAssistant() {
               className="hidden"
               onChange={(e) => upload(e.target.files?.[0])}
             />
-            <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => setManualUnitOpen(true)} className="flex h-10 items-center gap-2 rounded-xl border border-forest bg-white px-4 text-[12px] font-bold text-forest"><Plus size={14}/>إضافة وحدة بدون ملف</button>
-              <button onClick={() => inputRef.current?.click()} disabled={loading} className="flex h-10 items-center gap-2 rounded-xl bg-forest px-4 text-[12px] font-bold text-white">
-                <UploadCloud size={14} />{loading ? "جارٍ العمل…" : item ? "رفع ملف آخر" : "اختيار Excel أو CSV"}
+            {!item && <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => setManualUnitOpen(true)} className="flex h-11 items-center gap-2 rounded-xl border border-forest bg-white px-4 text-sm font-bold text-forest"><Plus size={15}/>إضافة وحدة بدون ملف</button>
+              <button onClick={() => inputRef.current?.click()} disabled={loading} className="flex h-11 items-center gap-2 rounded-xl bg-forest px-4 text-sm font-bold text-white">
+                <UploadCloud size={15} />{loading ? "جارٍ الرفع…" : "اختيار Excel أو CSV"}
               </button>
-            </div>
+            </div>}
           </div>
           {error && (
             <div className="mb-4 rounded-xl border border-[#efc7be] bg-[#fbe9e5] px-4 py-3 text-[12px] font-semibold text-[#8f3f30]">
@@ -203,7 +204,7 @@ export function ImportAssistant() {
           ) : (
             <>
               <StepBar workflow={item.workflow} />
-              <div className="mt-5 grid gap-5 xl:grid-cols-[1fr_325px]">
+              <div className="mt-5 space-y-5">
                 <section className="flex min-h-[560px] flex-col overflow-visible rounded-[22px] border border-[#dedfd9] bg-white shadow-[0_8px_30px_rgba(28,45,39,.05)]">
                   <div className="flex items-center justify-between border-b border-[#e5e6e1] px-5 py-4">
                     <div className="flex items-center gap-3">
@@ -224,14 +225,15 @@ export function ImportAssistant() {
                     </span>
                   </div>
                   <div className="flex-1 p-5 sm:p-7">
-                    <div className="mx-auto max-w-[680px] space-y-5">
-                      <Assistant
-                        text={`وجدت ${item.rowsDetected} صفاً في «${item.analysis?.sheetName || "الملف"}». تم التعرف على ${Object.keys(item.analysis?.mappings || {}).length} أعمدة، وسأطلب منك فقط القرارات التي تحتاج مراجعة.`}
-                      />
+                    <div className="mx-auto max-w-[1080px] space-y-5">
+                      <div className="rounded-2xl border border-[#dfe5e1] bg-[#f7f9f7] px-4 py-3" dir="rtl">
+                        <p className="text-sm font-black">تمت قراءة المصدر بدون إضافة أي بيانات</p>
+                        <p className="mt-1 text-xs leading-6 text-[#68756f]">تم العثور على <b>{item.rowsDetected}</b> صف. أكمل سياق المشروع ومعاني الحقول، ثم أنشئ المعاينة. الصف الخام لا يُعتبر خطأ لمجرد أن حقلًا يحتاج تفسيرًا.</p>
+                      </div>
                       {!!item.sheets?.length && (
                         <SheetReview item={item} selectorOptions={selectorOptions} canonicalFields={canonicalFields} updateSheet={updateSheet} markAllInventory={markAllSheetsInventory} updateMapping={updateSheetMapping} loading={loading}/>
                       )}
-                      {item.status!=="COMPLETED"&&item.sheets?.some(sheet=>sheet.action==="IMPORT"&&sheet.projectId)&&<button type="button" disabled={loading} onClick={()=>{const source=item.sheets.find(sheet=>sheet.action==="IMPORT"&&sheet.projectId)!;updateAllSheets({projectId:source.projectId,phaseId:source.phaseId,defaultCurrency:source.defaultCurrency,defaultUnitType:source.defaultUnitType,defaultIsResale:source.defaultIsResale})}} className="rounded-xl border border-forest px-4 py-2 text-sm font-bold text-forest">تطبيق سياق أول جدول على كل الجداول المختارة</button>}
+                      {item.status!=="COMPLETED"&&item.sheets.filter(sheet=>sheet.action==="IMPORT").length>1&&item.sheets.some(sheet=>sheet.action==="IMPORT"&&sheet.projectId)&&<button type="button" disabled={loading} onClick={()=>{const source=item.sheets.find(sheet=>sheet.action==="IMPORT"&&sheet.projectId)!;updateAllSheets({projectId:source.projectId,phaseId:source.phaseId,defaultCurrency:source.defaultCurrency,defaultUnitType:source.defaultUnitType,defaultIsResale:source.defaultIsResale})}} className="rounded-xl border border-forest px-4 py-2 text-sm font-bold text-forest">تطبيق سياق أول جدول على باقي الجداول</button>}
                       {!item.sheets?.length && (
                         <WorkbookReview item={item} chooseTable={chooseTable} loading={loading}/>
                       )}
@@ -269,34 +271,25 @@ export function ImportAssistant() {
                   </div>
                   {item.workflow.canConfirm && item.workflow.stage !== "COMPLETE" && (
                     <div className="border-t bg-[#fbfaf7] p-4">
-                      <div className="mx-auto mb-3 grid max-w-[680px] gap-2 rounded-2xl border bg-white p-4 text-[14px] sm:grid-cols-2" dir="rtl"><p><b>{item.preview.valid}</b> وحدة جاهزة للاستيراد</p><p>المشروع: <b>{item.preview.project || item.project?.name || "—"}</b></p><p>المطور: <b>{item.preview.developer || "—"}</b></p><p>العملة: <b>{item.preview.currency || "—"}</b></p><p>وحدات جديدة: <b>{item.preview.newUnits}</b></p><p>خطط سداد: <b>{item.preview.paymentPlanCount || 0}</b>{item.preview.paymentPlanDurations?.length ? ` — ${item.preview.paymentPlanDurations.join("، ")} شهر` : ""}</p><p>أخطاء: <b>{item.preview.invalidRows || 0}</b></p></div>
-                      {item.preview.removedUnits > 0 && <div className="mx-auto mb-3 max-w-[680px] rounded-xl border bg-white p-3 text-[13px]"><p className="font-bold">{item.preview.removedUnits} وحدة غير موجودة في الملف الجديد. اختر السياسة قبل التأكيد:</p><div className="mt-2 flex flex-wrap gap-2">{[["LEAVE_UNCHANGED","اتركها بدون تغيير"],["MARK_UNAVAILABLE","علّمها غير متاحة"],["ARCHIVE","أرشفها"]].map(([value,label])=><button key={value} onClick={()=>missingPolicy(value)} className={`rounded-lg border px-3 py-2 ${item.preview.missingUnitPolicy===value?"bg-forest text-white":""}`}>{label}</button>)}</div></div>}
+                      <div className="mx-auto mb-3 grid max-w-[1080px] gap-2 rounded-2xl border bg-white p-4 text-[14px] sm:grid-cols-2" dir="rtl"><p><b>{item.preview.readyRows ?? item.preview.valid ?? 0}</b> وحدة جاهزة للاستيراد</p><p>صفوف المصدر: <b>{item.preview.sourceRows ?? item.rowsDetected}</b></p><p>وحدات جديدة: <b>{item.preview.newUnits ?? 0}</b></p><p>وحدات موجودة: <b>{item.preview.existingUnits ?? 0}</b></p><p>تحتاج قرار: <b>{item.preview.needsReviewRows ?? item.preview.invalidRows ?? 0}</b></p><p>خطط سداد: <b>{item.preview.paymentPlanCount || 0}</b>{item.preview.paymentPlanDurations?.length ? ` — ${item.preview.paymentPlanDurations.join("، ")} شهر` : ""}</p></div>
+                      {item.preview.removedUnits > 0 && <div className="mx-auto mb-3 max-w-[1080px] rounded-xl border bg-white p-3 text-[13px]"><p className="font-bold">{item.preview.removedUnits} وحدة غير موجودة في الملف الجديد. اختر السياسة قبل التأكيد:</p><div className="mt-2 flex flex-wrap gap-2">{[["LEAVE_UNCHANGED","اتركها بدون تغيير"],["MARK_UNAVAILABLE","علّمها غير متاحة"],["ARCHIVE","أرشفها"]].map(([value,label])=><button key={value} onClick={()=>missingPolicy(value)} className={`rounded-lg border px-3 py-2 ${item.preview.missingUnitPolicy===value?"bg-forest text-white":""}`}>{label}</button>)}</div></div>}
                       <button
                         onClick={confirm}
                         disabled={loading}
-                        className="mx-auto flex h-11 w-full max-w-[680px] items-center justify-center gap-2 rounded-xl bg-coral text-[12px] font-bold text-white"
+                        className="mx-auto flex h-11 w-full max-w-[1080px] items-center justify-center gap-2 rounded-xl bg-coral text-[12px] font-bold text-white"
                       >
                         <CheckCircle2 size={15} /> تأكيد الاستيراد
                       </button>
                     </div>
                   )}
                 </section>
-                <aside className="space-y-4">
+                <aside className="grid gap-3 md:grid-cols-3">
                   <Analysis item={item} />
                   <Issues issues={item.issues} />
-                  {!item.workflow.canPreview && item.workflow.blockingReasons.length > 0 && (
-                    <div className="rounded-[18px] border border-amber-200 bg-amber-50 p-4" dir="rtl">
-                      <p className="text-[12px] font-bold">المطلوب قبل المعاينة</p>
-                      <ul className="mt-3 list-disc space-y-1 ps-4 text-[12px] text-amber-900">
-                        {item.workflow.blockingReasons.map((reason, index) => <li key={`${reason}-${index}`} dir="auto">{reason}</li>)}
-                      </ul>
-                    </div>
-                  )}
-                  <div className="rounded-[18px] border border-[#dedfd9] bg-[#e7f0eb] p-4">
-                    <p className="text-[12px] font-bold">آمن افتراضيًا</p>
-                    <p className="mt-1 text-[12px] leading-4 text-[#66736d]">
-                      المشكلات المانعة توقف الاعتماد تلقائيًا، ويظل ملف المصدر وكل قرار في الاستيراد قابلاً للمراجعة والتتبع.
-                    </p>
+                  <div className="rounded-[18px] border border-[#d9e3dd] bg-[#edf4f0] p-4" dir="rtl">
+                    <p className="text-[12px] font-bold">الاعتماد آمن</p>
+                    <p className="mt-2 text-[12px] leading-5 text-[#66736d]">لا يتم حفظ أي وحدة قبل المعاينة النهائية. أخطاء التفسير تظهر كقرارات مطلوبة، ولا يتم وصف الصف الخام بأنه تالف لمجرد وجود حقل يحتاج مراجعة.</p>
+                    {!item.workflow.canPreview && item.workflow.blockingReasons.length > 0 && <p className="mt-3 text-xs font-bold text-amber-900">متبقي {item.workflow.blockingReasons.length} قرار قبل المعاينة.</p>}
                   </div>
                 </aside>
               </div>
@@ -331,13 +324,9 @@ function EmptyUpload({ onClick }: { onClick: () => void }) {
 }
 function Assistant({ text }: { text: string }) {
   return (
-    <div className="flex gap-3">
-      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-forest text-white">
-        <Sparkles size={13} />
-      </div>
-      <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-[#f1f0eb] px-4 py-3 text-[11px] leading-5">
-        {text}
-      </div>
+    <div className="flex items-start gap-3 rounded-xl border border-[#e0e4df] bg-[#fafaf7] px-3 py-2.5" dir="rtl">
+      <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[#e8f0ec] text-forest"><Sparkles size={13}/></div>
+      <p className="text-xs leading-6 text-[#5f6d67]">{text}</p>
     </div>
   );
 }
@@ -520,69 +509,67 @@ function PaymentPlanAnswer({ issue, submit }: { issue: Issue; submit: (value?: a
 function ImportPreview({ item }: { item: ImportData }) {
   const preview = item.preview ?? {};
   const sheets = Array.isArray(preview.sheets) ? preview.sheets : [];
+  const ready = preview.readyRows ?? preview.valid ?? 0;
+  const needsReview = preview.needsReviewRows ?? preview.invalidRows ?? 0;
+  const sourceRows = preview.sourceRows ?? sheets.reduce((sum: number, sheet: any) => sum + Number(sheet.sourceRows ?? sheet.rowsFound ?? 0), 0);
+  const errorLabel = (entry: any) => {
+    const labels: Record<string, string> = { externalUnitId: "معرّف الوحدة", deliveryDate: "تاريخ التسليم", deliveryYears: "مدة التسليم", currency: "العملة", phase: "المرحلة" };
+    const codes: Record<string, string> = { MISSING_IDENTITY: "لا يوجد كود وحدة", INVALID_NUMBER: "القيمة ليست رقمًا صالحًا", INVALID_DATE: "القيمة ليست تاريخًا", INVALID_DURATION: "مدة التسليم غير مفهومة", INVALID_CURRENCY: "عملة غير مدعومة", UNMATCHED_PHASE: "اسم المرحلة لا يطابق مرحلة مسجلة" };
+    return `${labels[entry.field] || entry.field}: ${codes[entry.code] || entry.code}`;
+  };
   return (
-    <section className="space-y-4 rounded-2xl border border-forest/25 bg-[#f4f8f5] p-4" dir="rtl">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div><h3 className="font-bold">معاينة الاستيراد</h3><p className="mt-1 text-xs text-[#68756f]">تعرض هذه المعاينة الشيتات المحددة للاستيراد فقط.</p></div>
-        <span className={`rounded-full px-3 py-1 text-xs font-bold ${item.workflow.canConfirm ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-900"}`}>{item.workflow.canConfirm ? "جاهز للتأكيد" : "تحتاج المعاينة إلى مراجعة"}</span>
+    <section className="space-y-4 rounded-2xl border border-[#d9e3dd] bg-[#f5f8f6] p-4 sm:p-5" dir="rtl">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><h3 className="text-base font-black">معاينة قبل الحفظ</h3><p className="mt-1 text-xs leading-5 text-[#68756f]">المصدر لم يتغير. هنا نعرض فقط مدى جاهزية البيانات بعد تفسير الحقول وربطها بالمشروع.</p></div>
+        <span className={`rounded-full px-3 py-1.5 text-xs font-bold ${item.workflow.canConfirm ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-900"}`}>{item.workflow.canConfirm ? "جاهز للاعتماد" : "يوجد قرار يحتاج مراجعة"}</span>
       </div>
-      <div className="grid gap-2 text-sm sm:grid-cols-4">
-        <p className="rounded-xl bg-white p-3"><b>{preview.valid ?? 0}</b><span className="block text-xs text-[#68756f]">صف صالح</span></p>
-        <p className="rounded-xl bg-white p-3"><b>{preview.invalidRows ?? 0}</b><span className="block text-xs text-[#68756f]">صف غير صالح</span></p>
-        <p className="rounded-xl bg-white p-3"><b>{preview.newUnits ?? 0}</b><span className="block text-xs text-[#68756f]">وحدة جديدة</span></p>
-        <p className="rounded-xl bg-white p-3"><b>{preview.existingUnits ?? 0}</b><span className="block text-xs text-[#68756f]">وحدة موجودة</span></p>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <PreviewMetric value={sourceRows} label="صف مقروء من المصدر" tone="neutral"/>
+        <PreviewMetric value={ready} label="جاهز للاستيراد" tone="success"/>
+        <PreviewMetric value={needsReview} label="يحتاج قرار" tone={needsReview ? "warning" : "neutral"}/>
+        <PreviewMetric value={preview.newUnits ?? 0} label="وحدة جديدة" tone="neutral"/>
       </div>
       {sheets.map((sheet: any) => (
-        <details key={sheet.sheetId} open className="rounded-xl border bg-white p-3">
-          <summary className="cursor-pointer font-bold" dir="auto">{sheet.sheetName} — {sheet.rowsFound} صف</summary>
-          <div className="mt-3 grid gap-2 text-xs sm:grid-cols-4"><span>صالح: <b>{sheet.valid}</b></span><span>غير صالح: <b>{sheet.invalidRows}</b></span><span>مكرر: <b>{sheet.duplicates}</b></span><span>جديد: <b>{sheet.newUnits}</b></span></div>
-          {!!sheet.normalizedRows?.length && <div className="mt-3 overflow-x-auto"><table className="min-w-full text-xs"><thead><tr>{Object.keys(sheet.normalizedRows[0]).map((key) => <th key={key} className="whitespace-nowrap border p-2 text-start" dir="auto">{key}</th>)}</tr></thead><tbody>{sheet.normalizedRows.slice(0,10).map((row: Record<string, unknown>, index: number) => <tr key={index}>{Object.keys(sheet.normalizedRows[0]).map((key) => <td key={key} className="max-w-48 truncate border p-2" dir="auto">{row[key] == null ? "—" : String(row[key])}</td>)}</tr>)}</tbody></table></div>}
+        <details key={sheet.sheetId} className="rounded-xl border bg-white p-3" open={Number(sheet.needsReviewRows ?? sheet.invalidRows ?? 0) > 0}>
+          <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2">
+            <span><b dir="auto">{sheet.sheetName}</b><small className="mt-1 block text-[#748079]">{sheet.sourceRows ?? sheet.rowsFound} صف في المصدر</small></span>
+            <span className="flex flex-wrap gap-2 text-[11px] font-bold"><span className="rounded-full bg-[#eaf4ee] px-2.5 py-1 text-green-800">جاهز {sheet.readyRows ?? sheet.valid ?? 0}</span>{Number(sheet.needsReviewRows ?? sheet.invalidRows ?? 0) > 0 && <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-900">يحتاج قرار {sheet.needsReviewRows ?? sheet.invalidRows}</span>}{Number(sheet.duplicates ?? 0) > 0 && <span className="rounded-full bg-red-50 px-2.5 py-1 text-red-700">مكرر {sheet.duplicates}</span>}</span>
+          </summary>
+          {!!sheet.mappingAdjustments?.length && <div className="mt-3 space-y-2">{sheet.mappingAdjustments.map((adjustment: any, index: number) => <div key={`${adjustment.sourceKey}-${index}`} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-950"><b dir="auto">{adjustment.sourceColumn}</b> تم فهم قيمه كـ <b>{adjustment.effectiveField === "deliveryYears" ? "مدة تسليم بالسنوات" : adjustment.effectiveField}</b> بدل تفسيرها كتاريخ ثابت.</div>)}</div>}
+          {!!sheet.validationSummary?.length && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-black text-amber-950">المطلوب لتصبح كل الصفوف جاهزة</p><div className="mt-2 space-y-2">{sheet.validationSummary.map((entry: any) => <div key={`${entry.field}-${entry.code}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white/80 px-3 py-2 text-xs"><span><b>{errorLabel(entry)}</b>{entry.sampleRows?.length ? <small className="mt-1 block text-[#7b817e]">أمثلة صفوف: {entry.sampleRows.join("، ")}</small> : null}</span><span className="rounded-full bg-amber-100 px-2 py-1 font-black">{entry.count} صف</span></div>)}</div></div>}
+          {!!sheet.normalizedRows?.length && <details className="mt-3 rounded-xl border"><summary className="cursor-pointer px-3 py-2 text-xs font-bold">عرض عينة البيانات بعد التفسير</summary><div className="overflow-x-auto border-t"><table className="min-w-full text-xs"><thead><tr>{Object.keys(sheet.normalizedRows[0]).map((key) => <th key={key} className="whitespace-nowrap border-e p-2 text-start" dir="auto">{key}</th>)}</tr></thead><tbody>{sheet.normalizedRows.slice(0,5).map((row: Record<string, unknown>, index: number) => <tr key={index}>{Object.keys(sheet.normalizedRows[0]).map((key) => <td key={key} className="max-w-48 truncate border-e border-t p-2" dir="auto">{row[key] == null ? "—" : String(row[key])}</td>)}</tr>)}</tbody></table></div></details>}
         </details>
       ))}
-      {!item.workflow.canConfirm && <p className="rounded-xl bg-amber-50 p-3 text-xs font-bold text-amber-900">راجع الصفوف غير الصالحة أعلاه. زر التأكيد يظهر فقط عندما يسمح backend بالتأكيد.</p>}
+      {!item.workflow.canConfirm && <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-950">لن يتم إسقاط الصفوف أو حذفها. أصلح القرار الموضح أعلاه ثم أعد المعاينة؛ زر الاعتماد يفتح فقط عندما تصبح البيانات قابلة للحفظ بأمان.</p>}
     </section>
   );
 }
 
+function PreviewMetric({ value, label, tone }: { value: number; label: string; tone: "neutral" | "success" | "warning" }) {
+  const className = tone === "success" ? "border-emerald-200 bg-emerald-50" : tone === "warning" ? "border-amber-200 bg-amber-50" : "border-[#e1e4df] bg-white";
+  return <div className={`rounded-xl border p-3 ${className}`}><b className="text-lg">{value}</b><span className="mt-1 block text-xs text-[#68756f]">{label}</span></div>;
+}
+
 function StepBar({ workflow }: { workflow: ImportWorkflow }) {
   return (
-    <div className="overflow-x-auto rounded-2xl border bg-white px-4 py-3">
-      <ol className="flex min-w-[620px] items-center" dir="rtl" aria-label="مراحل الاستيراد">
-        {IMPORT_STEPS.map((s, i) => {
-          const state = importStepState(workflow, i);
-          return <li key={s} className="flex flex-1 items-center last:flex-none" aria-current={state.active ? "step" : undefined}>
-            <span
-              className={`grid h-6 min-w-6 place-items-center rounded-full px-1 text-[11px] font-bold ${state.complete ? "bg-forest text-white" : state.active ? "border-2 border-coral text-coral" : "bg-[#eee] text-[#999]"}`}
-            >
-              {state.complete ? <Check size={11} /> : state.count > 0 ? state.count : i + 1}
-            </span>
-            <span className="me-2 text-[11px] font-bold">{s}</span>
-            {i < IMPORT_STEPS.length - 1 && (
-              <div
-                className={`mx-3 h-px flex-1 ${state.complete ? "bg-forest" : "bg-[#ddd]"}`}
-              />
-            )}
-          </li>;
-        })}
-      </ol>
-    </div>
+    <ol className="grid grid-cols-2 gap-2 rounded-2xl border bg-white p-2 sm:grid-cols-4" dir="rtl" aria-label="مراحل الاستيراد">
+      {IMPORT_STEPS.map((label, index) => {
+        const state = importStepState(workflow, index);
+        return <li key={label} aria-current={state.active ? "step" : undefined} className={`flex min-h-14 items-center gap-3 rounded-xl px-3 py-2 ${state.active ? "bg-[#eef4f0] ring-1 ring-forest/20" : state.complete ? "bg-[#f7f8f5]" : "bg-white"}`}>
+          <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-xs font-black ${state.complete ? "bg-forest text-white" : state.active ? "border-2 border-forest bg-white text-forest" : "bg-[#efeee9] text-[#8a928e]"}`}>{state.complete ? <Check size={14}/> : state.count > 0 ? state.count : index + 1}</span>
+          <span className="min-w-0"><b className="block text-xs">{label}</b><small className="mt-0.5 block text-[10px] text-[#7a8580]">{state.complete ? "مكتمل" : state.active ? "الخطوة الحالية" : "لاحقًا"}</small></span>
+        </li>;
+      })}
+    </ol>
   );
 }
 function Analysis({ item }: { item: ImportData }) {
+  const mappedFields = item.sheets?.length ? item.sheets.reduce((count, sheet) => count + Object.keys(sheet.mappings || {}).length, 0) : Object.keys(item.analysis?.mappings || {}).length;
   return (
-    <div className="rounded-[18px] border bg-white p-4">
-      <p className="text-[12px] font-bold">تحليل الملف</p>
-      <div className="mt-4 grid grid-cols-3 gap-2">
-        {[
-          [item.rowsDetected, "صف"],
-          [Object.keys(item.analysis?.mappings || {}).length, "حقل معروف"],
-          [item.analysis?.sheets?.length || 1, "جدول"],
-        ].map(([n, l]) => (
-          <div key={String(l)} className="rounded-xl bg-[#f4f3ee] px-3 py-2.5">
-            <p className="text-[14px] font-bold">{n}</p>
-            <p className="text-[11px] uppercase text-[#8b958f]">{l}</p>
-          </div>
-        ))}
+    <div className="rounded-[18px] border bg-white p-4" dir="rtl">
+      <p className="text-[12px] font-bold">المصدر</p>
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        {[[item.rowsDetected, "صف مقروء"], [mappedFields, "حقل مفسر"], [item.sheets?.length || item.analysis?.sheets?.length || 1, "جدول"]].map(([n, l]) => <div key={String(l)} className="rounded-xl bg-[#f4f3ee] px-3 py-2.5"><p className="text-[15px] font-black">{n}</p><p className="text-[10px] text-[#8b958f]">{l}</p></div>)}
       </div>
     </div>
   );
@@ -775,7 +762,7 @@ function SheetReview({ item, selectorOptions, canonicalFields, updateSheet, mark
 
           <div className="rounded-2xl border bg-[#f7f8f5] p-3 sm:p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h4 className="text-sm font-black">1. سياق الجدول</h4><p className="mt-1 text-xs text-[#68756f]">المشروع يحدد المطور والموقع تلقائيًا، والمرحلة تمنع خلط وحدات مراحل مختلفة.</p></div>{selectedProject && <span className="rounded-full bg-white px-3 py-1 text-xs font-bold">{selectedProject.developer?.name || "—"} · {selectedProject.location?.name || "موقع يحتاج تحديد"}</span>}</div>
-            <div className="grid gap-3 lg:grid-cols-[1.2fr_.9fr_.7fr_.7fr]">
+            <div className="grid gap-4 md:grid-cols-2">
               <div><label className="text-xs font-bold">المشروع</label><input type="search" value={projectSearch[sheet.id] || ""} onChange={(event) => { const term = event.target.value; setProjectSearch((current) => ({ ...current, [sheet.id]: term })); void searchProjects(term); }} placeholder="ابحث باسم المشروع أو المطور أو المنطقة" className="mt-1 h-11 w-full rounded-xl border bg-white px-3 text-sm"/><select value={sheet.projectId || ""} onChange={(event) => updateSheet(sheet.id, { projectId: event.target.value, phaseId: null })} className="mt-2 h-11 w-full rounded-xl border bg-white px-2 text-sm"><option value="">اختر المشروع</option>{visibleProjects.map((project) => <option key={project.id} value={project.id}>{project.name}{project.developer?.name ? ` — ${project.developer.name}` : ""}{project.location?.name ? ` — ${project.location.name}` : ""}</option>)}</select><button type="button" onClick={() => { setCreateForSheet(createForSheet === sheet.id ? null : sheet.id); setContextError(""); }} className="mt-2 text-xs font-black text-forest">+ المشروع غير موجود؟ أنشئه هنا</button></div>
               <div><label className="text-xs font-bold">المرحلة</label><div className="mt-1 flex gap-1"><select disabled={!sheet.projectId} value={sheet.phaseId || ""} onChange={(event) => updateSheet(sheet.id, { phaseId: event.target.value || null })} className="h-11 min-w-0 flex-1 rounded-xl border bg-white px-2 text-sm disabled:bg-[#efefec]"><option value="">اختر المرحلة</option>{phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}{phase.code ? ` · ${phase.code}` : ""}</option>)}</select><button type="button" disabled={!sheet.projectId || loading} onClick={() => setPhaseDraft((current) => current?.sheetId === sheet.id ? null : { sheetId: sheet.id, name: "", code: "", deliveryYear: "" })} className="h-11 rounded-xl border bg-white px-3 text-lg font-bold text-forest disabled:opacity-40" title="إنشاء مرحلة جديدة">+</button></div>{phaseDraft?.sheetId === sheet.id && <div className="mt-2 grid gap-2 rounded-xl border border-dashed bg-white p-2"><input autoFocus value={phaseDraft.name} onChange={(event) => setPhaseDraft({ ...phaseDraft, name: event.target.value })} placeholder="اسم المرحلة" className="h-10 rounded-lg border px-2 text-sm"/><div className="grid grid-cols-2 gap-2"><input value={phaseDraft.code} onChange={(event) => setPhaseDraft({ ...phaseDraft, code: event.target.value })} placeholder="كود المرحلة — اختياري" className="h-10 rounded-lg border px-2 text-sm"/><input type="number" min={1900} max={2200} value={phaseDraft.deliveryYear} onChange={(event) => setPhaseDraft({ ...phaseDraft, deliveryYear: event.target.value })} placeholder="سنة التسليم" className="h-10 rounded-lg border px-2 text-sm"/></div><button type="button" disabled={!phaseDraft.name.trim() || loading} onClick={() => createPhase(sheet)} className="h-10 rounded-lg bg-forest px-3 text-xs font-black text-white disabled:opacity-40">إنشاء المرحلة وربط الجدول</button></div>}</div>
               <label className="text-xs font-bold">العملة<select value={sheet.defaultCurrency || ""} onChange={(event) => updateSheet(sheet.id, { defaultCurrency: event.target.value })} className="mt-1 h-11 w-full rounded-xl border bg-white px-2 text-sm"><option value="">من الملف</option>{["EGP","USD","EUR","AED","SAR","GBP","QAR","KWD","BHD","OMR"].map((value) => <option key={value}>{value}</option>)}</select></label>
@@ -796,9 +783,9 @@ function SheetReview({ item, selectorOptions, canonicalFields, updateSheet, mark
             </div>}
           </div>
 
-          <div><div className="flex items-center justify-between gap-2"><div><h4 className="text-sm font-black">2. معاينة المصدر</h4><p className="mt-1 text-xs text-[#68756f]">أول 5 صفوف للتأكد من اختيار Header الصحيح.</p></div></div><div className="mt-2 overflow-x-auto rounded-xl border"><table className="min-w-full text-xs"><thead className="bg-[#f5f6f3]"><tr>{(sheet.columns || []).map((column) => <th key={column.key} className="whitespace-nowrap border-e p-2 text-start" dir="auto">{column.originalHeader}</th>)}</tr></thead><tbody>{(sheet.sourcePreview || []).slice(0, 5).map((row, index) => <tr key={index}>{(sheet.columns || []).map((column) => <td key={column.key} className="max-w-44 truncate border-e border-t p-2" dir="auto">{row[column.key] == null ? "—" : String(row[column.key])}</td>)}</tr>)}</tbody></table></div></div>
+          <details className="rounded-2xl border bg-white p-3 sm:p-4"><summary className="cursor-pointer list-none"><div className="flex items-center justify-between gap-2"><div><h4 className="text-sm font-black">2. عينة المصدر</h4><p className="mt-1 text-xs text-[#68756f]">الملف مقروء كما هو. افتح العينة فقط إذا أردت مراجعة صف العناوين والقيم الأصلية.</p></div><span className="rounded-full bg-[#f1f3ef] px-3 py-1 text-[11px] font-bold">{sheet.rowsDetected} صف</span></div></summary><div className="mt-3 overflow-x-auto rounded-xl border"><table className="min-w-full text-xs"><thead className="bg-[#f5f6f3]"><tr>{(sheet.columns || []).map((column) => <th key={column.key} className="whitespace-nowrap border-e p-2 text-start" dir="auto">{column.originalHeader}</th>)}</tr></thead><tbody>{(sheet.sourcePreview || []).slice(0, 5).map((row, index) => <tr key={index}>{(sheet.columns || []).map((column) => <td key={column.key} className="max-w-44 truncate border-e border-t p-2" dir="auto">{row[column.key] == null ? "—" : String(row[column.key])}</td>)}</tr>)}</tbody></table></div></details>
 
-          <div><div className="mb-2"><h4 className="text-sm font-black">3. معاني الأعمدة</h4><p className="mt-1 text-xs leading-5 text-[#68756f]">ابحث بالكلمة بدل النزول في عشرات الخيارات. القاموس يشمل الهوية، الهيكل، السكني، التجاري، الطبي، المساحات، الأسعار، السداد، الريسيل، الإيجار، العائد، التراخيص والمزايا؛ وأي احتمال غير موجود يمكن حفظه كحقل مخصص.</p></div><div className="space-y-2">{(sheet.columns || []).map((column) => { const mapping = sheet.mappings?.[column.key]; return <div key={column.key} className="grid items-center gap-3 rounded-xl border p-3 lg:grid-cols-[1fr_.85fr_1.15fr]"><div><b dir="auto">{column.originalHeader}</b><small className="mt-1 block truncate text-[#748079]" dir="auto">{(column.samples || []).map(String).join(" · ") || "لا توجد عينات"}</small></div><span className="text-xs"><b>{fieldLabel(mapping)}</b><small className="block text-[#748079]">{sheet.mappingSources?.[column.key] || "غير محدد"}</small></span><MappingPicker current={mapping} fields={canonicalFields} sourceColumn={column.key} disabled={loading} allowCustom={item.status !== "COMPLETED"} onChange={(target) => updateMapping(sheet.id, column.key, target)}/></div>; })}</div></div>
+          <details className="rounded-2xl border bg-white p-3 sm:p-4" open={sheetIssues.some((entry) => entry.field?.includes(":column:") || entry.field?.includes(":mapping:"))}><summary className="cursor-pointer list-none"><div className="flex flex-wrap items-center justify-between gap-2"><div><h4 className="text-sm font-black">3. معاني الأعمدة</h4><p className="mt-1 text-xs leading-5 text-[#68756f]">راجع فقط ما تحتاجه. البحث يقبل العربي والإنجليزي، ويمكن حفظ أي عمود غير معتاد كمعلومة مخصصة.</p></div><span className="rounded-full bg-[#f1f3ef] px-3 py-1 text-[11px] font-bold">{Object.keys(sheet.mappings || {}).length}/{(sheet.columns || []).length} محدد</span></div></summary><div className="mt-4 space-y-2">{(sheet.columns || []).map((column) => { const mapping = sheet.mappings?.[column.key]; return <div key={column.key} className="grid gap-3 rounded-xl border p-3 lg:grid-cols-[minmax(0,1fr)_minmax(300px,1fr)]"><div className="min-w-0"><b dir="auto">{column.originalHeader}</b><small className="mt-1 block truncate text-[#748079]" dir="auto">{(column.samples || []).map(String).join(" · ") || "لا توجد عينات"}</small><small className="mt-1 block text-[10px] text-[#8a948f]">{mapping ? `${fieldLabel(mapping)} · ${sheet.mappingSources?.[column.key] || "محدد"}` : "يحتاج تحديد"}</small></div><MappingPicker current={mapping} fields={canonicalFields} sourceColumn={column.key} disabled={loading} allowCustom={item.status !== "COMPLETED"} onChange={(target) => updateMapping(sheet.id, column.key, target)}/></div>; })}</div></details>
           {sheet.previewMappingVersion != null && sheet.previewMappingVersion !== sheet.mappingVersion && <p className="rounded-lg bg-amber-50 p-3 text-xs font-bold text-amber-800">تم تعديل سياق أو تفسير الجدول. أنشئ المعاينة مرة أخرى قبل الاعتماد.</p>}
         </div>}
       </details>;
@@ -824,27 +811,13 @@ function MappingReview({ item }: { item: ImportData }) {
   return <details className="rounded-2xl border bg-[#fbfaf7] p-4" dir="rtl"><summary className="cursor-pointer text-[14px] font-bold">مراجعة معاني أعمدة الملف</summary><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[560px] text-right text-[13px]"><thead><tr className="border-b text-[#6d7772]"><th className="p-2">عمود الملف</th><th className="p-2">المعنى في النظام</th><th className="p-2">المصدر</th></tr></thead><tbody>{mappings.map(([column, canonical]) => { const label = labels.get(String(canonical)); return <tr key={column} className="border-b last:border-0"><td className="p-2" dir="auto">{column}</td><td className="p-2">{label?.labelAr || label?.labelEn || "حقل أعمال معتمد"}</td><td className="p-2">{sourceLabel(item.analysis?.mappingSources?.[column])}</td></tr>; })}{plans.map(([column, plan]) => <tr key={column} className="border-b last:border-0"><td className="p-2" dir="auto">{column}</td><td className="p-2">سعر خطة سداد — {plan.durationMonths || "—"} شهر</td><td className="p-2">{plan.approved ? "تم تأكيده" : "يحتاج تأكيد"}</td></tr>)}</tbody></table></div></details>;
 }
 function Issues({ issues }: { issues: Issue[] }) {
+  const unresolved = issues.filter((issue) => !issue.resolvedAt);
   return (
-    <div className="rounded-[18px] border bg-white p-4">
-      <p className="text-[12px] font-bold">نقاط تحتاج مراجعة</p>
-      <div className="mt-4 space-y-3">
-        {issues.length ? (
-          issues.map((i) => (
-            <div key={i.id} className="flex gap-2">
-              <span
-                className={`mt-1 h-2 w-2 rounded-full ${i.resolvedAt ? "bg-[#3d8c6c]" : i.severity === "BLOCKING" ? "bg-coral" : "bg-[#e3ad52]"}`}
-              />
-              <div>
-                <p className="text-[11px] font-bold">{i.message}</p>
-                <p className="text-[11px] text-[#8b958f]">
-                  {i.resolvedAt ? "تم الحل" : i.severity}
-                </p>
-              </div>
-            </div>
-          ))
-        ) : (
-          <p className="text-[11px] text-[#8b958f]">لا توجد مشاكل معلقة</p>
-        )}
+    <div className="rounded-[18px] border bg-white p-4" dir="rtl">
+      <div className="flex items-center justify-between gap-2"><p className="text-[12px] font-bold">القرارات المطلوبة</p><span className={`rounded-full px-2 py-1 text-[10px] font-black ${unresolved.length ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-800"}`}>{unresolved.length}</span></div>
+      <div className="mt-3 space-y-2">
+        {unresolved.length ? unresolved.slice(0, 5).map((issue) => <div key={issue.id} className="flex gap-2 rounded-xl bg-[#faf9f5] p-2.5"><span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${issue.severity === "BLOCKING" ? "bg-coral" : "bg-[#e3ad52]"}`}/><div><p className="text-[11px] font-bold leading-5">{issue.message}</p><p className="text-[10px] text-[#8b958f]">{issue.severity === "BLOCKING" ? "مطلوب قبل المعاينة" : "مراجعة"}</p></div></div>) : <p className="rounded-xl bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-800">لا توجد قرارات معلقة.</p>}
+        {unresolved.length > 5 && <p className="text-[10px] text-[#7c8781]">+ {unresolved.length - 5} قرارات أخرى تظهر داخل الجدول المرتبط بها.</p>}
       </div>
     </div>
   );

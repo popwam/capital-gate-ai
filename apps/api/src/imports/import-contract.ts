@@ -319,6 +319,35 @@ export function parseImportDate(value: unknown): Date | undefined {
   return undefined;
 }
 
+export function parseDeliveryDurationYears(value: unknown): number | undefined {
+  if (value == null || value === "") return undefined;
+  if (typeof value === "number" && Number.isFinite(value)) return value > 0 && value <= 50 ? value : undefined;
+  const arabicDigits: Record<string, string> = { "٠":"0", "١":"1", "٢":"2", "٣":"3", "٤":"4", "٥":"5", "٦":"6", "٧":"7", "٨":"8", "٩":"9", "٫":".", "٬":"" };
+  const text = String(value).trim().replace(/[٠-٩٫٬]/g, (character) => arabicDigits[character]);
+  const years = text.match(/(\d+(?:\.\d+)?)\s*(?:y|yr|yrs|year|years|سنة|سنوات)/iu);
+  if (years) {
+    const parsed = Number(years[1]);
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= 50 ? parsed : undefined;
+  }
+  const months = text.match(/(\d+(?:\.\d+)?)\s*(?:m|mo|mos|month|months|شهر|شهور|أشهر|اشهر)/iu);
+  if (months) {
+    const parsed = Number(months[1]) / 12;
+    return Number.isFinite(parsed) && parsed > 0 && parsed <= 50 ? Math.round(parsed * 100) / 100 : undefined;
+  }
+  return undefined;
+}
+
+export function refineCanonicalFieldBySamples(canonical: string, samples: unknown[] = []) {
+  const values = samples.filter((value) => value != null && String(value).trim() !== "");
+  if (!values.length) return canonical;
+  if (canonical === "deliveryDate") {
+    const durationMatches = values.filter((value) => parseDeliveryDurationYears(value) != null).length;
+    const dateMatches = values.filter((value) => parseImportDate(value) != null).length;
+    if (durationMatches >= Math.max(1, Math.ceil(values.length * 0.6)) && dateMatches === 0) return "deliveryYears";
+  }
+  return canonical;
+}
+
 export function normalizeFinishing(value: unknown) {
   const text = String(value ?? "").trim().toLowerCase();
   if (!text) return undefined;
