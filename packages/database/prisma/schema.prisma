@@ -265,6 +265,7 @@ model Project {
   zones               ProjectZone[]
   buildings           ProjectBuilding[]
   phases              ProjectPhase[]
+  phaseAliases        ProjectPhaseAlias[]
   marketProfiles      MarketProfile[]
   investmentProfile   ProjectInvestmentProfile?
   landmarks           ProjectLandmark[]
@@ -347,12 +348,29 @@ model ProjectPhase {
   paymentPlans           PaymentPlan[]
   marketProfiles         MarketProfile[]
   importSheets           ImportSheet[]
+  aliases                ProjectPhaseAlias[]
   createdAt              DateTime          @default(now())
   updatedAt              DateTime          @updatedAt
 
   @@unique([projectId, name])
   @@index([projectId, sortOrder])
   @@index([deliveryYear, status])
+}
+
+model ProjectPhaseAlias {
+  id              String       @id @default(cuid())
+  projectId       String
+  project         Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId         String
+  phase           ProjectPhase @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  value           String
+  normalizedValue String
+  source          String       @default("IMPORT")
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@unique([projectId, normalizedValue])
+  @@index([phaseId])
 }
 
 model MarketProfile {

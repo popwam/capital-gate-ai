@@ -51,6 +51,7 @@ type Location = {
 };
 type SelectorItem = { id: string; name: string; slug?: string; developerId?: string; locationId?: string; developer?: { name: string }; location?: { name: string }; parent?: { name: string }; type?: string };
 type CanonicalFieldOption = { value: string; group: string; labelAr: string; labelEn: string; type?: string; storage?: "UNIT" | "METADATA"; keywords?: string[] };
+type PhaseValueReview = { mode:"COLUMN"|"SINGLE"; sourceColumn:string|null; sourceHeader:string|null; totalRows:number; uniqueCount:number; matchedCount:number; unmatchedCount:number; values:Array<{normalizedValue:string;sourceValue:string;count:number;matched:boolean;phaseId:string|null;phaseName:string|null;phaseCode?:string|null;matchSource:string}>; phases?:Array<{id:string;name:string;code?:string|null}> };
 
 
 export function ImportAssistant() {
@@ -145,6 +146,7 @@ export function ImportAssistant() {
   async function updateAllSheets(data:Record<string,unknown>){if(!item)return;setLoading(true);setError("");try{setItem(await adminApi.patch<ImportData>(`/imports/${item.id}/sheets`,data))}catch(e){setError(adminErrorMessage(e))}finally{setLoading(false)}}
   async function markAllSheetsInventory(){if(!item)return;setLoading(true);setError("");try{setItem(await adminApi.patch<ImportData>(`/imports/${item.id}/sheets/all-inventory`,{}))}catch(e){setError(adminErrorMessage(e))}finally{setLoading(false)}}
   async function updateSheetMapping(sheetId:string,sourceColumn:string,canonicalField:string){if(!item)return;setLoading(true);setError("");try{if(item.status==="COMPLETED"){const correction=await adminApi.post<{id:string}>(`/imports/${item.id}/sheets/${sheetId}/corrections`,{sourceColumn,canonicalField});const preview=await adminApi.post<{affected:number;conflicts:number;unchanged:number;changes:Array<{unitId:string;externalUnitId:string;conflict:boolean}>}>(`/imports/${item.id}/corrections/${correction.id}/preview`);const decisions:Record<string,string>={};for(const change of preview.changes.filter(change=>change.conflict)){const decision=globalThis.prompt(`تعارض في الوحدة ${change.externalUnitId}. اكتب APPLY لتطبيق القيمة المصححة، KEEP للاحتفاظ بالقيمة الحالية، أو SKIP لتخطي السجل.`,"KEEP")?.toUpperCase();decisions[change.unitId]=decision==="APPLY"?"APPLY_CORRECTED":decision==="SKIP"?"SKIP":"KEEP_CURRENT"}if(globalThis.confirm(`معاينة التصحيح: ${preview.affected} وحدة ستتأثر، ${preview.conflicts} تعارضات، ${preview.unchanged} بلا تغيير. هل تريد تطبيق القرارات؟`)){await adminApi.post(`/imports/${item.id}/corrections/${correction.id}/confirm`,{decisions});setItem(await adminApi.get<ImportData>(`/imports/${item.id}`))}}else setItem(await adminApi.patch<ImportData>(`/imports/${item.id}/sheets/${sheetId}/mapping`,{sourceColumn,canonicalField}))}catch(e){setError(adminErrorMessage(e))}finally{setLoading(false)}}
+  async function mapPhaseValue(sheetId:string,sourceValue:string,phaseId:string){if(!item||!phaseId)return;setLoading(true);setError("");try{setItem(await adminApi.patch<ImportData>(`/imports/${item.id}/sheets/${sheetId}/phase-values`,{sourceValue,phaseId}))}catch(e){setError(adminErrorMessage(e))}finally{setLoading(false)}}
   async function confirm() {
     if (!item) return;
     setLoading(true);
@@ -231,7 +233,7 @@ export function ImportAssistant() {
                         <p className="mt-1 text-xs leading-6 text-[#68756f]">تم العثور على <b>{item.rowsDetected}</b> صف. أكمل سياق المشروع ومعاني الحقول، ثم أنشئ المعاينة. الصف الخام لا يُعتبر خطأ لمجرد أن حقلًا يحتاج تفسيرًا.</p>
                       </div>
                       {!!item.sheets?.length && (
-                        <SheetReview item={item} selectorOptions={selectorOptions} canonicalFields={canonicalFields} updateSheet={updateSheet} markAllInventory={markAllSheetsInventory} updateMapping={updateSheetMapping} loading={loading}/>
+                        <SheetReview item={item} selectorOptions={selectorOptions} canonicalFields={canonicalFields} updateSheet={updateSheet} markAllInventory={markAllSheetsInventory} updateMapping={updateSheetMapping} mapPhaseValue={mapPhaseValue} loading={loading}/>
                       )}
                       {item.status!=="COMPLETED"&&item.sheets.filter(sheet=>sheet.action==="IMPORT").length>1&&item.sheets.some(sheet=>sheet.action==="IMPORT"&&sheet.projectId)&&<button type="button" disabled={loading} onClick={()=>{const source=item.sheets.find(sheet=>sheet.action==="IMPORT"&&sheet.projectId)!;updateAllSheets({projectId:source.projectId,phaseId:source.phaseId,defaultCurrency:source.defaultCurrency,defaultUnitType:source.defaultUnitType,defaultIsResale:source.defaultIsResale})}} className="rounded-xl border border-forest px-4 py-2 text-sm font-bold text-forest">تطبيق سياق أول جدول على باقي الجداول</button>}
                       {!item.sheets?.length && (
@@ -637,7 +639,7 @@ function MappingPicker({ current, fields, sourceColumn, disabled, allowCustom, o
   </div>;
 }
 
-function SheetReview({ item, selectorOptions, canonicalFields, updateSheet, markAllInventory, updateMapping, loading }: { item: ImportData; selectorOptions: Record<string, SelectorItem[]>; canonicalFields: CanonicalFieldOption[]; updateSheet: (id: string, data: Record<string, unknown>) => void; markAllInventory: () => void; updateMapping: (id: string, column: string, target: string) => void; loading: boolean }) {
+function SheetReview({ item, selectorOptions, canonicalFields, updateSheet, markAllInventory, updateMapping, mapPhaseValue, loading }: { item: ImportData; selectorOptions: Record<string, SelectorItem[]>; canonicalFields: CanonicalFieldOption[]; updateSheet: (id: string, data: Record<string, unknown>) => void; markAllInventory: () => void; updateMapping: (id: string, column: string, target: string) => void; mapPhaseValue: (id:string, sourceValue:string, phaseId:string) => void; loading: boolean }) {
   const imported = item.sheets.filter((sheet) => sheet.action === "IMPORT").length;
   const [projects, setProjects] = useState<SelectorItem[]>(selectorOptions.projects || []);
   const [developers, setDevelopers] = useState<SelectorItem[]>(selectorOptions.developers || []);
@@ -654,7 +656,8 @@ function SheetReview({ item, selectorOptions, canonicalFields, updateSheet, mark
   const [newLocationType, setNewLocationType] = useState("AREA");
   const [newLocationParentId, setNewLocationParentId] = useState("");
   const [locationTargetSheetId, setLocationTargetSheetId] = useState<string | null>(null);
-  const [phaseDraft, setPhaseDraft] = useState<{ sheetId: string; name: string; code: string; deliveryYear: string } | null>(null);
+  const [phaseDraft, setPhaseDraft] = useState<{ sheetId: string; name: string; code: string; deliveryYear: string; sourceValue?: string } | null>(null);
+  const [phaseReviews, setPhaseReviews] = useState<Record<string, PhaseValueReview>>({});
   const [contextError, setContextError] = useState("");
 
   useEffect(() => setProjects(selectorOptions.projects || []), [selectorOptions.projects]);
@@ -669,6 +672,15 @@ function SheetReview({ item, selectorOptions, canonicalFields, updateSheet, mark
         .catch(() => undefined);
     });
   }, [item.sheets, phasesByProject]);
+  useEffect(() => {
+    let cancelled = false;
+    const targets = item.sheets.filter((sheet) => sheet.action === "IMPORT" && sheet.projectId && Object.values(sheet.mappings || {}).includes("phase"));
+    Promise.all(targets.map(async (sheet) => {
+      try { return [sheet.id, await adminApi.get<PhaseValueReview>(`/imports/${item.id}/sheets/${sheet.id}/phase-values`)] as const; }
+      catch { return [sheet.id, null] as const; }
+    })).then((entries) => { if (!cancelled) setPhaseReviews(Object.fromEntries(entries.filter((entry): entry is readonly [string, PhaseValueReview] => Boolean(entry[1])))); });
+    return () => { cancelled = true; };
+  }, [item.id, item.sheets]);
 
   async function searchProjects(term: string) {
     const query = term.trim();
@@ -695,8 +707,10 @@ function SheetReview({ item, selectorOptions, canonicalFields, updateSheet, mark
         deliveryYear: Number.isInteger(deliveryYear) ? deliveryYear : undefined,
       });
       setPhasesByProject((current) => ({ ...current, [sheet.projectId!]: [...(current[sheet.projectId!] || []), phase] }));
+      const sourceValue = phaseDraft.sourceValue;
       setPhaseDraft(null);
-      updateSheet(sheet.id, { phaseId: phase.id });
+      if (sourceValue) mapPhaseValue(sheet.id, sourceValue, phase.id);
+      else updateSheet(sheet.id, { phaseId: phase.id });
     } catch (error) { setContextError(adminErrorMessage(error)); }
   }
 
@@ -748,6 +762,8 @@ function SheetReview({ item, selectorOptions, canonicalFields, updateSheet, mark
     <div className="flex flex-wrap gap-2 text-[11px] font-bold text-[#68756f]"><span className="rounded-full bg-white px-3 py-1.5">{item.sheets.length} جدول</span><span className="rounded-full bg-white px-3 py-1.5">{imported} للاستيراد</span><span className="rounded-full bg-white px-3 py-1.5">{canonicalFields.length || 200}+ حقل عقاري قابل للبحث + حقول مخصصة</span></div>
     {item.sheets.map((sheet) => {
       const phases = sheet.projectId ? phasesByProject[sheet.projectId] || [] : [];
+      const usesPhaseColumn = Object.values(sheet.mappings || {}).includes("phase");
+      const phaseReview = phaseReviews[sheet.id];
       const sheetIssues = item.issues.filter((issue) => issue.field?.startsWith(`sheet:${sheet.id}:`) && !issue.resolvedAt);
       const search = (projectSearch[sheet.id] || "").trim().toLowerCase();
       const visibleProjects = projects.filter((project) => !search || [project.name, project.developer?.name, project.location?.name].filter(Boolean).join(" ").toLowerCase().includes(search)).slice(0, 80);
@@ -764,7 +780,14 @@ function SheetReview({ item, selectorOptions, canonicalFields, updateSheet, mark
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h4 className="text-sm font-black">1. سياق الجدول</h4><p className="mt-1 text-xs text-[#68756f]">المشروع يحدد المطور والموقع تلقائيًا، والمرحلة تمنع خلط وحدات مراحل مختلفة.</p></div>{selectedProject && <span className="rounded-full bg-white px-3 py-1 text-xs font-bold">{selectedProject.developer?.name || "—"} · {selectedProject.location?.name || "موقع يحتاج تحديد"}</span>}</div>
             <div className="grid gap-4 md:grid-cols-2">
               <div><label className="text-xs font-bold">المشروع</label><input type="search" value={projectSearch[sheet.id] || ""} onChange={(event) => { const term = event.target.value; setProjectSearch((current) => ({ ...current, [sheet.id]: term })); void searchProjects(term); }} placeholder="ابحث باسم المشروع أو المطور أو المنطقة" className="mt-1 h-11 w-full rounded-xl border bg-white px-3 text-sm"/><select value={sheet.projectId || ""} onChange={(event) => updateSheet(sheet.id, { projectId: event.target.value, phaseId: null })} className="mt-2 h-11 w-full rounded-xl border bg-white px-2 text-sm"><option value="">اختر المشروع</option>{visibleProjects.map((project) => <option key={project.id} value={project.id}>{project.name}{project.developer?.name ? ` — ${project.developer.name}` : ""}{project.location?.name ? ` — ${project.location.name}` : ""}</option>)}</select><button type="button" onClick={() => { setCreateForSheet(createForSheet === sheet.id ? null : sheet.id); setContextError(""); }} className="mt-2 text-xs font-black text-forest">+ المشروع غير موجود؟ أنشئه هنا</button></div>
-              <div><label className="text-xs font-bold">المرحلة</label><div className="mt-1 flex gap-1"><select disabled={!sheet.projectId} value={sheet.phaseId || ""} onChange={(event) => updateSheet(sheet.id, { phaseId: event.target.value || null })} className="h-11 min-w-0 flex-1 rounded-xl border bg-white px-2 text-sm disabled:bg-[#efefec]"><option value="">اختر المرحلة</option>{phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}{phase.code ? ` · ${phase.code}` : ""}</option>)}</select><button type="button" disabled={!sheet.projectId || loading} onClick={() => setPhaseDraft((current) => current?.sheetId === sheet.id ? null : { sheetId: sheet.id, name: "", code: "", deliveryYear: "" })} className="h-11 rounded-xl border bg-white px-3 text-lg font-bold text-forest disabled:opacity-40" title="إنشاء مرحلة جديدة">+</button></div>{phaseDraft?.sheetId === sheet.id && <div className="mt-2 grid gap-2 rounded-xl border border-dashed bg-white p-2"><input autoFocus value={phaseDraft.name} onChange={(event) => setPhaseDraft({ ...phaseDraft, name: event.target.value })} placeholder="اسم المرحلة" className="h-10 rounded-lg border px-2 text-sm"/><div className="grid grid-cols-2 gap-2"><input value={phaseDraft.code} onChange={(event) => setPhaseDraft({ ...phaseDraft, code: event.target.value })} placeholder="كود المرحلة — اختياري" className="h-10 rounded-lg border px-2 text-sm"/><input type="number" min={1900} max={2200} value={phaseDraft.deliveryYear} onChange={(event) => setPhaseDraft({ ...phaseDraft, deliveryYear: event.target.value })} placeholder="سنة التسليم" className="h-10 rounded-lg border px-2 text-sm"/></div><button type="button" disabled={!phaseDraft.name.trim() || loading} onClick={() => createPhase(sheet)} className="h-10 rounded-lg bg-forest px-3 text-xs font-black text-white disabled:opacity-40">إنشاء المرحلة وربط الجدول</button></div>}</div>
+              <div>
+                <label className="text-xs font-bold">توزيع المراحل</label>
+                {usesPhaseColumn ? <div className="mt-1 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2"><div><b className="text-sm">من عمود {phaseReview?.sourceHeader || "Phase"}</b><p className="mt-1 text-[11px] text-[#68756f]">كل قيمة فريدة تربطها مرة واحدة بمرحلة المشروع، ثم تُحفظ كـ Alias للاستيرادات القادمة.</p></div><span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${phaseReview?.unmatchedCount ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"}`}>{phaseReview ? `${phaseReview.matchedCount}/${phaseReview.uniqueCount} مطابق` : "جاري قراءة المراحل…"}</span></div>
+                  {phaseReview?.values?.length ? <div className="mt-3 space-y-2">{phaseReview.values.map((value) => <div key={value.normalizedValue} className={`grid gap-2 rounded-xl border p-2.5 sm:grid-cols-[minmax(0,1fr)_auto_minmax(180px,240px)] sm:items-center ${value.matched ? "border-emerald-100 bg-white" : "border-amber-200 bg-amber-50"}`}><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><b dir="auto">{value.sourceValue}</b><span className="rounded-full bg-[#f1f3ef] px-2 py-0.5 text-[10px] font-bold">{value.count} وحدة</span></div>{value.matched && <small className="mt-1 block text-emerald-800">→ {value.phaseName}{value.phaseCode ? ` · ${value.phaseCode}` : ""}{value.matchSource === "ALIAS" ? " · Alias محفوظ" : ""}</small>}</div><button type="button" disabled={!sheet.projectId || loading} onClick={() => setPhaseDraft({ sheetId: sheet.id, name: value.sourceValue, code: "", deliveryYear: "", sourceValue: value.sourceValue })} className="rounded-lg border bg-white px-2.5 py-2 text-[11px] font-black text-forest">+ مرحلة جديدة</button><select disabled={loading} value={value.phaseId || ""} onChange={(event) => event.target.value && mapPhaseValue(sheet.id, value.sourceValue, event.target.value)} className="h-10 min-w-0 rounded-lg border bg-white px-2 text-xs"><option value="">{value.matched ? "تغيير الربط" : "اختر المرحلة"}</option>{phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}{phase.code ? ` · ${phase.code}` : ""}</option>)}</select></div>)}</div> : phaseReview && <p className="mt-3 text-xs font-bold text-amber-800">لم نجد قيماً غير فارغة في عمود المرحلة.</p>}
+                </div> : <div className="mt-1 flex gap-1"><select disabled={!sheet.projectId} value={sheet.phaseId || ""} onChange={(event) => updateSheet(sheet.id, { phaseId: event.target.value || null })} className="h-11 min-w-0 flex-1 rounded-xl border bg-white px-2 text-sm disabled:bg-[#efefec]"><option value="">مرحلة واحدة لكل الجدول</option>{phases.map((phase) => <option key={phase.id} value={phase.id}>{phase.name}{phase.code ? ` · ${phase.code}` : ""}</option>)}</select><button type="button" disabled={!sheet.projectId || loading} onClick={() => setPhaseDraft((current) => current?.sheetId === sheet.id ? null : { sheetId: sheet.id, name: "", code: "", deliveryYear: "" })} className="h-11 rounded-xl border bg-white px-3 text-lg font-bold text-forest disabled:opacity-40" title="إنشاء مرحلة جديدة">+</button></div>}
+                {phaseDraft?.sheetId === sheet.id && <div className="mt-2 grid gap-2 rounded-xl border border-dashed bg-white p-2"><div className="flex items-center justify-between gap-2"><b className="text-xs">{phaseDraft.sourceValue ? `إنشاء مرحلة للقيمة «${phaseDraft.sourceValue}»` : "إنشاء مرحلة جديدة"}</b><button type="button" onClick={() => setPhaseDraft(null)}><X size={14}/></button></div><input autoFocus value={phaseDraft.name} onChange={(event) => setPhaseDraft({ ...phaseDraft, name: event.target.value })} placeholder="اسم المرحلة" className="h-10 rounded-lg border px-2 text-sm"/><div className="grid grid-cols-2 gap-2"><input value={phaseDraft.code} onChange={(event) => setPhaseDraft({ ...phaseDraft, code: event.target.value })} placeholder="كود المرحلة — اختياري" className="h-10 rounded-lg border px-2 text-sm"/><input type="number" min={1900} max={2200} value={phaseDraft.deliveryYear} onChange={(event) => setPhaseDraft({ ...phaseDraft, deliveryYear: event.target.value })} placeholder="سنة التسليم" className="h-10 rounded-lg border px-2 text-sm"/></div><button type="button" disabled={!phaseDraft.name.trim() || loading} onClick={() => createPhase(sheet)} className="h-10 rounded-lg bg-forest px-3 text-xs font-black text-white disabled:opacity-40">{phaseDraft.sourceValue ? "إنشاء وربط هذه القيمة" : "إنشاء المرحلة وربط الجدول"}</button></div>}
+              </div>
               <label className="text-xs font-bold">العملة<select value={sheet.defaultCurrency || ""} onChange={(event) => updateSheet(sheet.id, { defaultCurrency: event.target.value })} className="mt-1 h-11 w-full rounded-xl border bg-white px-2 text-sm"><option value="">من الملف</option>{["EGP","USD","EUR","AED","SAR","GBP","QAR","KWD","BHD","OMR"].map((value) => <option key={value}>{value}</option>)}</select></label>
               <label className="text-xs font-bold">السوق<button type="button" disabled={loading} onClick={() => updateSheet(sheet.id, { defaultIsResale: !sheet.defaultIsResale })} className={`mt-1 flex h-11 w-full items-center justify-between rounded-xl border px-3 text-sm ${sheet.defaultIsResale ? "border-[#b08c52] bg-[#f7f0e5] text-[#71562e]" : "bg-white"}`}><span>{sheet.defaultIsResale ? "Resale" : "Primary"}</span><span className={`h-5 w-9 rounded-full p-0.5 ${sheet.defaultIsResale ? "bg-[#b08c52]" : "bg-[#d9dfdc]"}`}><span className={`block h-4 w-4 rounded-full bg-white transition ${sheet.defaultIsResale ? "translate-x-0" : "-translate-x-4"}`}/></span></button></label>
             </div>

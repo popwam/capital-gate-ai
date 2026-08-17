@@ -10,6 +10,7 @@ import { ImportHttpException, importErrorDetails } from "./import-errors";
 class ResolutionDto { @IsString() @IsNotEmpty() field!: string; @Allow() value!: unknown; }
 class SheetUpdateDto { @Allow() action?: unknown; @Allow() headerRow?: unknown; @Allow() projectId?: unknown; @Allow() phaseId?: unknown; @Allow() developerId?: unknown; @Allow() locationId?: unknown; @Allow() defaultCurrency?: unknown; @Allow() defaultUnitType?: unknown; @Allow() defaultIsResale?: unknown; }
 class SheetMappingDto { @IsString() @IsNotEmpty() sourceColumn!: string; @IsString() @IsNotEmpty() canonicalField!: string; }
+class PhaseValueMappingDto { @IsString() @IsNotEmpty() sourceValue!: string; @IsString() @IsNotEmpty() phaseId!: string; }
 class CorrectionDto extends SheetMappingDto {}
 class CorrectionDecisionDto { @Allow() decisions?: Record<string,string>; }
 class RemoveBatchDto { @IsIn(["DELETE_UNFINISHED", "DELETE_SOURCE_RECORD", "DELETE_EXCLUSIVE_RECORDS", "ROLLBACK_SAFE"]) mode!: "DELETE_UNFINISHED" | "DELETE_SOURCE_RECORD" | "DELETE_EXCLUSIVE_RECORDS" | "ROLLBACK_SAFE"; }
@@ -45,6 +46,8 @@ export class ImportsController {
   @Patch(":id/sheets/all-inventory") allSheetsInventory(@Param("id") id:string){return this.imports.markAllSheetsAsInventory(id);}
   @Patch(":id/sheets/:sheetId") updateSheet(@Param("id") id: string, @Param("sheetId") sheetId: string, @Body() body: SheetUpdateDto) { return this.imports.updateImportSheet(id, sheetId, body as Record<string, unknown>); }
   @Patch(":id/sheets/:sheetId/mapping") updateSheetMapping(@Param("id") id: string, @Param("sheetId") sheetId: string, @Body() body: SheetMappingDto) { return this.imports.updateImportSheetMapping(id, sheetId, body.sourceColumn, body.canonicalField); }
+  @Get(":id/sheets/:sheetId/phase-values") phaseValues(@Param("id") id: string, @Param("sheetId") sheetId: string) { return this.imports.getPhaseValues(id, sheetId); }
+  @Patch(":id/sheets/:sheetId/phase-values") mapPhaseValue(@Param("id") id: string, @Param("sheetId") sheetId: string, @Body() body: PhaseValueMappingDto) { return this.imports.mapPhaseValue(id, sheetId, body.sourceValue, body.phaseId); }
   @Post(":id/sheets/:sheetId/corrections") async createCorrection(@Param("id") id:string,@Param("sheetId") sheetId:string,@Body() body:CorrectionDto,@Req() req:any){const result=await this.imports.createCorrection(id,sheetId,body.sourceColumn,body.canonicalField,req.admin.id);await this.audit.record(req.admin.id,"IMPORT_CORRECTION_CREATED","DataImport",id,{correctionId:result.id,sheetId,sourceColumn:body.sourceColumn,canonicalField:body.canonicalField});return result;}
   @Post(":id/corrections/:correctionId/preview") previewCorrection(@Param("id") id:string,@Param("correctionId") correctionId:string){return this.imports.previewCorrection(id,correctionId);}
   @Post(":id/corrections/:correctionId/confirm") async confirmCorrection(@Param("id") id:string,@Param("correctionId") correctionId:string,@Body() body:CorrectionDecisionDto,@Req() req:any){const result=await this.imports.confirmCorrection(id,correctionId,body.decisions);await this.audit.record(req.admin.id,"IMPORT_CORRECTION_CONFIRMED","DataImport",id,{correctionId,...result});return result;}
