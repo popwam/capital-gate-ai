@@ -1,0 +1,15 @@
+LATEST OVERLAY FILES:
+apps/api/src/admin/catalog.controller.ts
+apps/api/src/admin/real-estate.controller.ts
+apps/api/src/chat.service.ts
+apps/api/src/payment-calculator.ts
+apps/api/src/providers/ai-context.ts
+apps/api/src/providers/groq.provider.ts
+apps/api/src/providers/hybrid.provider.ts
+apps/web/app/admin/projects/[id]/page.tsx
+apps/web/components/chat-app.tsx
+apps/web/components/payment-plan-designer.tsx
+apps/web/components/project-spatial-editor.tsx
+packages/database/prisma/migrations/20260818010000_master_plan_calibration_payment_schedule/migration.sql
+packages/database/prisma/schema.prisma
+apps/web/app/admin/leads/page.tsx

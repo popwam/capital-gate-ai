@@ -16,6 +16,14 @@ export type PaymentPlanLike = {
   maintenancePercent?: unknown;
   projectId?: string | null;
   unitId?: string | null;
+  planType?: string | null;
+  reservationAmount?: unknown;
+  durationValue?: number | null;
+  durationUnit?: string | null;
+  installmentEveryValue?: number | null;
+  installmentEveryUnit?: string | null;
+  firstInstallmentTiming?: string | null;
+  percentageSchedule?: unknown;
 };
 
 const num = (value: unknown) => value == null || value === "" ? null : Number(value);
@@ -48,6 +56,14 @@ export function quotePaymentPlan(plan: PaymentPlanLike, unitPrice: unknown, unit
   const installmentAmount = explicitInstallment ?? (installments ? remaining / installments : null);
   const monthlyEquivalent = installmentAmount == null ? null : installmentAmount * perYear / 12;
   const maintenanceAmount = num(plan.maintenanceAmount) ?? (num(plan.maintenancePercent) != null ? totalPrice * num(plan.maintenancePercent)! / 100 : null);
+  const schedule = Array.isArray(plan.percentageSchedule)
+    ? (plan.percentageSchedule as Array<any>).map((entry, index) => ({
+        label: typeof entry?.label === "string" ? entry.label : `دفعة ${index + 1}`,
+        percent: Math.max(0, Number(entry?.percent ?? 0)),
+        amount: totalPrice * Math.max(0, Number(entry?.percent ?? 0)) / 100,
+        sequence: Number(entry?.sequence ?? index + 1),
+      }))
+    : [];
   return {
     id: plan.id,
     name: plan.name ?? null,
@@ -66,6 +82,15 @@ export function quotePaymentPlan(plan: PaymentPlanLike, unitPrice: unknown, unit
     calculatedTotalPrice: fixedTotalPrice == null,
     calculatedDownPayment: explicitDp == null && dpPercent != null,
     calculatedInstallment: explicitInstallment == null && installmentAmount != null,
+    planType: plan.planType ?? "INSTALLMENT",
+    reservationAmount: num(plan.reservationAmount),
+    durationValue: plan.durationValue ?? null,
+    durationUnit: plan.durationUnit ?? null,
+    installmentEveryValue: plan.installmentEveryValue ?? null,
+    installmentEveryUnit: plan.installmentEveryUnit ?? null,
+    firstInstallmentTiming: plan.firstInstallmentTiming ?? null,
+    percentageSchedule: schedule,
+    schedulePercentTotal: schedule.reduce((sum, item) => sum + item.percent, 0),
   };
 }
 

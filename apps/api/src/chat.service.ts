@@ -541,6 +541,9 @@ export class ChatService {
               include: { from: true, to: true },
             })
           : null;
+      // Abuse guard: at least one endpoint must resolve to an entity already registered in our system
+      // (selected project/location or a normalized Location record). This keeps Routes from becoming a public general-directions proxy.
+      const registeredEndpoint = Boolean(selectedProject || origins.length || destinations.length);
       const route = stored
         ? {
             source: "ADMIN_VERIFIED",
@@ -550,7 +553,7 @@ export class ChatService {
             to: stored.to.name,
             notes: stored.notes,
           }
-        : process.env.GOOGLE_MAPS_SERVER_API_KEY && originText && destinationText
+        : registeredEndpoint && process.env.GOOGLE_MAPS_SERVER_API_KEY && originText && destinationText
           ? {
               source: "GOOGLE_ROUTES",
               ...((await this.maps.route(
@@ -558,7 +561,7 @@ export class ChatService {
                 destinationText,
               )) as object),
             }
-          : { source: "UNAVAILABLE" };
+          : { source: "UNAVAILABLE", reason: registeredEndpoint ? "ROUTE_DATA_UNAVAILABLE" : "NO_REGISTERED_ENDPOINT" };
       contextKind = "DISTANCE";
       verifiedFacts = [this.serialize(route)];
       payload.uiActions.push({ type: "DISTANCE_RESULT", payload: { route: this.serialize(route), origin: originText ?? null, destination: destinationText ?? null } });
@@ -779,6 +782,7 @@ export class ChatService {
     try {
       if (prepared.directAnswer) { answer = prepared.directAnswer; yield { event: "token", data: { text: answer } }; }
       else for await (const chunk of this.ai.streamAnswer(prepared.answerInput)) { answer += chunk; yield { event: "token", data: { text: chunk } }; }
+      if (!answer.trim()) throw new Error("AI_EMPTY_CUSTOMER_RESPONSE");
       const message = await this.persistAssistant(prepared, answer);
       this.logTrace(prepared, { finalResponseProvider: "HYBRID_STREAM", completed: true });
       yield { event: "complete", data: { message, state: prepared.state, ...prepared.payload } };

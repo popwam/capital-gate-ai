@@ -6,6 +6,7 @@ import { AuditService } from "../audit.service";
 import { AdminAuthGuard } from "../auth/admin-auth.guard";
 import { PrismaService } from "../database/prisma.service";
 import { locateUnitOnMasterPlan } from "../providers/master-plan-vision";
+import { calibrateMasterPlan } from "../master-plan-calibration";
 
 class DeveloperDetailsDto {
   @IsOptional() @IsString() @MaxLength(160) canonicalName?: string;
@@ -203,11 +204,34 @@ class GateMasterPlanLocationDto {
   @Type(() => Number) @IsNumber() @Min(0) @Max(1) x!: number;
   @Type(() => Number) @IsNumber() @Min(0) @Max(1) y!: number;
 }
+class MasterPlanCalibrationDto {
+  @IsArray() anchors!: Array<{ x:number; y:number; latitude:number; longitude:number }>;
+}
+class BuildingMasterPlanLocationDto {
+  @Type(() => Number) @IsNumber() @Min(0) @Max(1) x!: number;
+  @Type(() => Number) @IsNumber() @Min(0) @Max(1) y!: number;
+}
+class BulkMasterPlanAssignmentDto {
+  @IsArray() @IsString({ each: true }) unitIds!: string[];
+  @IsOptional() @IsString() buildingId?: string;
+  @Type(() => Number) @IsNumber() @Min(0) @Max(1) x!: number;
+  @Type(() => Number) @IsNumber() @Min(0) @Max(1) y!: number;
+}
 
 @UseGuards(AdminAuthGuard)
 @Controller("admin/real-estate")
 export class RealEstateController {
   constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+
+  private async geoFromMasterPlan(projectId: string, x: number, y: number) {
+    const project = await this.prisma.project.findUniqueOrThrow({ where: { id: projectId }, select: { masterPlanCalibration: true } });
+    const raw = project.masterPlanCalibration as any;
+    const anchors = Array.isArray(raw?.anchors) ? raw.anchors : [];
+    if (anchors.length < 3) return null;
+    try {
+      return calibrateMasterPlan(anchors.map((anchor:any) => ({ x:Number(anchor.x), y:Number(anchor.y), latitude:Number(anchor.latitude), longitude:Number(anchor.longitude) })))({ x, y });
+    } catch { return null; }
+  }
   private async readinessFor(projectId: string, pending: Record<string, unknown> = {}) {
     const [project, imageCount] = await Promise.all([
       this.prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { location: true, investmentProfile: true, amenities: { where: { verified: true } } } }),
@@ -426,6 +450,21 @@ export class RealEstateController {
     return { cleared: true };
   }
 
+  @Get("projects/:id/master-plan/calibration") async masterPlanCalibration(@Param("id") projectId: string) {
+    const project = await this.prisma.project.findUniqueOrThrow({ where: { id: projectId }, select: { masterPlanCalibration: true } });
+    return project.masterPlanCalibration ?? { anchors: [] };
+  }
+
+  @Patch("projects/:id/master-plan/calibration") async setMasterPlanCalibration(@Param("id") projectId: string, @Body() body: MasterPlanCalibrationDto, @Req() req: any) {
+    const anchors = (body.anchors ?? []).map((anchor:any) => ({ x:Number(anchor.x), y:Number(anchor.y), latitude:Number(anchor.latitude), longitude:Number(anchor.longitude) }));
+    if (anchors.length < 3 || anchors.some((a:any) => !Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(a.latitude) || !Number.isFinite(a.longitude) || a.x < 0 || a.x > 1 || a.y < 0 || a.y > 1 || a.latitude < -90 || a.latitude > 90 || a.longitude < -180 || a.longitude > 180)) throw new BadRequestException("المعايرة تحتاج 3 نقاط صحيحة على الأقل.");
+    try { calibrateMasterPlan(anchors); } catch { throw new BadRequestException("نقاط المعايرة غير صالحة أو على خط واحد."); }
+    const value = { anchors, confirmedAt: new Date().toISOString(), confirmedByAdminId: req.admin.id };
+    await this.prisma.project.update({ where: { id: projectId }, data: { masterPlanCalibration: value } });
+    await this.audit.record(req.admin.id, "PROJECT_MASTER_PLAN_CALIBRATED", "Project", projectId, { anchorCount: anchors.length });
+    return value;
+  }
+
   @Post("projects/:id/zones") async createZone(@Param("id") projectId: string, @Body() body: ProjectZoneDto, @Req() req: any) {
     const item = await this.prisma.projectZone.create({ data: { ...body, projectId } });
     await this.audit.record(req.admin.id, "PROJECT_ZONE_CREATED", "ProjectZone", item.id, { projectId });
@@ -465,6 +504,29 @@ export class RealEstateController {
     await this.prisma.projectBuilding.delete({ where: { id } });
     await this.audit.record(req.admin.id, "PROJECT_BUILDING_DELETED", "ProjectBuilding", id);
     return { deleted: true };
+  }
+
+  @Patch("buildings/:id/master-plan-location") async setBuildingMasterPlanLocation(@Param("id") id: string, @Body() body: BuildingMasterPlanLocationDto, @Req() req: any) {
+    const building = await this.prisma.projectBuilding.findUniqueOrThrow({ where: { id }, select: { id: true, projectId: true } });
+    const geo = await this.geoFromMasterPlan(building.projectId, body.x, body.y);
+    const item = await this.prisma.projectBuilding.update({ where: { id }, data: { masterPlanX: body.x, masterPlanY: body.y, latitude: geo?.latitude, longitude: geo?.longitude, masterPlanLocationSource: geo ? "MASTER_PLAN_CALIBRATED" : "MASTER_PLAN_MANUAL", masterPlanConfirmedAt: new Date(), masterPlanConfirmedByAdminId: req.admin.id } });
+    await this.audit.record(req.admin.id, "BUILDING_MASTER_PLAN_LOCATION_UPDATED", "ProjectBuilding", id, { x: body.x, y: body.y, gpsDerived: Boolean(geo) });
+    return item;
+  }
+
+  @Patch("projects/:id/master-plan/bulk-assign") async bulkAssignMasterPlan(@Param("id") projectId: string, @Body() body: BulkMasterPlanAssignmentDto, @Req() req: any) {
+    const ids = [...new Set(body.unitIds ?? [])];
+    if (!ids.length) throw new BadRequestException("اختر وحدة واحدة على الأقل.");
+    const count = await this.prisma.unit.count({ where: { id: { in: ids }, projectId } });
+    if (count !== ids.length) throw new BadRequestException("بعض الوحدات لا تتبع هذا المشروع.");
+    if (body.buildingId) {
+      const building = await this.prisma.projectBuilding.findFirst({ where: { id: body.buildingId, projectId } });
+      if (!building) throw new BadRequestException("المبنى لا يتبع هذا المشروع.");
+    }
+    const geo = await this.geoFromMasterPlan(projectId, body.x, body.y);
+    const result = await this.prisma.unit.updateMany({ where: { id: { in: ids }, projectId }, data: { projectBuildingId: body.buildingId ?? undefined, masterPlanX: body.x, masterPlanY: body.y, latitude: geo?.latitude, longitude: geo?.longitude, masterPlanLocationStatus: "CONFIRMED", masterPlanLocationSource: geo ? "MASTER_PLAN_CALIBRATED" : "ADMIN_MANUAL", masterPlanConfidence: 1, masterPlanConfirmedAt: new Date(), masterPlanConfirmedByAdminId: req.admin.id } });
+    await this.audit.record(req.admin.id, "UNITS_MASTER_PLAN_BULK_ASSIGNED", "Project", projectId, { count: result.count, buildingId: body.buildingId ?? null, x: body.x, y: body.y, gpsDerived: Boolean(geo) });
+    return { updated: result.count, latitude: geo?.latitude ?? null, longitude: geo?.longitude ?? null };
   }
 
   @Patch("units/:id/internal-location") async updateUnitInternalLocation(@Param("id") id: string, @Body() body: UnitInternalLocationDto, @Req() req: any) {
@@ -508,13 +570,19 @@ export class RealEstateController {
         : body.action === "CONFIRM"
           ? { masterPlanX: body.x, masterPlanY: body.y, masterPlanLocationStatus: "CONFIRMED", masterPlanLocationSource: body.source ?? "ADMIN_MANUAL", masterPlanConfidence: body.confidence ?? current.masterPlanConfidence, masterPlanConfirmedAt: new Date(), masterPlanConfirmedByAdminId: req.admin.id }
           : { masterPlanX: body.x, masterPlanY: body.y, masterPlanLocationStatus: "SUGGESTED", masterPlanLocationSource: body.source ?? "ADMIN_MANUAL", masterPlanConfidence: body.confidence ?? null, masterPlanConfirmedAt: null, masterPlanConfirmedByAdminId: null };
+    if (body.action === "CONFIRM" && body.x != null && body.y != null) {
+      const geo = await this.geoFromMasterPlan(current.projectId, body.x, body.y);
+      if (geo) Object.assign(data, { latitude: geo.latitude, longitude: geo.longitude, masterPlanLocationSource: body.source === "AI_VISION" ? "AI_VISION_CALIBRATED" : "MASTER_PLAN_CALIBRATED" });
+    }
     const item = await this.prisma.unit.update({ where: { id }, data });
     await this.audit.record(req.admin.id, `UNIT_MASTER_PLAN_${body.action}`, "Unit", id, { x: body.x, y: body.y, source: body.source });
     return item;
   }
 
   @Patch("gates/:id/master-plan-location") async setGateMasterPlanLocation(@Param("id") id: string, @Body() body: GateMasterPlanLocationDto, @Req() req: any) {
-    const item = await this.prisma.projectGate.update({ where: { id }, data: { masterPlanX: body.x, masterPlanY: body.y, locationSource: "MASTER_PLAN_MANUAL", confirmedAt: new Date(), confirmedByAdminId: req.admin.id } });
+    const gate = await this.prisma.projectGate.findUniqueOrThrow({ where: { id }, select: { projectId: true } });
+    const geo = await this.geoFromMasterPlan(gate.projectId, body.x, body.y);
+    const item = await this.prisma.projectGate.update({ where: { id }, data: { masterPlanX: body.x, masterPlanY: body.y, latitude: geo?.latitude, longitude: geo?.longitude, locationSource: geo ? "MASTER_PLAN_CALIBRATED" : "MASTER_PLAN_MANUAL", confirmedAt: new Date(), confirmedByAdminId: req.admin.id } });
     await this.audit.record(req.admin.id, "GATE_MASTER_PLAN_LOCATION_UPDATED", "ProjectGate", id, body);
     return item;
   }

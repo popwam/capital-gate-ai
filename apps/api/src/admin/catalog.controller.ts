@@ -102,7 +102,7 @@ class PaymentPlanDto {
   @IsOptional() @Type(() => Number) @IsNumber() downPayment?: number;
   @IsOptional() @Type(() => Number) @IsNumber() installmentYears?: number;
   @IsOptional() @Type(() => Number) @IsNumber() installmentAmount?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(18) @Max(180) durationMonths?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(180) durationMonths?: number;
   @IsOptional() @Type(() => Number) @IsNumber() downPaymentAmount?: number;
   @IsOptional() @Type(() => Number) @IsNumber() downPaymentPercent?: number;
   @IsOptional() @Type(() => Number) @IsNumber() totalPrice?: number;
@@ -113,6 +113,14 @@ class PaymentPlanDto {
   @IsOptional() @IsIn(["EGP", "USD", "EUR", "AED", "SAR", "GBP"]) currency?: string;
   @IsOptional() @Type(() => Number) @IsNumber() maintenanceAmount?: number;
   @IsOptional() @Type(() => Number) @IsNumber() maintenancePercent?: number;
+  @IsOptional() @IsIn(["CASH", "INSTALLMENT"]) planType?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) reservationAmount?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(5475) durationValue?: number;
+  @IsOptional() @IsIn(["DAY", "MONTH", "YEAR"]) durationUnit?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) installmentEveryValue?: number;
+  @IsOptional() @IsIn(["DAY", "MONTH", "YEAR"]) installmentEveryUnit?: string;
+  @IsOptional() @IsIn(["SAME_CYCLE", "NEXT_MONTH", "NEXT_CYCLE"]) firstInstallmentTiming?: string;
+  @IsOptional() @IsArray() percentageSchedule?: Array<{ label?: string; percent: number; sequence?: number }>;
   @IsOptional() @IsDateString() validFrom?: string;
   @IsOptional() @IsDateString() validTo?: string;
   @IsOptional() @IsString() notes?: string;
@@ -459,8 +467,19 @@ export class CatalogController {
     @Req() req: any,
   ) {
     await this.prisma.project.findUniqueOrThrow({ where: { id: projectId }, select: { id: true } });
+    // Project-wide plans are percentage/rule based. The unit's inventory price remains the source price.
+    const forbiddenAmountFields = [body.totalPrice, body.totalPriceOverride, body.discountAmount, body.installmentAmount, body.downPaymentAmount, body.downPayment, body.maintenanceAmount];
+    if (forbiddenAmountFields.some(value => value != null)) throw new BadRequestException({ code: "PAYMENT_PLAN_AMOUNT_NOT_ALLOWED", message: "خطة المشروع تعتمد على النسب والفترات فقط. المبلغ الوحيد المسموح هنا هو مبلغ الحجز." });
+    const planType = body.planType ?? "INSTALLMENT";
+    const percentageSchedule = Array.isArray(body.percentageSchedule) ? body.percentageSchedule.map((row, index) => ({ label: String(row?.label ?? `دفعة ${index + 1}`).slice(0, 80), percent: Number(row?.percent ?? 0), sequence: Number(row?.sequence ?? index + 1) })) : [];
+    if (percentageSchedule.some(row => !Number.isFinite(row.percent) || row.percent < 0 || row.percent > 100)) throw new BadRequestException({ code: "PAYMENT_PLAN_INVALID_PERCENTAGE", message: "نسب دفعات السداد غير صالحة." });
+    if (planType === "INSTALLMENT") {
+      const total = Number(body.downPaymentPercent ?? 0) + percentageSchedule.reduce((sum, row) => sum + row.percent, 0);
+      if (Math.abs(total - 100) > 0.001) throw new BadRequestException({ code: "PAYMENT_PLAN_PERCENTAGE_TOTAL", message: `إجمالي المقدم والدفعات يجب أن يساوي 100%. الإجمالي الحالي ${total.toFixed(2)}%.` });
+    }
+    const normalized = planType === "CASH" ? { ...body, planType, durationMonths: 0, durationValue: 0, durationUnit: "MONTH", downPaymentPercent: 100, installmentFrequency: undefined, installmentEveryValue: undefined, installmentEveryUnit: undefined, firstInstallmentTiming: undefined, percentageSchedule: [] } : { ...body, planType, percentageSchedule };
     const item = await this.prisma.paymentPlan.create({
-      data: { ...body, validFrom: body.validFrom ? new Date(body.validFrom) : undefined, validTo: body.validTo ? new Date(body.validTo) : undefined, projectId },
+      data: { ...normalized, validFrom: body.validFrom ? new Date(body.validFrom) : undefined, validTo: body.validTo ? new Date(body.validTo) : undefined, projectId },
     });
     await this.audit.record(req.admin.id, "PROJECT_PAYMENT_PLAN_CREATED", "PaymentPlan", item.id, { projectId });
     this.cache.invalidateCustomerData();

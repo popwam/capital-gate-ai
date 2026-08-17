@@ -93,6 +93,10 @@ function paymentHighlight(plans: any[], intent: StructuredIntent) {
     downPaymentAmount: numeric(plan.downPaymentAmount ?? plan.downPayment),
     downPaymentPercent: numeric(plan.downPaymentPercent), installmentAmount: numeric(plan.installmentAmount),
     installmentFrequency: plan.installmentFrequency ?? null, totalPrice: numeric(plan.totalPrice), currency: plan.currency ?? null,
+    planType: plan.planType ?? "INSTALLMENT", reservationAmount: numeric(plan.reservationAmount),
+    installmentEveryValue: plan.installmentEveryValue ?? null, installmentEveryUnit: plan.installmentEveryUnit ?? null,
+    firstInstallmentTiming: plan.firstInstallmentTiming ?? null,
+    percentageSchedule: Array.isArray(plan.percentageSchedule) ? plan.percentageSchedule.slice(0,24) : [],
   };
 }
 
@@ -109,7 +113,7 @@ function propertyFact(value:any,intent:StructuredIntent){
     builtUpArea:numeric(value.builtUpArea), price:numeric(value.price), currency:value.currency??null,
     availability:value.status??null, deliveryDate:value.deliveryDate??null, finishingType:value.finishingType??null,
     paymentPlan:value.bestPaymentPlan ?? paymentHighlight(value.paymentPlans,intent),
-    internalLocation:{ floor:value.floor??null, phase:value.phase??null, zone:value.projectZone?.nameAr??value.projectZone?.nameEn??value.projectZone?.name??value.cluster??null, building:value.projectBuilding?.nameAr??value.projectBuilding?.nameEn??value.projectBuilding?.name??value.building??null, closestGate:value.closestGate??null },
+    internalLocation:{ floor:value.floor??null, phase:value.phase??null, zone:value.projectZone?.nameAr??value.projectZone?.nameEn??value.projectZone?.name??value.cluster??null, building:value.projectBuilding?.nameAr??value.projectBuilding?.nameEn??value.projectBuilding?.name??value.building??null, buildingLatitude:numeric(value.projectBuilding?.latitude), buildingLongitude:numeric(value.projectBuilding?.longitude), unitLatitude:numeric(value.latitude), unitLongitude:numeric(value.longitude), closestGate:value.closestGate??null },
     offer:Array.isArray(value.offers)&&value.offers[0]?{title:text(value.offers[0].title,100),discountAmount:numeric(value.offers[0].discountAmount),endsAt:value.offers[0].endsAt??null}:null,
     matchScore:value.matchScore??null, matchReasons:Array.isArray(value.matchReasons)?value.matchReasons.slice(0,4):[],
   };

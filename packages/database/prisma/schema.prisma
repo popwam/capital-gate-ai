@@ -225,6 +225,7 @@ model Project {
   boundaryConfirmedAt DateTime?
   boundaryConfirmedByAdminId String?
   boundaryConfirmedBy AdminUser?             @relation("ProjectBoundaryConfirmation", fields: [boundaryConfirmedByAdminId], references: [id], onDelete: SetNull)
+  masterPlanCalibration Json?
   projectStatus       String?
   projectType         String?
   deliveryInformation String?
@@ -433,6 +434,12 @@ model ProjectBuilding {
   nameEn    String?
   latitude  Decimal?     @db.Decimal(10, 7)
   longitude Decimal?     @db.Decimal(10, 7)
+  masterPlanX Decimal?    @db.Decimal(7, 6)
+  masterPlanY Decimal?    @db.Decimal(7, 6)
+  masterPlanLocationSource String?
+  masterPlanConfirmedAt DateTime?
+  masterPlanConfirmedByAdminId String?
+  masterPlanConfirmedBy AdminUser? @relation("MasterPlanBuildingConfirmation", fields: [masterPlanConfirmedByAdminId], references: [id], onDelete: SetNull)
   notes     String?
   units     Unit[]
   createdAt DateTime     @default(now())
@@ -502,6 +509,14 @@ model PaymentPlan {
   currency          String?
   maintenanceAmount Decimal? @db.Decimal(16, 2)
   maintenancePercent Decimal? @db.Decimal(7, 4)
+  planType          String   @default("INSTALLMENT")
+  reservationAmount Decimal? @db.Decimal(16, 2)
+  durationValue     Int?
+  durationUnit      String?
+  installmentEveryValue Int?
+  installmentEveryUnit String?
+  firstInstallmentTiming String?
+  percentageSchedule Json?
   validFrom         DateTime?
   validTo           DateTime?
   sourceImportId    String?
@@ -874,6 +889,7 @@ model AdminUser {
   confirmedMasterPlanUnits Unit[] @relation("MasterPlanUnitConfirmation")
   confirmedProjectBoundaries Project[] @relation("ProjectBoundaryConfirmation")
   confirmedProjectGates ProjectGate[] @relation("ProjectGateConfirmation")
+  confirmedProjectBuildings ProjectBuilding[] @relation("MasterPlanBuildingConfirmation")
 }
 
 model DeveloperProjectPortfolio {

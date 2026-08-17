@@ -309,9 +309,11 @@ export class HybridAIProvider implements AIProvider {
 
       try {
         for await (const chunk of this.groq.streamAnswerWithModel(candidateInput, model)) {
+          if (!chunk) continue;
           emitted = true;
           yield chunk;
         }
+        if (!emitted) throw new AIUpstreamError("groq", "EMPTY_STREAM_RESPONSE", 502, true);
         await this.recordGroq(model, "customer_stream", started, true, index > 0);
         return;
       } catch (error) {
@@ -334,7 +336,9 @@ export class HybridAIProvider implements AIProvider {
     const started = Date.now();
 
     try {
-      for await (const chunk of this.openai.streamAnswer(openAIInput)) yield chunk;
+      let emitted = false;
+      for await (const chunk of this.openai.streamAnswer(openAIInput)) { if (!chunk) continue; emitted = true; yield chunk; }
+      if (!emitted) throw new AIUpstreamError("openai", "EMPTY_STREAM_RESPONSE", 502, true);
       this.logger.log(`AIProviderTrace ${JSON.stringify({
         requestId: input.requestId ?? "unknown",
         conversationId: input.conversationId ?? "unknown",

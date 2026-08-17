@@ -137,6 +137,8 @@ export class GroqProvider implements AIProvider {
     } finally {
       reader.releaseLock();
     }
+    const finalVisible = this.finalText(rawContent);
+    if (!finalVisible) throw new AIUpstreamError("groq", "EMPTY_STREAM_RESPONSE", 502, true);
   }
 
   async composeAnswer(input: AnswerInput) {
