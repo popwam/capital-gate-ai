@@ -189,7 +189,7 @@ export class GroqProvider implements AIProvider {
   async health(): Promise<AIHealth> {
     if (!this.apiKey) return { provider: "groq", configured: false, healthy: false, model: this.defaultModel, errorCode: "NOT_CONFIGURED" };
     try {
-      const response = await this.request(this.defaultModel, [{ role: "user", content: "Reply with OK." }], { temperature: 0, maxTokens: 4 });
+      const response = await this.request(this.defaultModel, [{ role: "user", content: "Reply with OK." }], { temperature: 0, maxTokens: 32 });
       const body = (await response.json()) as GroqChatResponse;
       const content = body.choices?.[0]?.message?.content;
       return { provider: "groq", configured: true, healthy: Boolean(content), model: this.defaultModel, ...(!content ? { errorCode: "EMPTY_RESPONSE" } : {}) };
