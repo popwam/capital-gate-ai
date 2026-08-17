@@ -20,6 +20,14 @@ export function ProjectBoundaryMap({ points, onChange, center }: { points: Point
 
   useEffect(() => { pointsRef.current = points; }, [points]);
   useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const message = (event as CustomEvent<string>).detail || "Google Maps authentication failed.";
+      setError(message);
+    };
+    window.addEventListener("cg-google-maps-auth-failure", handler);
+    return () => window.removeEventListener("cg-google-maps-auth-failure", handler);
+  }, []);
 
   useEffect(() => {
     if (!key || !elementRef.current) return;

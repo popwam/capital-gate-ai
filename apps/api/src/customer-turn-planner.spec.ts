@@ -13,6 +13,15 @@ test("greeting is text-only and requires no database or Workers extraction", () 
   assert.equal(plan.emitCards, false);
 });
 
+
+test("help question with colloquial typo never falls through to inventory search", () => {
+  const plan = planCustomerTurn("تقدر تساععدني ب اي", state());
+  assert.equal(plan.intent, "SMALL_TALK");
+  assert.equal(plan.requiresDatabase, false);
+  assert.equal(plan.requiresExtraction, false);
+  assert.match(plan.deterministicResponse ?? "", /أقدر أساعدك/);
+});
+
 test("ordinary search remains text-only until options are explicitly requested", () => {
   assert.equal(planCustomerTurn("عاوز شقة حوالي 10 مليون", state()).emitCards, false);
   assert.equal(planCustomerTurn("وريني الاختيارات", state()).emitCards, true);

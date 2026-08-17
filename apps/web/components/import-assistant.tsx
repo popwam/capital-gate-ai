@@ -53,7 +53,7 @@ type ImportData = {
   workflow: ImportWorkflow;
   sheets: ImportSheetData[];
 };
-type ImportSheetData = { id:string; sheetName:string; tableId?:string|null; classification:string; confidence:number; action:"IMPORT"|"IGNORE"; headerRow?:number|null; startRow?:number|null; endRow?:number|null; rowsDetected:number; projectId?:string|null; developerId?:string|null; locationId?:string|null; defaultCurrency?:string|null; defaultUnitType?:string|null; defaultIsResale?:boolean; columns?:Array<{key:string;originalHeader:string;samples?:unknown[]}>; mappings?:Record<string,string>; mappingSources?:Record<string,string>; sourcePreview?:Array<Record<string,unknown>>; mappingVersion:number; previewMappingVersion?:number|null; project?:{name:string}|null };
+type ImportSheetData = { id:string; sheetName:string; tableId?:string|null; classification:string; confidence:number; action:"IMPORT"|"IGNORE"; headerRow?:number|null; startRow?:number|null; endRow?:number|null; rowsDetected:number; projectId?:string|null; phaseId?:string|null; developerId?:string|null; locationId?:string|null; defaultCurrency?:string|null; defaultUnitType?:string|null; defaultIsResale?:boolean; columns?:Array<{key:string;originalHeader:string;samples?:unknown[]}>; mappings?:Record<string,string>; mappingSources?:Record<string,string>; sourcePreview?:Array<Record<string,unknown>>; mappingVersion:number; previewMappingVersion?:number|null; project?:{name:string}|null; phase?:{id:string;name:string;code?:string|null}|null };
 type Location = {
   id: string;
   name: string;
@@ -317,7 +317,7 @@ export function ImportAssistant() {
                       {!!item.sheets?.length && (
                         <SheetReview item={item} projects={selectorOptions.projects} updateSheet={updateSheet} markAllInventory={markAllSheetsInventory} updateMapping={updateSheetMapping} loading={loading}/>
                       )}
-                      {item.status!=="COMPLETED"&&item.sheets?.some(sheet=>sheet.action==="IMPORT"&&sheet.projectId)&&<button type="button" disabled={loading} onClick={()=>{const source=item.sheets.find(sheet=>sheet.action==="IMPORT"&&sheet.projectId)!;updateAllSheets({projectId:source.projectId,defaultCurrency:source.defaultCurrency,defaultUnitType:source.defaultUnitType,defaultIsResale:source.defaultIsResale})}} className="rounded-xl border border-forest px-4 py-2 text-sm font-bold text-forest">تطبيق سياق أول جدول على كل الجداول المختارة</button>}
+                      {item.status!=="COMPLETED"&&item.sheets?.some(sheet=>sheet.action==="IMPORT"&&sheet.projectId)&&<button type="button" disabled={loading} onClick={()=>{const source=item.sheets.find(sheet=>sheet.action==="IMPORT"&&sheet.projectId)!;updateAllSheets({projectId:source.projectId,phaseId:source.phaseId,defaultCurrency:source.defaultCurrency,defaultUnitType:source.defaultUnitType,defaultIsResale:source.defaultIsResale})}} className="rounded-xl border border-forest px-4 py-2 text-sm font-bold text-forest">تطبيق سياق أول جدول على كل الجداول المختارة</button>}
                       {!item.sheets?.length && (
                         <WorkbookReview item={item} chooseTable={chooseTable} loading={loading}/>
                       )}
@@ -730,12 +730,34 @@ const IMPORT_FIELD_LABELS:Record<string,string>={externalUnitId:"كود الوح
 const IMPORT_FIELDS=Object.entries(IMPORT_FIELD_LABELS).filter(([value])=>!value.startsWith("__") && !["METADATA","IGNORE"].includes(value));
 function SheetReview({item,projects,updateSheet,markAllInventory,updateMapping,loading}:{item:ImportData;projects:SelectorItem[];updateSheet:(id:string,data:Record<string,unknown>)=>void;markAllInventory:()=>void;updateMapping:(id:string,column:string,target:string)=>void;loading:boolean}){
   const imported = item.sheets.filter((sheet) => sheet.action === "IMPORT").length;
+  const [phasesByProject,setPhasesByProject]=useState<Record<string,Array<{id:string;name:string;code?:string|null}>>>({});
+  useEffect(()=>{
+    const ids=[...new Set(item.sheets.map((sheet)=>sheet.projectId).filter(Boolean) as string[])];
+    ids.forEach((projectId)=>{
+      if(phasesByProject[projectId]) return;
+      adminApi.get<Array<{id:string;name:string;code?:string|null}>>(`/real-estate/projects/${projectId}/phases`)
+        .then((phases)=>setPhasesByProject((current)=>({...current,[projectId]:phases})))
+        .catch(()=>undefined);
+    });
+  },[item.sheets,phasesByProject]);
+  async function createPhase(sheet:ImportSheetData){
+    if(!sheet.projectId) return;
+    const name=globalThis.prompt("اسم المرحلة الجديدة");
+    if(!name?.trim()) return;
+    try{
+      const phase=await adminApi.post<{id:string;name:string;code?:string|null}>(`/real-estate/projects/${sheet.projectId}/phases`,{name:name.trim(),nameAr:name.trim()});
+      setPhasesByProject((current)=>({...current,[sheet.projectId!]:[...(current[sheet.projectId!]||[]),phase]}));
+      updateSheet(sheet.id,{phaseId:phase.id});
+    }catch(error){
+      globalThis.alert(adminErrorMessage(error));
+    }
+  }
   return (
     <section className="space-y-3 rounded-2xl border bg-[#fbfaf7] p-4" dir="rtl">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="font-bold">مراجعة شيتات المخزون</h3>
-          <p className="mt-1 text-xs leading-6 text-[#68756f]">كل Sheet مستقل. لو الملف كله Inventory استخدم الزر مرة واحدة بدل مراجعة كل صفحة يدويًا.</p>
+          <p className="mt-1 text-xs leading-6 text-[#68756f]">كل Sheet مستقل ويرتبط بمشروع ومرحلة. لو الملف كله Inventory استخدم الزر مرة واحدة، ثم راجع المرحلة الافتراضية لكل جدول.</p>
         </div>
         {item.status !== "COMPLETED" && (
           <button type="button" disabled={loading || imported === item.sheets.length} onClick={markAllInventory} className="rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-40">
@@ -747,13 +769,16 @@ function SheetReview({item,projects,updateSheet,markAllInventory,updateMapping,l
         <span className="rounded-full bg-white px-3 py-1.5">{item.sheets.length} Sheet</span>
         <span className="rounded-full bg-white px-3 py-1.5">{imported} للاستيراد</span>
       </div>
-      {item.sheets.map((sheet) => (
+      {item.sheets.map((sheet) => {
+        const phases=sheet.projectId ? phasesByProject[sheet.projectId]||[] : [];
+        return (
         <details key={sheet.id} open={sheet.action === "IMPORT"} className="rounded-xl border bg-white p-3">
           <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3">
             <span>
               <span className="flex flex-wrap items-center gap-2">
                 <b dir="auto">{sheet.sheetName}</b>
                 {sheet.defaultIsResale && <small className="rounded-full bg-[#f2eadc] px-2 py-1 font-bold text-[#765b31]">Resale</small>}
+                {sheet.phase?.name && <small className="rounded-full bg-[#e9f2ee] px-2 py-1 font-bold text-forest">{sheet.phase.name}</small>}
               </span>
               {sheet.tableId && <small className="mt-1 block text-[#748079]">صفوف {sheet.startRow}–{sheet.endRow}</small>}
               <small className="mt-1 block text-[#748079]">{sheet.classification} · ثقة {sheet.confidence}% · {sheet.rowsDetected} صف</small>
@@ -765,11 +790,19 @@ function SheetReview({item,projects,updateSheet,markAllInventory,updateMapping,l
           </summary>
           {sheet.action === "IMPORT" && (
             <div className="mt-4 space-y-4 border-t pt-4">
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
                 <label className="text-xs font-bold">المشروع
-                  <select value={sheet.projectId||""} onChange={(event)=>updateSheet(sheet.id,{projectId:event.target.value})} className="mt-1 h-11 w-full rounded-xl border px-2 text-sm">
+                  <select value={sheet.projectId||""} onChange={(event)=>updateSheet(sheet.id,{projectId:event.target.value,phaseId:null})} className="mt-1 h-11 w-full rounded-xl border px-2 text-sm">
                     <option value="">اختر المشروع</option>{projects.map((project)=><option key={project.id} value={project.id}>{project.name}</option>)}
                   </select>
+                </label>
+                <label className="text-xs font-bold">المرحلة
+                  <div className="mt-1 flex gap-1">
+                    <select disabled={!sheet.projectId} value={sheet.phaseId||""} onChange={(event)=>updateSheet(sheet.id,{phaseId:event.target.value||null})} className="h-11 min-w-0 flex-1 rounded-xl border px-2 text-sm disabled:bg-[#f2f2ef]">
+                      <option value="">اختر المرحلة</option>{phases.map((phase)=><option key={phase.id} value={phase.id}>{phase.name}{phase.code?` · ${phase.code}`:""}</option>)}
+                    </select>
+                    <button type="button" disabled={!sheet.projectId||loading} onClick={()=>createPhase(sheet)} className="h-11 rounded-xl border px-3 text-lg font-bold text-forest disabled:opacity-40" title="إضافة مرحلة">+</button>
+                  </div>
                 </label>
                 <label className="text-xs font-bold">العملة
                   <select value={sheet.defaultCurrency||""} onChange={(event)=>updateSheet(sheet.id,{defaultCurrency:event.target.value})} className="mt-1 h-11 w-full rounded-xl border px-2 text-sm">
@@ -790,6 +823,7 @@ function SheetReview({item,projects,updateSheet,markAllInventory,updateMapping,l
                   <div className="mt-1 flex gap-1"><input id={`header-${sheet.id}`} type="number" min="1" defaultValue={sheet.headerRow||1} className="h-11 min-w-0 flex-1 rounded-xl border px-2 text-sm"/><button type="button" onClick={()=>{const input=document.getElementById(`header-${sheet.id}`) as HTMLInputElement;updateSheet(sheet.id,{headerRow:Number(input.value)})}} className="rounded-xl border px-3">تطبيق</button></div>
                 </label>
               </div>
+              <div className="rounded-xl border border-dashed bg-[#f8faf8] px-3 py-2 text-[11px] leading-5 text-[#66736d]">لو الملف يحتوي عمود «مرحلة»، Cg Ai يطابق الاسم أو الكود تلقائيًا مع مراحل المشروع. أي اسم غير معروف يتوقف في المعاينة بدل ربط الوحدة بمرحلة خاطئة.</div>
               <div>
                 <h4 className="text-sm font-bold">معاينة المصدر</h4>
                 <div className="mt-2 overflow-x-auto"><table className="min-w-full text-xs"><thead><tr>{(sheet.columns||[]).map((column)=><th key={column.key} className="whitespace-nowrap border p-2 text-start" dir="auto">{column.originalHeader}</th>)}</tr></thead><tbody>{(sheet.sourcePreview||[]).slice(0,5).map((row,index)=><tr key={index}>{(sheet.columns||[]).map((column)=><td key={column.key} className="max-w-44 truncate border p-2" dir="auto">{row[column.key]==null?"—":String(row[column.key])}</td>)}</tr>)}</tbody></table></div>
@@ -802,7 +836,7 @@ function SheetReview({item,projects,updateSheet,markAllInventory,updateMapping,l
             </div>
           )}
         </details>
-      ))}
+      )})}
     </section>
   );
 }

@@ -1,4 +1,29 @@
 {
-  "compilerOptions": { "module": "commonjs", "declaration": true, "removeComments": true, "emitDecoratorMetadata": true, "experimentalDecorators": true, "allowSyntheticDefaultImports": true, "target": "ES2022", "lib": ["ES2022"], "types": ["node", "express", "multer"], "sourceMap": true, "outDir": "./dist", "baseUrl": "./", "incremental": true, "skipLibCheck": true, "strict": true, "strictPropertyInitialization": false },
-  "include": ["src/**/*.ts"]
+  "compilerOptions": {
+    "module": "commonjs",
+    "declaration": true,
+    "removeComments": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "target": "ES2022",
+    "lib": [
+      "ES2022"
+    ],
+    "types": [
+      "node",
+      "express",
+      "multer"
+    ],
+    "sourceMap": true,
+    "outDir": "./dist",
+    "incremental": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "strictPropertyInitialization": false,
+    "rootDir": "./src"
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
 }

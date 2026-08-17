@@ -1,117 +1,258 @@
-# Cg Ai — Production Rewrite Guide
+# Cg Ai — Phase Workspace & Grounded AI Release Guide
 
-This package is a source rewrite of the uploaded project. It intentionally does **not** contain generated `dist` / `.next` output so production cannot accidentally start stale code.
+This package is the source update for the uploaded `AICG(8)` project. It keeps the existing database history and legacy fields for compatibility, while moving the product toward a real hierarchy:
 
-## What changed
+`Developer → Project → Phase / Community → Building → Unit`
 
-### 1. Cg Ai model routing
+The migration is additive. **Do not delete the old Neon data just to install this release.**
 
-Customer generation is role-based instead of sending every turn to one model:
+## 1. Project workspace redesign
 
-| Role | Default | Purpose |
-| --- | --- | --- |
-| FAST | `openai/gpt-oss-20b` on Groq | greetings, simple confirmations, lightweight turns |
-| GENERAL | `openai/gpt-oss-120b` on Groq | normal real-estate conversation |
-| REASONING | `openai/gpt-oss-120b` on Groq | comparison, investment, resale, project/developer detail, payment plans, strong buying intent, mixed Arabic/English |
-| INTENT | `@cf/meta/llama-4-scout-17b-16e-instruct` on Workers AI | structured conversation-state extraction |
-| FALLBACK | `@cf/openai/gpt-oss-120b` on Workers AI | generation fallback after Groq candidates fail |
-| VISION | `qwen/qwen3.6-27b` on Groq | master-plan image localization only |
+The old long project form is replaced by a workspace with one sticky header and tabs:
 
-The customer text router rejects old/unlisted Groq model IDs and Preview models by default. An upstream `404` / `model_not_found` is now treated as a model-level failure and advances to the next allowed model instead of killing the response.
+- Overview
+- Phases
+- Market
+- Media
+- Payments
+- Boundary
+- Master Plan
+- Knowledge
 
-As of **17 August 2026**, Groq's deprecation schedule has shut down `llama-3.1-8b-instant` and `llama-3.3-70b-versatile` for Free/Developer usage (shutdown date: 16 August 2026). The production defaults in this package therefore migrate those roles to GPT-OSS rather than trying the retired IDs first.
+There is one top-level **Save** and one top-level **Publish** action. Form edits are kept as a local browser draft until Save. Publish first flushes pending project/phase/market/boundary/tag changes, then runs the existing customer-readiness rules.
 
-`qwen/qwen3.6-27b` is intentionally isolated to master-plan vision. It is a Preview model, so it is not a default customer-chat model.
+### Overview
 
-`groq/compound` / `groq/compound-mini` are not used for verified inventory answers because their agentic tool behavior can introduce external information outside the platform's approved inventory. They are suitable later for an explicitly scoped tool workflow.
+- Launch year is a selector.
+- Project status is a selector.
+- Project types are multi-select.
+- Delivery statuses are multi-select.
+- Arabic/English narrative content is grouped instead of scattered through a very long form.
+- Amenities use a searchable system picker with removable chips.
+- Typing a missing amenity offers a modal to create it once in the system.
+- Competitors are selected from registered projects and become explicit comparison context for Cg Ai.
+- Manual nearby-landmark entry is removed from the main project workspace.
 
-Whisper and Orpheus are not called yet because this release has no customer voice workflow. When voice input/output is added, use `whisper-large-v3-turbo` for STT by default and the matching Orpheus Arabic/English TTS model for speech output. Prompt Guard / Safeguard models are also Preview and are not placed in the production response path by default.
+## 2. Real phases instead of `numberOfPhases`
 
-### 2. No silent paid OpenAI fallback
+`ProjectPhase` is now a real database entity. A phase can have its own:
 
-OpenAI is disabled unless **all three** are deliberately configured:
+- code / Arabic / English name
+- launch year
+- delivery year
+- status
+- delivery statuses
+- project/property-use types
+- construction percentage
+- unit types
+- finishing options
+- customer fit
+- bedroom range
+- area range
+- Arabic/English description
+- Arabic/English delivery notes
+- master-plan polygon
 
-```env
-OPENAI_FALLBACK_ENABLED=true
-OPENAI_API_KEY=...
-OPENAI_TEXT_MODEL=...
+Units, buildings, gates, payment plans, media, brochures, market profiles and import sheets can all be scoped to a phase.
+
+### Existing units
+
+Existing legacy `Unit.phase` text is preserved. After creating the real phases, use the button:
+
+`مطابقة الوحدات القديمة بالمراحل`
+
+It deterministically assigns unassigned units when the old phase text exactly matches a registered phase code/name. Unmatched units are reported for manual review. Customer publishing is blocked while active units remain without a real `phaseId`.
+
+## 3. Inventory is no longer Excel-only
+
+`Admin → Inventory` now contains:
+
+- **إضافة وحدة** — add one unit manually.
+- **استيراد Excel** — keep the existing bulk workflow.
+
+The manual unit flow is:
+
+`Developer → Project → Phase → optional Building → Unit`
+
+If a developer, project or phase does not exist, it can be created inline without leaving the unit modal. A unit cannot be created without a phase.
+
+The inventory table also exposes Phase / Building context and retains Primary / Resale filtering.
+
+## 4. Phase-aware Excel imports
+
+Import sheets can be assigned to a phase. If the workbook has a mapped phase column, the importer attempts to match each row against the registered phase code/name.
+
+An unknown phase does **not** silently fall into a different phase. It becomes a blocking import issue that must be resolved before confirmation.
+
+Primary / Resale remains persisted per sheet and per unit.
+
+## 5. Market profiles: Investment / Resale / Rental
+
+The old single commercial/investment block is no longer the main editing model.
+
+A new `MarketProfile` supports three independent segments:
+
+- Investment
+- Resale
+- Rental
+
+And six property-use contexts:
+
+- Residential
+- Commercial
+- Office
+- Retail
+- Hospitality
+- Mixed
+
+Profiles may exist at project, phase or unit level. This allows a phase or special unit to override the broader market profile instead of forcing one rating across the whole project.
+
+Unit editing includes a unit-level market override editor.
+
+## 6. Smart amenities and registered competitors
+
+Amenities are reusable system entities. The Admin can search while typing, select an existing value, remove it with ×, or create a missing value in a modal.
+
+Competitors are linked to actual registered projects. Cg Ai receives these registered competitors during comparison requests rather than inventing alternatives because only one project happens to be visible in the current form.
+
+## 7. Project and phase media
+
+Normal project media is intentionally simplified:
+
+- `IMAGE` for project/phase gallery images.
+- `BROCHURE` PDF for project/phase brochures.
+- `MASTER_PLAN` is handled only in the Master Plan workspace.
+- Unit media remains `IMAGE` / `FLOOR_PLAN`.
+
+Gallery order is stored. Making an image Cover moves it to position **1** and reorders the remaining images.
+
+A brochure can be project-wide or phase-specific.
+
+## 8. Payment-plan inheritance
+
+The payment designer now supports project defaults and phase overrides.
+
+Default modes:
+
+- Cash
+- Installments
+
+For installments, distribution defaults to **EQUAL** after the down payment. The installment table is not shown unless the Admin explicitly switches to custom distribution.
+
+The first installment can start after a value expressed in:
+
+- Days
+- Months
+- Years
+
+This supports examples such as 4, 5 or 9 months after booking rather than forcing the first installment after one month.
+
+The customer search layer resolves effective plans in this order:
+
+`Project default → Phase override → Unit override`
+
+## 9. Boundary map
+
+Project coordinates are no longer intended to be typed manually in the workspace.
+
+The Admin draws the project boundary as an editable polygon. Saving the polygon calculates the project center automatically. Clearing the polygon also clears the derived center, preventing stale “ghost” coordinates.
+
+The browser Google Maps loader now reports authentication failures more clearly. Use a dedicated browser key with Maps JavaScript API + Billing + HTTP-referrer restrictions.
+
+## 10. Master Plan workflow
+
+The Master Plan workspace is separate from normal gallery media.
+
+Workflow:
+
+1. Upload the Master Plan image.
+2. Draw a Phase / Community polygon.
+3. Draw Building polygons inside it.
+4. Place Gates manually.
+5. Request unit-to-building suggestions.
+6. Cg Ai proposes deterministic name/code matches with confidence.
+7. Admin reviews the proposed unit assignments.
+8. Confirmed units are linked to the building and, when applicable, its phase.
+
+The AI does not silently finalize gates or unit placement. The Admin confirms the spatial model.
+
+## 11. AI grounding fixes
+
+The live transcript exposed four serious failure modes: generic help messages falling into inventory search, raw database IDs appearing in customer text, unsupported marketing claims, and guessed map distances/URLs.
+
+This release changes that behavior.
+
+### Help / small talk
+
+`تقدر تساععدني ب اي` and similar variants are deterministic HELP turns. They do not run an inventory search.
+
+### Conversation context
+
+The customer state preserves the selected project/unit and last presented candidates. Follow-ups such as:
+
+- `المشروع دا`
+- `طيب المرحلة التانية؟`
+- `بينه وبين الجامعة الأمريكية كام؟`
+
+can resolve the current project rather than exposing or asking the user to understand an internal ID.
+
+### Internal ID guard
+
+CUID-like IDs and UUIDs are removed from final customer text. Compact AI context uses human-readable names rather than raw project/developer IDs.
+
+### No unsupported marketing claims
+
+The AI system context explicitly forbids inventing developer reputation, delivery promises, amenities, prices, distances or other facts not present in approved application context.
+
+### Real distance tool
+
+Distance requests now follow:
+
+`selected project coordinates → destination Places lookup → Google Routes → verified answer`
+
+If the project has no coordinates, the destination cannot be resolved, Maps is unavailable, or Routes returns no route, Cg Ai says a verified distance is unavailable. It does **not** estimate “3–4 km” itself.
+
+Free-form model URLs are stripped from final customer text. Verified application UI actions remain the only place for route/media/brochure links.
+
+### Registered comparison context
+
+When the Admin links competitor projects, comparison requests fetch those registered projects and send their verified data to the reasoning layer.
+
+## 12. Root `.env` loading
+
+For local development, keep one file here:
+
+```text
+<repo>/.env
 ```
 
-With the recommended production configuration below, the OpenAI API is never called, including by the admin health dashboard.
+Both workspaces now load it:
 
-### 3. Better answer quality
+- API: `apps/api/src/load-root-env.ts`
+- Web: `apps/web/next.config.mjs`
 
-Project details, developer details, inventory breakdowns, payment-plan explanations, investment/resale questions and comparisons now reach the AI with verified DB facts instead of being replaced early by terse canned strings.
+Railway is unchanged: it should continue using per-service Variables. With no committed `.env`, Railway’s injected `process.env` is the source of truth.
 
-Deterministic direct replies remain only where they protect exactness or trigger UI actions: media, brochure, location, distance, basic count/range and viewing flow.
-
-The system prompt now requires a useful answer first, enough explanation to make a decision, compact paragraphs/bullets when helpful, and no compulsory closing question.
-
-### 4. Resale is real data, not a UI label
-
-- `Unit.isResale` is persisted in PostgreSQL.
-- Each imported workbook sheet can be marked `Primary` or `Resale`.
-- One button marks **all workbook sheets** as inventory.
-- Imported units inherit the sheet market type.
-- Inventory Admin filters and edits Primary/Resale.
-- Customer intent recognizes `ريسيل`, `إعادة بيع`, `resale`, `secondary market`, `primary`, and `من المطور` and filters the DB accordingly.
-
-### 5. Map-first location workflow
-
-- Project boundaries are clicked/drawn directly on Google Maps as an editable Polygon.
-- Project center latitude/longitude is calculated from the saved boundary; manual project coordinate fields were removed.
-- Admin locations use Google geocoding + click/drag map pin instead of coordinate inputs.
-- Location-to-location distance can be calculated from Google Routes; manual km/min remains only as an explicit fallback.
-- Server and browser Google keys remain separate.
-
-### 6. Mobile-first Cg Ai UI
-
-- New `Cg Ai` identity: `Cg` is primary; `Ai` is subordinate.
-- Deep ink/forest + restrained gold palette, warm neutral background.
-- Suggested starter questions **only fill the composer**. They do not send automatically.
-- Composer is multiline: Enter adds a line; Ctrl/Cmd+Enter sends; explicit send button remains primary.
-- Removed the old global font-size hack and increased genuinely unreadable 7–10px chat/import text at component level.
-- Admin home is tabbed and short instead of one long dashboard.
-
-## Recommended production environment
-
-Keep your existing secrets outside Git and replace only the routing values as needed:
+The API default local port in this package is `8080`, so the sample uses:
 
 ```env
-AI_PROVIDER=hybrid
-
-GROQ_API_KEY=YOUR_KEY
-GROQ_FAST_MODEL=openai/gpt-oss-20b
-GROQ_GENERAL_MODEL=openai/gpt-oss-120b
-GROQ_REASONING_MODEL=openai/gpt-oss-120b
-GROQ_BACKUP_MODEL=openai/gpt-oss-20b
-GROQ_LAST_RESORT_MODEL=openai/gpt-oss-20b
-GROQ_VISION_MODEL=qwen/qwen3.6-27b
-ALLOW_PREVIEW_GROQ_MODELS=false
-ALLOW_UNLISTED_GROQ_MODELS=false
-
-CLOUDFLARE_AI_ACCOUNT_ID=YOUR_ACCOUNT_ID
-CLOUDFLARE_AI_API_TOKEN=YOUR_TOKEN
-CLOUDFLARE_AI_FAST_MODEL=@cf/meta/llama-4-scout-17b-16e-instruct
-CLOUDFLARE_AI_MODEL=@cf/openai/gpt-oss-120b
-
-OPENAI_FALLBACK_ENABLED=false
-OPENAI_API_KEY=
-OPENAI_TEXT_MODEL=
-
-GOOGLE_MAPS_SERVER_API_KEY=YOUR_SERVER_RESTRICTED_KEY
-NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_API_KEY=YOUR_BROWSER_HTTP_REFERRER_RESTRICTED_KEY
+NEXT_PUBLIC_API_URL=http://localhost:8080
+WEB_ORIGIN=http://localhost:3000
 ```
 
-You can remove the legacy `GROQ_ARABIC_MODEL`, `GROQ_BACKUP_MODEL=llama-3.3-70b-versatile`, and `GROQ_GENERAL_MODEL=qwen/qwen3.6-27b` values from the deployed environment. The new router already protects against them, but removing stale variables makes operations clearer.
+## 13. Database migration and Neon
 
-Do not expose `GOOGLE_MAPS_SERVER_API_KEY` to the browser. Create a second browser key restricted to the exact Cg Ai web origins for `NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_API_KEY`.
+New migration:
 
-## How to test locally
+```text
+packages/database/prisma/migrations/20260817193000_phase_hierarchy_market_profiles/migration.sql
+```
 
-No build, tests, migrations, or live provider calls were executed while preparing this rewrite, per the request. Run these yourself in a disposable/local environment first.
+It is additive and preserves existing project/unit/import data. It creates the phase hierarchy/scoped market records and adds nullable phase references to existing tables.
 
-### A. Install + DB
+**Do not reset or delete the old Neon database as an installation step.** For maximum safety, make a Neon branch/backup first, then run the migration on that branch before production.
+
+Recommended:
 
 ```bash
 npm install
@@ -119,79 +260,167 @@ npm run db:generate
 npm run db:migrate:deploy
 ```
 
-Use a staging/development copy of the database for the first migration run. The new migration adds `Unit.isResale` and `ImportSheet.defaultIsResale` with safe `false` defaults.
+Do not use `prisma db push` for the production database.
 
-### B. Start both apps
+## 14. Local test order
 
-Terminal 1:
+### A. Start
 
 ```bash
+npm install
+npm run db:generate
+npm run db:migrate:deploy
 npm run dev:api
 ```
 
-Terminal 2:
+Second terminal:
 
 ```bash
 npm run dev:web
 ```
 
-Open the web URL shown by Next.js (normally `http://localhost:3000`). The API normally runs on port 4000 in this repo.
+Expected API success includes:
 
-### C. AI checks
+```text
+PostgreSQL connection established
+Nest application successfully started
+API listening on 0.0.0.0:8080
+```
 
-1. Ask a simple Arabic greeting. Check the server log `AIModelRoute`; it should choose FAST.
-2. Ask a comparison such as: `أنهي أفضل للاستثمار وإعادة البيع بين الاختيارين وليه؟` It should choose REASONING.
-3. Ask project/developer/payment-plan detail. Confirm the answer is explanatory rather than the old one-line canned reply.
-4. Ask `عايز وحدات ريسيل` and then `عايز من المطور بس`. Confirm inventory results change with the market filter.
-5. In Groq Console/API model permissions, make sure `openai/gpt-oss-20b` and `openai/gpt-oss-120b` are permitted for the project.
-6. Optional failure-path check in development only: deliberately configure an invalid allowed model, restart the API, send one message, and verify the trace moves to a fallback model instead of ending at `model_not_found`. Restore the production model immediately afterward.
-7. Confirm OpenAI shows no requests while `OPENAI_FALLBACK_ENABLED=false`.
+### B. Project / phases
 
-### D. Customer mobile UI
+1. Open an existing project.
+2. Verify the page is tabbed rather than one long form.
+3. Create two phases with different delivery years and finishing options.
+4. Change multiple fields and reload before Save: local drafts should survive.
+5. Press the single top Save.
+6. For existing inventory, run `مطابقة الوحدات القديمة بالمراحل`.
+7. Review unmatched units instead of blindly assigning them.
 
-Use a real phone or browser device mode at approximately 360–430px width:
+### C. Manual inventory
 
-1. Open a fresh conversation.
-2. Tap any starter suggestion.
-3. Confirm it **only appears in the textarea** and no network message is sent.
-4. Add extra words/new lines.
-5. Press Enter: it must create a new line, not send.
-6. Press the send icon (or Ctrl/Cmd+Enter) and confirm it sends once.
-7. Test Arabic, English and mixed Arabic/English answers for wrapping/overlap.
+1. Open Inventory.
+2. Press `إضافة وحدة`.
+3. Create a developer/project/phase inline in a test case if needed.
+4. Add a Primary unit.
+5. Add a Resale unit.
+6. Verify Project / Phase / Building relations in the table and edit modal.
 
-### E. Workbook + resale
+### D. Excel import
 
-1. Upload an XLSX with multiple sheets.
-2. Click `اعتبر كل الشيتات مخزون`.
-3. Mark at least one sheet `Resale` and another `Primary`.
-4. Complete mappings and preview.
-5. Confirm import.
-6. Open Inventory and filter `Resale فقط`, then `Primary فقط`.
-7. Confirm the imported units are in the correct market and can be edited individually.
+1. Upload a multi-sheet workbook.
+2. Select Project and Phase per inventory sheet, or map a phase column.
+3. Mark one sheet Primary and another Resale.
+4. Preview.
+5. Confirm that an unknown phase blocks confirmation rather than being guessed.
 
-### F. Maps
+### E. Amenities / competitors
 
-1. Set a browser-restricted `NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_API_KEY` and a separate server key.
-2. Open a project → spatial/master-plan section.
-3. Click at least 3 boundary points; drag Polygon vertices; save.
-4. Reload and confirm the Polygon returns and the project location works without manually entering coordinates.
-5. Open Locations; search an address, then click/drag the map pin and save.
-6. Select two locations and click `احسب تلقائيًا من Google Routes`; confirm km/min fill automatically before saving.
+1. Type an existing amenity and select it.
+2. Remove it with ×.
+3. Type an unknown amenity and create it through the modal.
+4. Verify it appears as a reusable suggestion.
+5. Add registered competitor projects.
 
-### G. Dashboard
+### F. Media
 
-Open Admin home and switch between `نظرة سريعة`, `المخزون`, `الذكاء الاصطناعي`, and `تحتاج انتباه`. Only one operational section should be expanded at a time.
+1. Upload 4 project images.
+2. Make image #4 the Cover.
+3. Verify it becomes #1 and the rest reorder.
+4. Select a phase and upload phase-specific images.
+5. Upload only a PDF brochure in the brochure area.
+6. Verify Master Plan is absent from the normal gallery.
 
-## Production deployment after your checks pass
+### G. Payments
+
+1. Create a project default installment plan.
+2. Keep Equal distribution and verify no giant custom schedule is required.
+3. Set first installment after 9 months.
+4. Create a different plan for one phase.
+5. Switch to Custom distribution and verify the manual table appears only then.
+
+### H. Maps
+
+1. Configure separate server/browser Google keys.
+2. Draw 3+ project-boundary points.
+3. Move vertices and Save from the top header.
+4. Reload and confirm the polygon returns.
+5. Clear it and Save; confirm project center coordinates are also cleared.
+
+### I. Master Plan
+
+1. Upload a Master Plan.
+2. Draw phase polygons.
+3. Draw buildings.
+4. Add/position gates manually.
+5. Open Cg Ai unit/building suggestions.
+6. Review high-confidence suggestions and confirm selected units only.
+7. Verify units are linked to the chosen building/phase.
+
+### J. AI regression conversation
+
+Test these cases in one conversation:
+
+```text
+مساء الفل
+تقدر تساععدني ب اي
+```
+
+The second reply must describe Cg Ai capabilities; it must not spontaneously recommend a 120 m² unit.
+
+Then search/select a project and ask:
+
+```text
+المشروع دا بينه وبين الجامعة الأمريكية كام؟
+```
+
+Expected behavior:
+
+- human-readable project name, never a CUID
+- Google Routes distance/time if the project has verified coordinates and Maps is configured
+- otherwise a clear “verified route unavailable” answer
+- never a guessed distance
+- never a model-generated Google Maps URL
+
+Also verify that answers never expose strings resembling `cmss0tg3j009smb0p0xicxgtd` or UUIDs.
+
+## 15. Validation status of this package
+
+The preparation environment does not contain this repository’s installed `node_modules`, and outbound npm installation is unavailable here. Therefore a full Nest/Next/Prisma build was **not** claimed.
+
+Checks performed on the modified source before packaging:
+
+- `git diff --check`
+- JavaScript syntax check for `apps/web/next.config.mjs`
+- TypeScript/TSX parser/transpile syntax pass over every modified `.ts` / `.tsx` file
+- deterministic customer-turn planner tests, including the Arabic typo HELP regression
+
+Run the real dependency-backed checks on your machine after install:
 
 ```bash
 npm run db:generate
-npm run db:migrate:deploy
 npm run build
+npm run smoke:api
 ```
 
-Then start the API and web using your existing process manager/deployment commands. Do not reuse an old `apps/api/dist` or `apps/web/.next`; build fresh from this source package.
+Then run the feature checks above before deploying the migration to the production Neon branch.
 
-## Compatibility note
+## 16. Railway reminder
 
-Internal workspace names, JWT issuer/audience, and the existing admin cookie identifier still use legacy `maqar` identifiers on purpose. They are not user-facing branding and were retained to avoid invalidating active sessions or breaking deployment scripts. Browser conversation/device storage migrates forward to `cgai-*` keys while preserving existing anonymous users.
+API service keeps secrets and server-only values such as:
+
+- `DATABASE_URL`
+- `GROQ_API_KEY`
+- Cloudflare AI token/account
+- R2 credentials
+- `GOOGLE_MAPS_SERVER_API_KEY`
+- `DEVICE_HASH_SECRET`
+- Admin bootstrap credentials
+
+Web service only needs browser/public configuration plus the Admin entry-path configuration required by the existing app, notably:
+
+- `NEXT_PUBLIC_API_URL`
+- `NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_API_KEY`
+- `ADMIN_ACCESS_PATH`
+
+Never expose R2, Groq, database or server Google secrets as `NEXT_PUBLIC_*` variables.

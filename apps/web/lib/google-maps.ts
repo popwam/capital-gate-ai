@@ -3,6 +3,7 @@
 declare global {
   interface Window {
     google?: any;
+    gm_authFailure?: () => void;
   }
 }
 
@@ -19,20 +20,35 @@ export function loadGoogleMaps(key = googleMapsBrowserKey()) {
   if (mapsLoader) return mapsLoader;
 
   mapsLoader = new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (message: string) => {
+      window.dispatchEvent(new CustomEvent("cg-google-maps-auth-failure", { detail: message }));
+      if (!settled) {
+        settled = true;
+        mapsLoader = null;
+        reject(new Error(message));
+      }
+    };
+    window.gm_authFailure = () => fail("Google Maps رفض Browser API Key. راجع تفعيل Maps JavaScript API وBilling وHTTP referrer للدومين الحالي.");
+
     const existing = document.querySelector<HTMLScriptElement>("script[data-cg-google-maps]");
     if (existing) {
-      existing.addEventListener("load", () => resolve(window.google?.maps));
-      existing.addEventListener("error", () => reject(new Error("تعذر تحميل Google Maps.")));
+      existing.addEventListener("load", () => {
+        if (window.google?.maps && !settled) { settled = true; resolve(window.google.maps); }
+      }, { once: true });
+      existing.addEventListener("error", () => fail("تعذر تحميل Google Maps JavaScript API."), { once: true });
       return;
     }
 
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly&loading=async`;
     script.async = true;
-    script.defer = true;
     script.dataset.cgGoogleMaps = "true";
-    script.onload = () => window.google?.maps ? resolve(window.google.maps) : reject(new Error("Google Maps لم يبدأ بشكل صحيح."));
-    script.onerror = () => reject(new Error("تعذر تحميل Google Maps."));
+    script.onload = () => {
+      if (window.google?.maps && !settled) { settled = true; resolve(window.google.maps); }
+      else if (!settled) fail("Google Maps script loaded but the Maps API did not initialize.");
+    };
+    script.onerror = () => fail("تعذر تحميل Google Maps JavaScript API.");
     document.head.appendChild(script);
   });
 

@@ -40,6 +40,7 @@ class PortfolioDto {
   @IsOptional() @IsString() locationText?: string;
   @IsOptional() @IsString() locationId?: string;
   @IsOptional() @IsString() projectType?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) projectTypes?: string[];
   @IsIn(["DELIVERED", "UNDER_CONSTRUCTION", "UPCOMING", "HISTORICAL"]) status!: string;
   @IsOptional() @Type(() => Number) @IsInt() launchYear?: number;
   @IsOptional() @Type(() => Number) @IsInt() deliveryYear?: number;
@@ -66,8 +67,10 @@ class ProjectDetailsDto {
   @IsOptional() @Type(() => Number) @IsNumber() longitude?: number;
   @IsOptional() @IsString() projectStatus?: string;
   @IsOptional() @IsString() projectType?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) projectTypes?: string[];
   @IsOptional() @IsString() deliveryInformation?: string;
   @IsOptional() @IsString() deliveryStatus?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) deliveryStatuses?: string[];
   @IsOptional() @IsDateString() deliveryDate?: string;
   @IsOptional() @Type(() => Number) @IsInt() deliveryYear?: number;
   @IsOptional() @IsArray() @IsString({ each: true }) finishingOptions?: string[];
@@ -129,6 +132,7 @@ class CompetitorsDto { @IsArray() @IsString({ each: true }) projectIds!: string[
 
 class ProjectGateDto {
   @IsString() name!: string;
+  @IsOptional() @IsString() phaseId?: string;
   @IsOptional() @IsString() code?: string;
   @IsOptional() @IsString() nameAr?: string;
   @IsOptional() @IsString() nameEn?: string;
@@ -153,10 +157,11 @@ class GateLocationDto {
 type BoundaryPoint = { lat: number; lng: number };
 class ProjectBoundaryDto {
   @IsArray() points!: BoundaryPoint[];
-  @IsIn(["GPS_MANUAL", "IMPORT"]) source!: string;
+  @IsIn(["GPS_MANUAL", "MAP_DRAWN", "IMPORT"]) source!: string;
 }
 class ProjectZoneDto {
   @IsString() name!: string;
+  @IsOptional() @IsString() phaseId?: string;
   @IsOptional() @IsString() code?: string;
   @IsOptional() @IsString() nameAr?: string;
   @IsOptional() @IsString() nameEn?: string;
@@ -164,6 +169,7 @@ class ProjectZoneDto {
 }
 class ProjectBuildingDto {
   @IsString() name!: string;
+  @IsOptional() @IsString() phaseId?: string;
   @IsOptional() @IsString() code?: string;
   @IsOptional() @IsString() nameAr?: string;
   @IsOptional() @IsString() nameEn?: string;
@@ -233,9 +239,13 @@ export class RealEstateController {
     } catch { return null; }
   }
   private async readinessFor(projectId: string, pending: Record<string, unknown> = {}) {
-    const [project, imageCount] = await Promise.all([
-      this.prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { location: true, investmentProfile: true, amenities: { where: { verified: true } } } }),
-      this.prisma.media.count({ where: { projectId, type: "IMAGE" } }),
+    const [project, imageCount, phaseCount, paymentPlanCount, marketProfileCount, unassignedUnitCount] = await Promise.all([
+      this.prisma.project.findUniqueOrThrow({ where: { id: projectId }, include: { location: true, amenities: { where: { verified: true } } } }),
+      this.prisma.media.count({ where: { projectId, type: "IMAGE", phaseId: null } }),
+      this.prisma.projectPhase.count({ where: { projectId } }),
+      this.prisma.paymentPlan.count({ where: { projectId, phaseId: null, unitId: null, isActive: true } }),
+      this.prisma.marketProfile.count({ where: { projectId } }),
+      this.prisma.unit.count({ where: { projectId, archivedAt: null, phaseId: null } }),
     ]);
     const value = { ...project, ...pending } as Record<string, any>;
     const missing: string[] = [];
@@ -243,14 +253,14 @@ export class RealEstateController {
     if (!value.locationId) missing.push("location");
     if (!(value.latitude && value.longitude) && !(project.location?.latitude && project.location?.longitude)) missing.push("coordinates");
     if (!value.shortDescriptionAr && !value.shortDescriptionEn && !value.shortDescription) missing.push("short description");
-    if (!value.projectType) missing.push("project type");
-    if (!value.deliveryStatus && !value.deliveryInformation) missing.push("delivery information");
-    if (!value.priceSummary) missing.push("price summary");
-    if (!value.paymentSummary) missing.push("payment summary");
+    if (!(Array.isArray(value.projectTypes) && value.projectTypes.length) && !value.projectType) missing.push("project type");
+    if (!phaseCount) missing.push("at least one phase");
+    if (!paymentPlanCount) missing.push("project default payment plan");
     if (!project.amenities.length) missing.push("verified amenities");
-    if (!project.investmentProfile?.verifiedAt) missing.push("verified investment profile");
+    if (unassignedUnitCount) missing.push(`assign ${unassignedUnitCount} active unit${unassignedUnitCount === 1 ? "" : "s"} to a phase`);
     if (imageCount < 3) missing.push("at least 3 project images");
-    return { ready: missing.length === 0, missing, imageCount };
+    const warnings = marketProfileCount ? [] : ["market profiles are still empty; investment/resale/rental answers will stay limited to verified inventory facts"];
+    return { ready: missing.length === 0, missing, warnings, imageCount, phaseCount, unassignedUnitCount, marketProfileCount };
   }
 
   @Get("dashboard") async dashboard() {
@@ -284,7 +294,7 @@ export class RealEstateController {
       this.prisma.dataImport.count({ where: { status: "NEEDS_INPUT" } }),
       this.prisma.lead.count({ where: { status: "NEW" } }),
       this.prisma.lead.count({ where: { followUpAt: { lte: new Date() }, status: { notIn: ["WON", "LOST"] } } }),
-      this.prisma.unit.count({ where: { archivedAt: null, masterPlanLocationStatus: "CONFIRMED" } }),
+      this.prisma.unit.count({ where: { archivedAt: null, masterPlanLocationStatus: { in: ["CONFIRMED", "BUILDING_CONFIRMED"] } } }),
       this.prisma.project.count({ where: { adminStatus: { not: "ARCHIVED" }, boundaryConfirmedAt: { not: null } } }),
       this.prisma.paymentPlan.count({ where: { isActive: true } }),
       this.prisma.projectKnowledgeItem.count({ where: { approvalStatus: "PENDING" } }),
@@ -337,7 +347,7 @@ export class RealEstateController {
   }
 
   @Get("projects/:id") project(@Param("id") id: string) {
-    return this.prisma.project.findUniqueOrThrow({ where: { id }, include: { developer: true, location: { include: { parent: true, aliases: true } }, amenities: { include: { amenity: true } }, gates: { orderBy: [{ isMain: "desc" }, { gateNumber: "asc" }, { name: "asc" }] }, zones: { include: { buildings: { orderBy: { name: "asc" } } }, orderBy: { name: "asc" } }, buildings: { include: { zone: true }, orderBy: { name: "asc" } }, investmentProfile: true, landmarks: { include: { location: true }, orderBy: { name: "asc" } }, competitorsFrom: { include: { competitorProject: { include: { developer: true, location: true } } } }, media: { orderBy: [{ isCover: "desc" }, { sortOrder: "asc" }] }, documents: { orderBy: { createdAt: "desc" } }, paymentPlans: { where: { isActive: true }, orderBy: [{ durationMonths: "asc" }, { name: "asc" }] }, knowledgeItems: { where: { approvalStatus: "APPROVED" }, orderBy: { category: "asc" } }, _count: { select: { units: true, knowledgeItems: true } } } });
+    return this.prisma.project.findUniqueOrThrow({ where: { id }, include: { developer: true, location: { include: { parent: true, aliases: true } }, amenities: { include: { amenity: true } }, gates: { include: { phase: true }, orderBy: [{ isMain: "desc" }, { gateNumber: "asc" }, { name: "asc" }] }, phases: { include: { _count: { select: { units: true, buildings: true, gates: true } } }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] }, zones: { include: { phase: true, buildings: { include: { phase: true }, orderBy: { name: "asc" } } }, orderBy: { name: "asc" } }, buildings: { include: { zone: true, phase: true }, orderBy: { name: "asc" } }, investmentProfile: true, marketProfiles: { orderBy: [{ segment: "asc" }, { propertyUse: "asc" }] }, landmarks: { include: { location: true }, orderBy: { name: "asc" } }, competitorsFrom: { include: { competitorProject: { include: { developer: true, location: true } } } }, media: { orderBy: [{ isCover: "desc" }, { sortOrder: "asc" }] }, documents: { orderBy: { createdAt: "desc" } }, paymentPlans: { where: { isActive: true }, orderBy: [{ durationMonths: "asc" }, { name: "asc" }] }, knowledgeItems: { where: { approvalStatus: "APPROVED" }, orderBy: { category: "asc" } }, _count: { select: { units: true, knowledgeItems: true } } } });
   }
   @Get("projects/:id/readiness") readiness(@Param("id") id: string) { return this.readinessFor(id); }
   @Patch("projects/:id") async updateProject(@Param("id") id: string, @Body() body: ProjectDetailsDto, @Req() req: any) {

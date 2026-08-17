@@ -8,7 +8,7 @@ import { ImporterService } from "./importer.service";
 import { ImportHttpException, importErrorDetails } from "./import-errors";
 
 class ResolutionDto { @IsString() @IsNotEmpty() field!: string; @Allow() value!: unknown; }
-class SheetUpdateDto { @Allow() action?: unknown; @Allow() headerRow?: unknown; @Allow() projectId?: unknown; @Allow() developerId?: unknown; @Allow() locationId?: unknown; @Allow() defaultCurrency?: unknown; @Allow() defaultUnitType?: unknown; @Allow() defaultIsResale?: unknown; }
+class SheetUpdateDto { @Allow() action?: unknown; @Allow() headerRow?: unknown; @Allow() projectId?: unknown; @Allow() phaseId?: unknown; @Allow() developerId?: unknown; @Allow() locationId?: unknown; @Allow() defaultCurrency?: unknown; @Allow() defaultUnitType?: unknown; @Allow() defaultIsResale?: unknown; }
 class SheetMappingDto { @IsString() @IsNotEmpty() sourceColumn!: string; @IsString() @IsNotEmpty() canonicalField!: string; }
 class CorrectionDto extends SheetMappingDto {}
 class CorrectionDecisionDto { @Allow() decisions?: Record<string,string>; }

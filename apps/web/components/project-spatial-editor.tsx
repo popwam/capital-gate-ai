@@ -1,86 +1,212 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, MouseEvent, useMemo, useState } from "react";
+import { Bot, Building2, DoorOpen, ImagePlus, Layers3, MousePointer2, RotateCcw, Sparkles, Trash2 } from "lucide-react";
 import { adminApi, adminErrorMessage } from "@/lib/api";
-import { ProjectBoundaryMap } from "@/components/project-boundary-map";
 
-type Unit = { id:string; externalUnitId:string; unitType?:string|null; building?:string|null; floor?:string|null; latitude?:number|string|null; longitude?:number|string|null; projectBuildingId?:string|null; projectZoneId?:string|null; masterPlanX?:number|string|null; masterPlanY?:number|string|null; masterPlanLocationStatus?:string|null };
-type Gate = { id:string; name:string; nameAr?:string|null; gateNumber?:number|null; latitude?:number|string|null; longitude?:number|string|null; masterPlanX?:number|string|null; masterPlanY?:number|string|null; isMain?:boolean|null };
-type Building = { id:string; name:string; nameAr?:string|null; code?:string|null; zoneId?:string|null; latitude?:number|string|null; longitude?:number|string|null; masterPlanX?:number|string|null; masterPlanY?:number|string|null; units?:Unit[] };
-type Zone = { id:string; name:string; nameAr?:string|null; buildings?:Building[] };
-type Media = { id:string; type:string; url:string };
-type BoundaryPoint = { lat:number; lng:number };
-type CalibrationAnchor = { x:number; y:number; latitude:number; longitude:number; boundaryIndex?:number };
-type ProjectData = { latitude?:number|string|null; longitude?:number|string|null; gates?:Gate[]; zones?:Zone[]; buildings?:Building[]; boundaryGeoJson?:{type?:string;coordinates?:number[][][]}|null; boundarySource?:string|null; boundaryConfirmedAt?:string|null; masterPlanCalibration?:{anchors?:CalibrationAnchor[]}|null };
-type UnitPage = { items:Unit[]; total:number };
-type PendingPoint = { x:number; y:number } | null;
+type Point = { x: number; y: number };
+type Phase = { id: string; name: string; nameAr?: string | null; code?: string | null; masterPlanPolygon?: Point[] | null };
+type Building = { id: string; name: string; nameAr?: string | null; code?: string | null; phaseId?: string | null; masterPlanPolygon?: Point[] | null };
+type Gate = { id: string; name: string; nameAr?: string | null; gateNumber?: number | null; phaseId?: string | null; masterPlanX?: number | string | null; masterPlanY?: number | string | null; isMain?: boolean };
+type Media = { id: string; type: string; url: string; isCover?: boolean; sortOrder?: number };
+type Suggestion = {
+  building: { id: string; name: string; nameAr?: string | null; code?: string | null; phaseId?: string | null };
+  candidates: Array<{ id: string; externalUnitId: string; confidence: number; reason: string; projectBuildingId?: string | null }>;
+  highConfidenceCount: number;
+};
 
-const label=(value:{name?:string|null;nameAr?:string|null})=>value.nameAr||value.name||"—";
-const norm=(value:unknown)=>String(value??"").toLowerCase().normalize("NFKC").replace(/\s+/g," ").trim();
+const label = (item?: { name?: string | null; nameAr?: string | null; code?: string | null }) => item?.nameAr || item?.name || item?.code || "—";
+const pointsAttr = (points: Point[] | null | undefined) => (points ?? []).map((point) => `${point.x * 1000},${point.y * 1000}`).join(" ");
 
-function boundaryPoints(value?:ProjectData["boundaryGeoJson"]):BoundaryPoint[]{
-  const ring=value?.type==="Polygon"&&Array.isArray(value.coordinates?.[0])?value.coordinates![0]:[];
-  const points=ring.map(pair=>({lng:Number(pair[0]),lat:Number(pair[1])})).filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lng));
-  if(points.length>1&&points[0].lat===points.at(-1)?.lat&&points[0].lng===points.at(-1)?.lng)points.pop();
-  return points;
-}
+export function ProjectSpatialEditor({
+  projectId,
+  phases,
+  buildings,
+  gates,
+  media,
+  onChanged,
+}: {
+  projectId: string;
+  phases: Phase[];
+  buildings: Building[];
+  gates: Gate[];
+  media: Media[];
+  onChanged: () => Promise<void> | void;
+}) {
+  const plan = useMemo(() => media.filter((item) => item.type === "MASTER_PLAN").sort((a, b) => Number(b.isCover) - Number(a.isCover) || Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0))[0], [media]);
+  const [mode, setMode] = useState<"PHASE" | "BUILDING" | "GATE" | null>(null);
+  const [selectedPhaseId, setSelectedPhaseId] = useState(phases[0]?.id ?? "");
+  const [selectedBuildingId, setSelectedBuildingId] = useState(buildings[0]?.id ?? "");
+  const [selectedGateId, setSelectedGateId] = useState(gates[0]?.id ?? "");
+  const [points, setPoints] = useState<Point[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [review, setReview] = useState<Record<string, string[]>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
-export function ProjectSpatialEditor({projectId,media=[]}:{projectId:string;media?:Media[]}){
-  const plan=useMemo(()=>media.find(x=>x.type==="MASTER_PLAN"),[media]);
-  const imageRef=useRef<HTMLImageElement>(null);
-  const [units,setUnits]=useState<Unit[]>([]),[gates,setGates]=useState<Gate[]>([]),[zones,setZones]=useState<Zone[]>([]),[buildings,setBuildings]=useState<Building[]>([]),[boundary,setBoundary]=useState<BoundaryPoint[]>([]),[anchors,setAnchors]=useState<CalibrationAnchor[]>([]);
-  const [projectCenter,setProjectCenter]=useState<BoundaryPoint|null>(null);
-  const [pending,setPending]=useState<PendingPoint>(null),[entityType,setEntityType]=useState<"BUILDING"|"UNITS"|"GATE">("BUILDING"),[selectedBuildingId,setSelectedBuildingId]=useState(""),[selectedGateId,setSelectedGateId]=useState(""),[selectedUnitIds,setSelectedUnitIds]=useState<string[]>([]),[unitFilter,setUnitFilter]=useState(""),[calibrationMode,setCalibrationMode]=useState(false),[boundaryIndex,setBoundaryIndex]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  async function uploadMasterPlan(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    form.append("projectId", projectId);
+    form.append("type", "MASTER_PLAN");
+    try {
+      setBusy(true); setError("");
+      await adminApi.upload("/catalog/media", form);
+      event.currentTarget.reset();
+      await onChanged();
+    } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
+  }
 
-  const fetchUnits=async()=>{const first=await adminApi.get<UnitPage>(`/catalog/units?projectId=${encodeURIComponent(projectId)}&page=1&pageSize=100`);const all=[...(first.items??[])];const pages=Math.ceil((first.total??all.length)/100);for(let page=2;page<=pages;page++){const next=await adminApi.get<UnitPage>(`/catalog/units?projectId=${encodeURIComponent(projectId)}&page=${page}&pageSize=100`);all.push(...(next.items??[]))}return all};
-  const load=async()=>{try{const [allUnits,project]=await Promise.all([fetchUnits(),adminApi.get<ProjectData>(`/real-estate/projects/${projectId}`)]);setUnits(allUnits);setGates(project.gates??[]);setZones(project.zones??[]);setBuildings(project.buildings??project.zones?.flatMap(z=>z.buildings??[])??[]);setBoundary(boundaryPoints(project.boundaryGeoJson));const lat=Number(project.latitude),lng=Number(project.longitude);setProjectCenter(Number.isFinite(lat)&&Number.isFinite(lng)?{lat,lng}:null);setAnchors(Array.isArray(project.masterPlanCalibration?.anchors)?project.masterPlanCalibration!.anchors!:[]);}catch(e){setError(adminErrorMessage(e))}};
-  useEffect(()=>{void load()},[projectId]);
+  function imageClick(event: MouseEvent<HTMLDivElement>) {
+    if (!mode || !plan) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    if (mode === "GATE") {
+      if (!selectedGateId) return setError("اختر البوابة أولًا.");
+      void saveGatePoint(x, y);
+      return;
+    }
+    setPoints((current) => [...current, { x, y }]);
+  }
 
-  const normalizedPoint=(clientX:number,clientY:number)=>{if(!imageRef.current)return null;const r=imageRef.current.getBoundingClientRect();return{x:Math.max(0,Math.min(1,(clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(clientY-r.top)/r.height))}};
-  const onPlanClick=(event:React.MouseEvent<HTMLImageElement>)=>{const point=normalizedPoint(event.clientX,event.clientY);if(!point)return;if(calibrationMode){const gps=boundary[boundaryIndex];if(!gps)return setError("اختر نقطة GPS من حدود المشروع أولاً.");setAnchors(current=>[...current.filter(a=>a.boundaryIndex!==boundaryIndex),{...point,latitude:gps.lat,longitude:gps.lng,boundaryIndex}]);return}setPending(point);setSelectedUnitIds([])};
+  async function saveGatePoint(x: number, y: number) {
+    try {
+      setBusy(true); setError("");
+      await adminApi.patch(`/real-estate/gates/${selectedGateId}/location`, { masterPlanX: x, masterPlanY: y, source: "MASTER_PLAN_MANUAL", confirmed: true });
+      await onChanged();
+    } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
+  }
 
-  const saveCalibration=async()=>{if(anchors.length<3)return setError("المعايرة تحتاج 3 نقاط على الأقل بين الـ Master Plan وحدود GPS.");try{setBusy(true);setError("");await adminApi.patch(`/real-estate/projects/${projectId}/master-plan/calibration`,{anchors});setCalibrationMode(false);await load()}catch(e){setError(adminErrorMessage(e))}finally{setBusy(false)}};
-  const toggleUnit=(id:string)=>setSelectedUnitIds(ids=>ids.includes(id)?ids.filter(x=>x!==id):[...ids,id]);
-  const selectedBuilding=buildings.find(b=>b.id===selectedBuildingId);
-  const filteredUnits=units.filter(u=>!unitFilter||norm(u.unitType).includes(norm(unitFilter))||norm(u.externalUnitId).includes(norm(unitFilter))||norm(u.building).includes(norm(unitFilter)));
-  const autoSelectBuildingUnits=()=>{if(!selectedBuilding)return;const names=[selectedBuilding.name,selectedBuilding.nameAr,selectedBuilding.code].filter(Boolean).map(norm);setSelectedUnitIds(units.filter(u=>u.projectBuildingId===selectedBuilding.id||names.some(n=>n&&[u.building,u.externalUnitId].map(norm).some(v=>v.includes(n)))).map(u=>u.id))};
+  async function finishPolygon() {
+    if (points.length < 3) return setError("الرسم يحتاج 3 نقاط على الأقل.");
+    try {
+      setBusy(true); setError("");
+      if (mode === "PHASE") {
+        if (!selectedPhaseId) throw new Error("اختر المرحلة أولًا.");
+        await adminApi.patch(`/real-estate/phases/${selectedPhaseId}/master-plan-polygon`, { points });
+      } else if (mode === "BUILDING") {
+        if (!selectedBuildingId) throw new Error("اختر المبنى أولًا.");
+        await adminApi.patch(`/real-estate/buildings/${selectedBuildingId}/master-plan-polygon`, { points, phaseId: selectedPhaseId || undefined });
+      }
+      setPoints([]);
+      await onChanged();
+    } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
+  }
 
-  const commitPoint=async()=>{if(!pending)return;try{setBusy(true);setError("");if(entityType==="GATE"){if(!selectedGateId)throw new Error("اختر البوابة.");await adminApi.patch(`/real-estate/gates/${selectedGateId}/master-plan-location`,pending)}else if(entityType==="BUILDING"){if(!selectedBuildingId)throw new Error("اختر المبنى.");await adminApi.patch(`/real-estate/buildings/${selectedBuildingId}/master-plan-location`,pending);if(selectedUnitIds.length)await adminApi.patch(`/real-estate/projects/${projectId}/master-plan/bulk-assign`,{...pending,buildingId:selectedBuildingId,unitIds:selectedUnitIds})}else{if(!selectedUnitIds.length)throw new Error("اختر وحدة واحدة على الأقل.");await adminApi.patch(`/real-estate/projects/${projectId}/master-plan/bulk-assign`,{...pending,unitIds:selectedUnitIds})}setPending(null);setSelectedUnitIds([]);await load()}catch(e){setError(adminErrorMessage(e))}finally{setBusy(false)}};
+  async function createBuilding(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    try {
+      setBusy(true); setError("");
+      const created = await adminApi.post<Building>(`/real-estate/projects/${projectId}/buildings`, {
+        name: String(form.get("name") ?? "").trim(),
+        code: String(form.get("code") ?? "").trim() || undefined,
+        phaseId: selectedPhaseId || undefined,
+      });
+      setSelectedBuildingId(created.id);
+      event.currentTarget.reset();
+      await onChanged();
+    } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
+  }
 
-  async function addBuilding(event:FormEvent<HTMLFormElement>){event.preventDefault();const form=new FormData(event.currentTarget);try{setBusy(true);const item=await adminApi.post<Building>(`/real-estate/projects/${projectId}/buildings`,{name:String(form.get("name")||"").trim(),nameAr:String(form.get("nameAr")||"").trim()||undefined,code:String(form.get("code")||"").trim()||undefined,zoneId:String(form.get("zoneId")||"")||undefined});setSelectedBuildingId(item.id);event.currentTarget.reset();await load()}catch(e){setError(adminErrorMessage(e))}finally{setBusy(false)}}
-  async function addGate(event:FormEvent<HTMLFormElement>){event.preventDefault();const form=new FormData(event.currentTarget);try{setBusy(true);const item=await adminApi.post<Gate>(`/real-estate/projects/${projectId}/gates`,{name:String(form.get("name")||"").trim(),nameAr:String(form.get("nameAr")||"").trim()||undefined,gateNumber:String(form.get("gateNumber")||"")?Number(form.get("gateNumber")):undefined,isMain:form.get("isMain")==="on"});setSelectedGateId(item.id);event.currentTarget.reset();await load()}catch(e){setError(adminErrorMessage(e))}finally{setBusy(false)}}
-  const saveBoundary=async()=>{if(boundary.length<3)return setError("أضف 3 نقاط GPS على الأقل.");try{setBusy(true);await adminApi.patch(`/real-estate/projects/${projectId}/boundary`,{points:boundary,source:"MAP_DRAWN"});await load()}catch(e){setError(adminErrorMessage(e))}finally{setBusy(false)}};
+  async function createGate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    try {
+      setBusy(true); setError("");
+      const created = await adminApi.post<Gate>(`/real-estate/projects/${projectId}/gates`, {
+        name: String(form.get("name") ?? "").trim(),
+        gateNumber: String(form.get("gateNumber") ?? "").trim() ? Number(form.get("gateNumber")) : undefined,
+        phaseId: selectedPhaseId || undefined,
+        isMain: Boolean(form.get("isMain")),
+      });
+      setSelectedGateId(created.id);
+      event.currentTarget.reset();
+      await onChanged();
+    } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
+  }
 
-  return <section className="mt-6 space-y-5" dir="rtl">
-    <div className="rounded-[24px] border bg-white p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-extrabold">حدود المشروع ومعايرة الـ Master Plan</h2><p className="mt-1 text-sm leading-7 text-[#68756f]">الـ GPS هو المرجع الحقيقي. بعد حفظ حدود الكمباوند، اربط 3 نقاط أو أكثر من الحدود بنفس الأماكن على صورة الـ Master Plan؛ بعدها أي مبنى أو وحدة تحطها على الصورة يطلع لها Latitude/Longitude تلقائيًا.</p></div><span className={`rounded-full px-3 py-1 text-xs font-bold ${anchors.length>=3?"bg-emerald-50 text-emerald-800":"bg-amber-50 text-amber-800"}`}>{anchors.length>=3?`تمت المعايرة · ${anchors.length} نقاط`:`المعايرة ناقصة · ${anchors.length}/3`}</span></div>
-      <div className="mt-4 space-y-3"><ProjectBoundaryMap points={boundary} onChange={setBoundary} center={projectCenter}/><div className="flex flex-wrap items-center gap-2"><button type="button" disabled={busy||!boundary.length} onClick={()=>setBoundary(points=>points.slice(0,-1))} className="h-10 rounded-xl border px-4 text-sm font-bold disabled:opacity-40">تراجع عن آخر نقطة</button><button type="button" disabled={busy||!boundary.length} onClick={()=>setBoundary([])} className="h-10 rounded-xl border px-4 text-sm font-bold text-red-700 disabled:opacity-40">مسح الرسم</button><span className="text-xs text-[#68756f]">{boundary.length} نقطة</span><button disabled={busy||boundary.length<3} type="button" onClick={saveBoundary} className="me-auto h-10 rounded-xl bg-forest px-5 text-sm font-bold text-white disabled:opacity-40">حفظ حدود المشروع</button></div></div>
-    </div>
+  async function loadSuggestions() {
+    try {
+      setBusy(true); setError("");
+      const rows = await adminApi.get<Suggestion[]>(`/real-estate/projects/${projectId}/master-plan/suggestions`);
+      setSuggestions(rows);
+      const defaults: Record<string, string[]> = {};
+      rows.forEach((row) => { defaults[row.building.id] = row.candidates.filter((candidate) => candidate.confidence >= 0.82).map((candidate) => candidate.id); });
+      setReview(defaults);
+    } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
+  }
 
-    <div className="rounded-[24px] border bg-white p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-extrabold">التحديد على الـ Master Plan</h2><p className="mt-1 text-sm leading-7 text-[#68756f]">اضغط أي نقطة في المخطط. النظام هيسألك: دي بوابة، مبنى، ولا وحدة/مجموعة وحدات. بيانات الوحدات بتتسحب من المخزون الحالي.</p></div><button disabled={!plan||boundary.length<3} type="button" onClick={()=>{setCalibrationMode(v=>!v);setPending(null)}} className={`rounded-xl border px-4 py-2 text-sm font-bold ${calibrationMode?"bg-forest text-white":""}`}>{calibrationMode?"إنهاء وضع المعايرة":"معايرة GPS مع الصورة"}</button></div>
-      {!plan?<div className="mt-4 rounded-2xl bg-[#f5f4ef] p-5 text-sm">ارفع صورة من نوع <b>MASTER_PLAN</b> للمشروع أولًا.</div>:<div className="mt-4 grid gap-4 xl:grid-cols-[320px_1fr]">
-        <aside className="space-y-3">
-          {calibrationMode?<div className="rounded-2xl border bg-[#faf9f5] p-4"><h3 className="font-bold">معايرة الصورة</h3><p className="mt-1 text-xs leading-6 text-[#68756f]">اختر نقطة من حدود GPS ثم اضغط مكانها المقابل على الـ Master Plan. كرر 3 مرات على الأقل وبنقاط بعيدة عن بعض.</p><select value={boundaryIndex} onChange={e=>setBoundaryIndex(Number(e.target.value))} className="mt-3 h-11 w-full rounded-xl border bg-white px-3">{boundary.map((p,i)=><option key={i} value={i}>نقطة #{i+1} · {p.lat.toFixed(5)}, {p.lng.toFixed(5)}</option>)}</select><div className="mt-3 space-y-1">{anchors.map((a,i)=><div key={i} className="flex justify-between rounded-lg bg-white px-2 py-2 text-xs"><span>GPS #{(a.boundaryIndex??0)+1}</span><span dir="ltr">{a.x.toFixed(3)}, {a.y.toFixed(3)}</span></div>)}</div><button disabled={busy||anchors.length<3} type="button" onClick={saveCalibration} className="mt-3 h-11 w-full rounded-xl bg-forest font-bold text-white disabled:opacity-40">حفظ المعايرة</button></div>:<div className="rounded-2xl border bg-[#faf9f5] p-4"><h3 className="font-bold">المخزون على المخطط</h3><div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs"><div className="rounded-xl bg-white p-2"><b className="block text-base">{units.length}</b>وحدة</div><div className="rounded-xl bg-white p-2"><b className="block text-base">{buildings.length}</b>مبنى</div><div className="rounded-xl bg-white p-2"><b className="block text-base">{gates.length}</b>بوابة</div></div><p className="mt-3 text-xs leading-6 text-[#68756f]">الأفضل تحط المبنى مرة واحدة وتربط كل وحداته به بدل تحديد كل شقة لوحدها. لو في فيلا مستقلة أو وحدة إعادة بيع، تقدر تحددها مباشرة.</p></div>}
-          <form onSubmit={addBuilding} className="grid gap-2 rounded-2xl border p-3"><b className="text-sm">+ مبنى جديد</b><input required name="name" placeholder="اسم المبنى" className="h-10 rounded-xl border px-3"/><div className="grid grid-cols-2 gap-2"><input name="nameAr" placeholder="الاسم العربي" className="h-10 rounded-xl border px-3"/><input name="code" placeholder="الكود" className="h-10 rounded-xl border px-3"/></div><select name="zoneId" className="h-10 rounded-xl border bg-white px-3"><option value="">بدون Zone</option>{zones.map(z=><option key={z.id} value={z.id}>{label(z)}</option>)}</select><button disabled={busy} className="h-10 rounded-xl border font-bold">إضافة مبنى</button></form>
-          <form onSubmit={addGate} className="grid gap-2 rounded-2xl border p-3"><b className="text-sm">+ بوابة جديدة</b><input required name="name" placeholder="اسم البوابة" className="h-10 rounded-xl border px-3"/><div className="grid grid-cols-2 gap-2"><input name="nameAr" placeholder="العربي" className="h-10 rounded-xl border px-3"/><input name="gateNumber" type="number" min="1" placeholder="رقم" className="h-10 rounded-xl border px-3"/></div><label className="text-xs"><input name="isMain" type="checkbox"/> بوابة رئيسية</label><button disabled={busy} className="h-10 rounded-xl border font-bold">إضافة بوابة</button></form>
-          {error&&<p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-        </aside>
-        <div className="relative overflow-auto rounded-2xl border bg-white"><div className="relative inline-block min-w-full"><img ref={imageRef} src={plan.url} alt="Master Plan" onClick={onPlanClick} draggable={false} className="block h-auto w-full cursor-crosshair select-none"/>
-          {buildings.filter(b=>b.masterPlanX!=null&&b.masterPlanY!=null).map(b=><button key={b.id} type="button" onClick={e=>{e.stopPropagation();setSelectedBuildingId(b.id)}} className="absolute -translate-x-1/2 -translate-y-1/2 rounded-xl bg-[#d7b46a] px-2 py-1 text-[10px] font-bold shadow" style={{left:`${Number(b.masterPlanX)*100}%`,top:`${Number(b.masterPlanY)*100}%`}}>{label(b)}</button>)}
-          {units.filter(u=>u.masterPlanX!=null&&u.masterPlanY!=null&&!u.projectBuildingId).map(u=><button key={u.id} type="button" onClick={e=>{e.stopPropagation();setSelectedUnitIds([u.id])}} className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-forest px-2 py-1 text-[9px] text-white shadow" style={{left:`${Number(u.masterPlanX)*100}%`,top:`${Number(u.masterPlanY)*100}%`}}>{u.externalUnitId}</button>)}
-          {gates.filter(g=>g.masterPlanX!=null&&g.masterPlanY!=null).map(g=><button key={g.id} type="button" onClick={e=>{e.stopPropagation();setSelectedGateId(g.id)}} className="absolute -translate-x-1/2 -translate-y-1/2 rounded bg-black px-2 py-1 text-[10px] text-white" style={{left:`${Number(g.masterPlanX)*100}%`,top:`${Number(g.masterPlanY)*100}%`}}>{label(g)}</button>)}
-          {anchors.map((a,i)=><span key={`a-${i}`} className="pointer-events-none absolute grid h-6 w-6 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-white bg-blue-600 text-[9px] font-bold text-white shadow" style={{left:`${a.x*100}%`,top:`${a.y*100}%`}}>G{(a.boundaryIndex??i)+1}</span>)}
-        </div></div>
-      </div>}
-    </div>
+  async function confirmSuggestions() {
+    const assignments = Object.entries(review).filter(([, ids]) => ids.length).map(([buildingId, unitIds]) => ({ buildingId, unitIds }));
+    if (!assignments.length) return setError("راجع واختار اقتراح واحد على الأقل.");
+    try {
+      setBusy(true); setError("");
+      await adminApi.patch(`/real-estate/projects/${projectId}/master-plan/review`, { assignments });
+      await onChanged();
+    } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
+  }
 
-    {pending&&<div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" onMouseDown={()=>setPending(null)}><div onMouseDown={e=>e.stopPropagation()} className="max-h-[88vh] w-full max-w-3xl overflow-auto rounded-[24px] bg-white p-5 shadow-2xl"><div className="flex items-start justify-between"><div><h3 className="text-lg font-extrabold">إيه اللي موجود في النقطة دي؟</h3><p className="mt-1 text-xs text-[#68756f]" dir="ltr">X {pending.x.toFixed(4)} · Y {pending.y.toFixed(4)} {anchors.length>=3?"· GPS هيتحسب تلقائيًا":"· بدون GPS لحد ما تعمل المعايرة"}</p></div><button type="button" onClick={()=>setPending(null)} className="rounded-lg border px-3 py-1">✕</button></div>
-      <div className="mt-4 grid grid-cols-3 gap-2">{([['BUILDING','مبنى'],['UNITS','وحدة / شقة / فيلا'],['GATE','بوابة']] as const).map(([v,t])=><button type="button" key={v} onClick={()=>setEntityType(v)} className={`rounded-xl border px-3 py-3 text-sm font-bold ${entityType===v?"bg-forest text-white":""}`}>{t}</button>)}</div>
-      {entityType==="BUILDING"&&<div className="mt-4 space-y-3"><select value={selectedBuildingId} onChange={e=>{setSelectedBuildingId(e.target.value);setSelectedUnitIds([])}} className="h-12 w-full rounded-xl border bg-white px-3"><option value="">اختر المبنى</option>{buildings.map(b=><option key={b.id} value={b.id}>{label(b)} {b.code?`· ${b.code}`:""}</option>)}</select><div className="flex flex-wrap gap-2"><button type="button" onClick={autoSelectBuildingUnits} disabled={!selectedBuildingId} className="rounded-xl border px-3 py-2 text-sm font-bold">اختيار وحدات المبنى تلقائيًا</button><span className="rounded-xl bg-[#f3f1eb] px-3 py-2 text-sm">مختار {selectedUnitIds.length} وحدة</span></div><p className="text-xs leading-6 text-[#68756f]">لو المبنى فيه 10 أو 50 وحدة، اختارهم مرة واحدة. كلهم هيرتبطوا بالمبنى والنظام يقدر يستخدم موقع المبنى لكل الوحدات.</p></div>}
-      {entityType==="GATE"&&<select value={selectedGateId} onChange={e=>setSelectedGateId(e.target.value)} className="mt-4 h-12 w-full rounded-xl border bg-white px-3"><option value="">اختر البوابة</option>{gates.map(g=><option key={g.id} value={g.id}>{label(g)}{g.isMain?" · رئيسية":""}</option>)}</select>}
-      {(entityType==="UNITS"||entityType==="BUILDING")&&<div className="mt-4"><input value={unitFilter} onChange={e=>setUnitFilter(e.target.value)} placeholder="ابحث بكود الوحدة أو النوع أو المبنى..." className="h-11 w-full rounded-xl border px-3"/><div className="mt-2 max-h-72 overflow-auto rounded-xl border">{filteredUnits.map(u=><label key={u.id} className="flex cursor-pointer items-center gap-3 border-b px-3 py-2 text-sm hover:bg-[#faf9f5]"><input type="checkbox" checked={selectedUnitIds.includes(u.id)} onChange={()=>toggleUnit(u.id)}/><span className="font-bold" dir="ltr">{u.externalUnitId}</span><span className="text-[#68756f]">{u.unitType||"نوع غير محدد"}</span><span className="me-auto text-xs text-[#87918c]">{u.building||""}</span></label>)}</div></div>}
-      <div className="mt-5 flex gap-2"><button disabled={busy} type="button" onClick={commitPoint} className="h-12 flex-1 rounded-xl bg-forest font-bold text-white disabled:opacity-40">تأكيد المكان</button><button type="button" onClick={()=>setPending(null)} className="h-12 rounded-xl border px-5">إلغاء</button></div>
-    </div></div>}
-  </section>;
+  const currentPhase = phases.find((phase) => phase.id === selectedPhaseId);
+  const phaseBuildings = buildings.filter((building) => !selectedPhaseId || building.phaseId === selectedPhaseId || !building.phaseId);
+  const phaseGates = gates.filter((gate) => !selectedPhaseId || gate.phaseId === selectedPhaseId || !gate.phaseId);
+
+  return (
+    <section className="space-y-4" dir="rtl">
+      <div className="rounded-[28px] border border-[#dfe4e0] bg-white p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div><p className="text-[11px] font-black uppercase tracking-[.2em] text-[#b08c52]">Spatial workflow</p><h2 className="mt-1 text-xl font-black">Master Plan Studio</h2><p className="mt-1 max-w-3xl text-sm leading-7 text-[#74817b]">ارفع المخطط، ارسم المراحل، ثم المباني. بعد كده Cg Ai يقترح الوحدات التابعة لكل مبنى من أسمائها وأنت تراجع. البوابات تفضل تحديد يدوي.</p></div>
+          <div className="grid grid-cols-4 gap-2 text-center text-xs"><span className="rounded-xl bg-[#f3f4ef] px-3 py-2"><b className="block text-base">{phases.length}</b>مرحلة</span><span className="rounded-xl bg-[#f3f4ef] px-3 py-2"><b className="block text-base">{buildings.length}</b>مبنى</span><span className="rounded-xl bg-[#f3f4ef] px-3 py-2"><b className="block text-base">{gates.length}</b>بوابة</span><span className="rounded-xl bg-[#edf3f0] px-3 py-2 text-[#17483e]"><b className="block text-base">AI</b>Review</span></div>
+        </div>
+
+        {!plan ? (
+          <form onSubmit={uploadMasterPlan} className="mt-5 grid min-h-72 place-items-center rounded-[24px] border-2 border-dashed border-[#cbd4cf] bg-[#fafaf7] p-6 text-center">
+            <div><span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#173f3b] text-white"><ImagePlus /></span><h3 className="mt-4 text-lg font-black">ارفع صورة الـ Master Plan أولًا</h3><p className="mt-1 text-sm text-[#74817b]">JPG / PNG / WEBP — المخطط هنا منفصل عن معرض صور المشروع.</p><input required name="file" type="file" accept="image/*" className="mx-auto mt-4 block max-w-full rounded-xl border bg-white p-2 text-sm" /><button disabled={busy} className="mt-3 h-11 rounded-xl bg-[#173f3b] px-6 font-black text-white disabled:opacity-40">رفع المخطط</button></div>
+          </form>
+        ) : (
+          <div className="mt-5 grid gap-4 xl:grid-cols-[310px_minmax(0,1fr)]">
+            <aside className="space-y-3">
+              <div className="rounded-2xl border bg-[#faf9f5] p-3">
+                <label className="text-xs font-black">المرحلة الحالية</label>
+                <select value={selectedPhaseId} onChange={(event) => { setSelectedPhaseId(event.target.value); setPoints([]); }} className="mt-2 h-11 w-full rounded-xl border bg-white px-3"><option value="">بدون مرحلة</option>{phases.map((phase) => <option key={phase.id} value={phase.id}>{label(phase)}{phase.code ? ` · ${phase.code}` : ""}</option>)}</select>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <button type="button" onClick={() => { setMode("PHASE"); setPoints([]); }} disabled={!selectedPhaseId} className={`rounded-2xl border p-3 text-xs font-black disabled:opacity-30 ${mode === "PHASE" ? "bg-[#173f3b] text-white" : "bg-white"}`}><Layers3 className="mx-auto mb-1" size={17} />رسم مرحلة</button>
+                <button type="button" onClick={() => { setMode("BUILDING"); setPoints([]); }} className={`rounded-2xl border p-3 text-xs font-black ${mode === "BUILDING" ? "bg-[#173f3b] text-white" : "bg-white"}`}><Building2 className="mx-auto mb-1" size={17} />رسم مبنى</button>
+                <button type="button" onClick={() => { setMode("GATE"); setPoints([]); }} className={`rounded-2xl border p-3 text-xs font-black ${mode === "GATE" ? "bg-[#173f3b] text-white" : "bg-white"}`}><DoorOpen className="mx-auto mb-1" size={17} />حدد بوابة</button>
+              </div>
+
+              {mode === "BUILDING" ? <div className="rounded-2xl border p-3"><label className="text-xs font-black">المبنى المراد رسمه</label><select value={selectedBuildingId} onChange={(event) => setSelectedBuildingId(event.target.value)} className="mt-2 h-11 w-full rounded-xl border bg-white px-3"><option value="">اختر مبنى</option>{phaseBuildings.map((building) => <option key={building.id} value={building.id}>{label(building)}</option>)}</select><form onSubmit={createBuilding} className="mt-3 grid gap-2"><div className="grid grid-cols-2 gap-2"><input required name="name" placeholder="مبنى جديد" className="h-10 rounded-xl border px-2" /><input name="code" placeholder="الكود" className="h-10 rounded-xl border px-2" /></div><button disabled={busy} className="h-9 rounded-xl border text-xs font-black">+ إنشاء مبنى</button></form></div> : null}
+
+              {mode === "GATE" ? <div className="rounded-2xl border p-3"><label className="text-xs font-black">البوابة</label><select value={selectedGateId} onChange={(event) => setSelectedGateId(event.target.value)} className="mt-2 h-11 w-full rounded-xl border bg-white px-3"><option value="">اختر بوابة</option>{phaseGates.map((gate) => <option key={gate.id} value={gate.id}>{label(gate)}{gate.isMain ? " · رئيسية" : ""}</option>)}</select><form onSubmit={createGate} className="mt-3 grid gap-2"><input required name="name" placeholder="اسم بوابة جديدة" className="h-10 rounded-xl border px-2" /><div className="grid grid-cols-2 gap-2"><input name="gateNumber" type="number" min="1" placeholder="رقم" className="h-10 rounded-xl border px-2" /><label className="flex items-center gap-2 rounded-xl border px-2 text-xs"><input name="isMain" type="checkbox" />رئيسية</label></div><button disabled={busy} className="h-9 rounded-xl border text-xs font-black">+ إنشاء بوابة</button></form></div> : null}
+
+              {mode && mode !== "GATE" ? <div className="rounded-2xl border p-3"><div className="flex items-center justify-between"><b className="text-sm">الرسم الحالي</b><span className="text-xs text-[#74817b]">{points.length} نقطة</span></div><div className="mt-2 grid grid-cols-2 gap-2"><button type="button" onClick={() => setPoints((current) => current.slice(0, -1))} disabled={!points.length} className="inline-flex h-9 items-center justify-center gap-1 rounded-xl border text-xs font-bold disabled:opacity-30"><RotateCcw size={13} />تراجع</button><button type="button" onClick={() => setPoints([])} disabled={!points.length} className="inline-flex h-9 items-center justify-center gap-1 rounded-xl border text-xs font-bold text-red-700 disabled:opacity-30"><Trash2 size={13} />مسح</button></div><button type="button" onClick={() => void finishPolygon()} disabled={busy || points.length < 3} className="mt-2 h-10 w-full rounded-xl bg-[#173f3b] text-sm font-black text-white disabled:opacity-30">تم — اعتماد الرسم</button></div> : null}
+
+              <button type="button" onClick={() => { setMode(null); setPoints([]); }} className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border text-sm font-bold"><MousePointer2 size={14} />وضع التصفح</button>
+            </aside>
+
+            <div className="overflow-auto rounded-[22px] border bg-[#e9ece8] p-2">
+              <div onClick={imageClick} className={`relative mx-auto w-fit max-w-full overflow-hidden rounded-2xl bg-white ${mode ? "cursor-crosshair" : "cursor-default"}`}>
+                <img src={plan.url} alt="Master Plan" draggable={false} className="block h-auto max-h-[78vh] max-w-full select-none" />
+                <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 1000 1000" preserveAspectRatio="none">
+                  {phases.map((phase, index) => phase.masterPlanPolygon && phase.masterPlanPolygon.length >= 3 ? <g key={phase.id}><polygon points={pointsAttr(phase.masterPlanPolygon)} fill={`rgba(23,63,59,${selectedPhaseId === phase.id ? .20 : .10})`} stroke={selectedPhaseId === phase.id ? "#173f3b" : "#6f887f"} strokeWidth={selectedPhaseId === phase.id ? 5 : 3} vectorEffect="non-scaling-stroke" /><text x={phase.masterPlanPolygon[0].x * 1000 + 8} y={phase.masterPlanPolygon[0].y * 1000 + 20} fill="#173f3b" fontSize="24" fontWeight="800">{label(phase) || `Phase ${index + 1}`}</text></g> : null)}
+                  {buildings.map((building) => building.masterPlanPolygon && building.masterPlanPolygon.length >= 3 ? <polygon key={building.id} points={pointsAttr(building.masterPlanPolygon)} fill="rgba(176,140,82,.24)" stroke="#9a773f" strokeWidth="3" vectorEffect="non-scaling-stroke" /> : null)}
+                  {gates.filter((gate) => gate.masterPlanX != null && gate.masterPlanY != null).map((gate) => <g key={gate.id}><circle cx={Number(gate.masterPlanX) * 1000} cy={Number(gate.masterPlanY) * 1000} r="12" fill="#111b18" stroke="white" strokeWidth="3" vectorEffect="non-scaling-stroke" /><text x={Number(gate.masterPlanX) * 1000 + 18} y={Number(gate.masterPlanY) * 1000 + 6} fill="#111b18" fontSize="20" fontWeight="800">{label(gate)}</text></g>)}
+                  {points.length ? <><polyline points={pointsAttr(points)} fill={points.length >= 3 ? "rgba(26,86,73,.14)" : "none"} stroke="#1f6a5a" strokeWidth="5" vectorEffect="non-scaling-stroke" />{points.map((point, index) => <circle key={index} cx={point.x * 1000} cy={point.y * 1000} r="9" fill="#fff" stroke="#1f6a5a" strokeWidth="4" vectorEffect="non-scaling-stroke" />)}</> : null}
+                </svg>
+              </div>
+            </div>
+          </div>
+        )}
+        {error ? <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
+      </div>
+
+      {plan ? <div className="rounded-[28px] border border-[#dfe4e0] bg-white p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2 text-[#b08c52]"><Bot size={17} /><span className="text-[11px] font-black uppercase tracking-[.18em]">Cg Ai review</span></div><h3 className="mt-1 text-xl font-black">استنتاج الوحدة ← المبنى</h3><p className="mt-1 text-sm leading-7 text-[#74817b]">الاقتراح يعتمد على كود/اسم المبنى وكود الوحدة. لا يتم اعتماد أي ربط قبل مراجعتك.</p></div><button type="button" disabled={busy || !buildings.length} onClick={() => void loadSuggestions()} className="inline-flex h-11 items-center gap-2 rounded-2xl border border-[#173f3b] px-4 text-sm font-black text-[#173f3b] disabled:opacity-40"><Sparkles size={15} />تحليل المخزون</button></div>
+        {suggestions.length ? <div className="mt-4 space-y-3">{suggestions.map((row) => <details key={row.building.id} className="rounded-2xl border bg-[#faf9f5] p-3" open={row.highConfidenceCount > 0}><summary className="cursor-pointer list-none"><div className="flex items-center justify-between gap-3"><div><b>{label(row.building)}</b><span className="me-2 text-xs text-[#74817b]">{row.candidates.length} اقتراح · {row.highConfidenceCount} ثقة عالية</span></div><span className="rounded-full bg-white px-2 py-1 text-xs font-bold">مختار {(review[row.building.id] ?? []).length}</span></div></summary><div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{row.candidates.map((candidate) => { const active = (review[row.building.id] ?? []).includes(candidate.id); return <label key={candidate.id} className={`flex cursor-pointer items-center gap-2 rounded-xl border p-2 text-xs ${active ? "border-[#6da18f] bg-[#edf5f1]" : "bg-white"}`}><input type="checkbox" checked={active} onChange={() => setReview((current) => ({ ...current, [row.building.id]: active ? (current[row.building.id] ?? []).filter((id) => id !== candidate.id) : [...(current[row.building.id] ?? []), candidate.id] }))} /><b dir="ltr">{candidate.externalUnitId}</b><span className="me-auto">{Math.round(candidate.confidence * 100)}%</span></label>; })}</div></details>)}<button type="button" disabled={busy} onClick={() => void confirmSuggestions()} className="h-11 rounded-2xl bg-[#173f3b] px-6 font-black text-white disabled:opacity-40">اعتماد الاختيارات التي راجعتها</button></div> : null}
+      </div> : null}
+    </section>
+  );
 }

@@ -114,6 +114,9 @@ export function planCustomerTurn(source: string, previous: StructuredIntent): Tu
   if (unitId)
     return { intent: "PROPERTY_DETAILS", requiresDatabase: true, requiresExtraction: false, emitCards: false, executeBrochure: false, exactUnitId: unitId };
 
+  if (/(?:تقدر|ممكن|بتقدر|يمكنك).*(?:تسا+ع+دني|تساعدني|تساعد|تعمل|تقدم)|(?:تسا+ع+دني|تساعدني|تساعدنى)\s*(?:ب|في)?\s*(?:اي|إيه|ايه)|(?:what can you do|how can you help|can you help me)/iu.test(text))
+    return { intent: "SMALL_TALK", requiresDatabase: false, requiresExtraction: false, emitCards: false, executeBrochure: false, deterministicResponse: /[\u0600-\u06ff]/u.test(source) ? "أقدر أساعدك تدور على وحدة مناسبة، تقارن بين المشاريع والمراحل، تعرف الأسعار وخطط السداد، تراجع فرص الاستثمار أو إعادة البيع والإيجار، وتحسب المسافات من الخريطة ببيانات فعلية. قولّي المنطقة أو الميزانية أو اسم المشروع ونبدأ." : "I can help you find units, compare projects and phases, review prices and payment plans, assess investment/resale/rental options, and calculate real map routes. Tell me an area, budget, or project name to start." };
+
   if (/^(?:مساء|صباح)\s+(?:الفل|الخير|النور)|^(?:اهلا|أهلا|هاي|هلا|hello|hi|hey|عامل ايه)[!.؟?\s]*$/iu.test(text))
     return { intent: "SMALL_TALK", requiresDatabase: false, requiresExtraction: false, emitCards: false, executeBrochure: false };
 

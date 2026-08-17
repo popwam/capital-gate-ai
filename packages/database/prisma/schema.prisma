@@ -228,8 +228,10 @@ model Project {
   masterPlanCalibration Json?
   projectStatus       String?
   projectType         String?
+  projectTypes        String[]               @default([])
   deliveryInformation String?
   deliveryStatus      String?
+  deliveryStatuses    String[]               @default([])
   deliveryDate        DateTime?
   deliveryYear        Int?
   finishingOptions    String[]
@@ -262,6 +264,8 @@ model Project {
   gates               ProjectGate[]
   zones               ProjectZone[]
   buildings           ProjectBuilding[]
+  phases              ProjectPhase[]
+  marketProfiles      MarketProfile[]
   investmentProfile   ProjectInvestmentProfile?
   landmarks           ProjectLandmark[]
   competitorsFrom     ProjectCompetitor[]    @relation("CompetitorFrom")
@@ -306,6 +310,80 @@ model ProjectKnowledgeItem {
   @@index([projectId, approvalStatus, category])
 }
 
+model ProjectPhase {
+  id                     String            @id @default(cuid())
+  projectId              String
+  project                Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  code                   String?
+  name                   String
+  nameAr                 String?
+  nameEn                 String?
+  sortOrder              Int               @default(0)
+  launchYear             Int?
+  deliveryYear           Int?
+  status                 String?
+  deliveryStatuses       String[]          @default([])
+  projectTypes           String[]          @default([])
+  constructionPercentage Decimal?          @db.Decimal(7, 4)
+  unitTypes              String[]          @default([])
+  finishingOptions       String[]          @default([])
+  customerFit            String[]          @default([])
+  minArea                Decimal?          @db.Decimal(10, 2)
+  maxArea                Decimal?          @db.Decimal(10, 2)
+  minBedrooms            Int?
+  maxBedrooms            Int?
+  descriptionAr          String?
+  descriptionEn          String?
+  deliveryNotesAr        String?
+  deliveryNotesEn        String?
+  masterPlanPolygon      Json?
+  sourceMetadata         Json?
+  units                  Unit[]
+  gates                  ProjectGate[]
+  zones                  ProjectZone[]
+  buildings              ProjectBuilding[]
+  media                  Media[]
+  documents              Document[]
+  paymentPlans           PaymentPlan[]
+  marketProfiles         MarketProfile[]
+  importSheets           ImportSheet[]
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  @@unique([projectId, name])
+  @@index([projectId, sortOrder])
+  @@index([deliveryYear, status])
+}
+
+model MarketProfile {
+  id              String        @id @default(cuid())
+  projectId       String
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId         String?
+  phase           ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  unitId          String?
+  unit            Unit?         @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  segment         String
+  propertyUse     String        @default("RESIDENTIAL")
+  suitability     String?
+  demand          String?
+  yieldMin        Decimal?      @db.Decimal(7, 4)
+  yieldMax        Decimal?      @db.Decimal(7, 4)
+  liquidity       String?
+  targetCustomers String[]      @default([])
+  advantages      String[]      @default([])
+  risks           String[]      @default([])
+  metrics         Json?
+  notes           String?
+  source          String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([projectId, segment, propertyUse])
+  @@index([phaseId, segment])
+  @@index([unitId, segment])
+}
+
 model Unit {
   id                    String             @id @default(cuid())
   externalUnitId        String
@@ -314,6 +392,8 @@ model Unit {
   projectId             String
   project               Project            @relation(fields: [projectId], references: [id])
   phase                 String?
+  phaseId               String?
+  phaseRef              ProjectPhase?        @relation(fields: [phaseId], references: [id], onDelete: SetNull)
   cluster               String?
   building              String?
   floor                 String?
@@ -367,6 +447,7 @@ model Unit {
   paymentPlans          PaymentPlan[]
   offers                Offer[]
   media                 Media[]
+  marketProfiles        MarketProfile[]
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
 
@@ -375,12 +456,15 @@ model Unit {
   @@index([isResale, status])
   @@index([projectZoneId])
   @@index([projectBuildingId])
+  @@index([phaseId])
 }
 
 model ProjectGate {
   id            String   @id @default(cuid())
   projectId     String
   project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId       String?
+  phase         ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: SetNull)
   code          String?
   name          String
   nameAr        String?
@@ -404,12 +488,16 @@ model ProjectGate {
 
   @@unique([projectId, name])
   @@index([projectId, isActive])
+  @@index([phaseId])
 }
 
 model ProjectZone {
   id        String   @id @default(cuid())
   projectId String
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId   String?
+  phase     ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: SetNull)
+  masterPlanPolygon Json?
   code      String?
   name      String
   nameAr    String?
@@ -422,12 +510,15 @@ model ProjectZone {
 
   @@unique([projectId, name])
   @@index([projectId])
+  @@index([phaseId])
 }
 
 model ProjectBuilding {
   id        String       @id @default(cuid())
   projectId String
   project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId   String?
+  phase     ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: SetNull)
   zoneId    String?
   zone      ProjectZone? @relation(fields: [zoneId], references: [id], onDelete: SetNull)
   code      String?
@@ -438,6 +529,7 @@ model ProjectBuilding {
   longitude Decimal?     @db.Decimal(10, 7)
   masterPlanX Decimal?    @db.Decimal(7, 6)
   masterPlanY Decimal?    @db.Decimal(7, 6)
+  masterPlanPolygon Json?
   masterPlanLocationSource String?
   masterPlanConfirmedAt DateTime?
   masterPlanConfirmedByAdminId String?
@@ -449,6 +541,7 @@ model ProjectBuilding {
 
   @@unique([projectId, name])
   @@index([projectId, zoneId])
+  @@index([phaseId])
 }
 
 model UnitProximity {
@@ -492,6 +585,8 @@ model UnitPriceHistory {
 
 model PaymentPlan {
   id                String   @id @default(cuid())
+  phaseId           String?
+  phase             ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: Cascade)
   unitId            String?
   unit              Unit?    @relation(fields: [unitId], references: [id], onDelete: Cascade)
   projectId         String?
@@ -518,6 +613,9 @@ model PaymentPlan {
   installmentEveryValue Int?
   installmentEveryUnit String?
   firstInstallmentTiming String?
+  firstInstallmentAfterValue Int?
+  firstInstallmentAfterUnit String?
+  distributionMode  String   @default("EQUAL")
   percentageSchedule Json?
   validFrom         DateTime?
   validTo           DateTime?
@@ -529,6 +627,7 @@ model PaymentPlan {
 
   @@index([unitId, durationMonths])
   @@index([projectId, isActive])
+  @@index([phaseId, isActive])
   @@index([sourceImportId])
 }
 
@@ -546,6 +645,8 @@ model Offer {
 
 model Media {
   id          String     @id @default(cuid())
+  phaseId     String?
+  phase       ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: Cascade)
   type        MediaType
   url         String
   altText     String?
@@ -566,6 +667,8 @@ model Media {
 
 model Document {
   id             String                 @id @default(cuid())
+  phaseId        String?
+  phase          ProjectPhase?          @relation(fields: [phaseId], references: [id], onDelete: Cascade)
   type           DocumentType
   name           String
   url            String
@@ -643,6 +746,8 @@ model ImportSheet {
   rowsUpdated           Int         @default(0)
   projectId             String?
   project               Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  phaseId               String?
+  phase                 ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: SetNull)
   developerId           String?
   developer             Developer?  @relation(fields: [developerId], references: [id], onDelete: SetNull)
   locationId            String?
@@ -666,6 +771,7 @@ model ImportSheet {
   @@unique([importId, sheetName, tableId])
   @@index([importId, action])
   @@index([projectId])
+  @@index([phaseId])
 }
 
 model ImportCorrection {

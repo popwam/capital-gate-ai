@@ -24,13 +24,13 @@ import { ApplicationCache } from "./cache/application-cache";
 
 type MessagePayload = {
   type:
-    | "text"
-    | "properties"
-    | "media"
-    | "documents"
-    | "map"
-    | "lead_prompt"
-    | "lead_created";
+  | "text"
+  | "properties"
+  | "media"
+  | "documents"
+  | "map"
+  | "lead_prompt"
+  | "lead_created";
   properties?: unknown[];
   media?: unknown[];
   documents?: unknown[];
@@ -68,7 +68,7 @@ export class ChatService {
     private readonly search: PropertySearchService,
     private readonly maps: MapsService,
     private readonly cache: ApplicationCache,
-  ) {}
+  ) { }
 
   private serialize(value: unknown) {
     return JSON.parse(JSON.stringify(value));
@@ -350,6 +350,29 @@ export class ChatService {
         trace.searchOperation = "GET_CONTEXT_PROJECTS_FROM_UNITS";
         trace.databaseResultCount = units.length;
       }
+    } else if (["INVESTMENT", "RESALE", "RENTAL"].includes(plan.intent) && projectId) {
+      contextKind = plan.intent as AIContextKind;
+      const project = await this.search.getProject(projectId).catch(() => null);
+      verifiedFacts = project ? [this.serialize(project)] : [];
+      approvedKnowledge = project?.knowledgeItems ?? [];
+      if (project) state.presentation = nextPresentation(priorPresentation, { selectedProjectId: project.id, lastReferencedEntity: { type: "PROJECT", id: project.id } });
+      trace.searchOperation = `GET_CONTEXT_PROJECT_${plan.intent}`;
+      trace.databaseResultCount = project ? 1 : 0;
+    } else if (plan.intent === "COMPARISON" && projectId) {
+      contextKind = "PROJECT_DETAILS";
+      const project = await this.search.getProject(projectId).catch(() => null);
+      if (project) {
+        const competitorIds = (project.competitorsFrom ?? []).map((row: any) => row.competitorProject?.id).filter(Boolean).slice(0, 6);
+        const competitors = (await Promise.all(competitorIds.map((id: string) => this.search.getProject(id).catch(() => null)))).filter(Boolean);
+        verifiedFacts = this.serialize([project, ...competitors]);
+        approvedKnowledge = project.knowledgeItems ?? [];
+        state.presentation = nextPresentation(priorPresentation, { selectedProjectId: project.id, lastReferencedEntity: { type: "PROJECT", id: project.id } });
+        trace.searchOperation = "GET_PROJECT_AND_REGISTERED_COMPETITORS";
+        trace.databaseResultCount = 1 + competitors.length;
+      } else {
+        trace.searchOperation = "GET_PROJECT_AND_REGISTERED_COMPETITORS";
+        trace.databaseResultCount = 0;
+      }
     } else if (plan.intent === "DEVELOPER_DETAILS") {
       const asksDeveloperList = /(?:مطورين|المطورين|developers?)/iu.test(content) && /(?:تعرف|عندك|ايه|اي|what|available|موجود|متاح)/iu.test(content);
       if (asksDeveloperList) {
@@ -458,45 +481,65 @@ export class ChatService {
     trace.databaseResultCount ??= properties.length;
 
     if (plan.intent === "DISTANCE_REQUEST" || (state.exactRouteRequested && state.routeOrigin && state.routeDestination)) {
-      const selectedProject = projectId ? await this.search.getProject(projectId) : null;
-      const originText = state.routeOrigin || selectedProject?.name || selectedProject?.location?.name;
+      const selectedProject = projectId ? await this.search.getProject(projectId).catch(() => null) : null;
+      const originText = state.routeOrigin || selectedProject?.nameAr || selectedProject?.nameEn || selectedProject?.name || selectedProject?.location?.name;
       const destinationText = state.routeDestination || this.distanceDestination(content);
       const destinationTerms = /\bAUC\b|الجامعه\s+الامريكيه|الجامعة\s+الأمريكية/iu.test(content) ? [destinationText!, "AUC", "الجامعة الأمريكية"] : destinationText ? [destinationText] : [];
       const [origins, destinations] = await Promise.all([
         selectedProject?.locationId ? Promise.resolve([selectedProject.locationId]) : this.search.resolveLocations(originText ? [originText] : []),
         this.search.resolveLocations(destinationTerms),
       ]);
-      const stored =
-        origins.length && destinations.length
-          ? await this.prisma.locationDistance.findFirst({
-              where: { OR: [
-                { fromLocationId: { in: origins }, toLocationId: { in: destinations }, verifiedAt: { not: null } },
-                { fromLocationId: { in: destinations }, toLocationId: { in: origins }, verifiedAt: { not: null } },
-              ] },
-              include: { from: true, to: true },
-            })
+      const stored = origins.length && destinations.length
+        ? await this.prisma.locationDistance.findFirst({
+          where: {
+            OR: [
+              { fromLocationId: { in: origins }, toLocationId: { in: destinations }, verifiedAt: { not: null } },
+              { fromLocationId: { in: destinations }, toLocationId: { in: origins }, verifiedAt: { not: null } },
+            ]
+          },
+          include: { from: true, to: true },
+        })
+        : null;
+
+      let originPoint: { latitude: number; longitude: number } | null = null;
+      if (selectedProject) {
+        const latitude = Number(selectedProject.latitude ?? selectedProject.location?.latitude);
+        const longitude = Number(selectedProject.longitude ?? selectedProject.location?.longitude);
+        if (Number.isFinite(latitude) && Number.isFinite(longitude)) originPoint = { latitude, longitude };
+      } else if (origins.length) {
+        const location = await this.prisma.location.findFirst({ where: { id: { in: origins }, latitude: { not: null }, longitude: { not: null } }, select: { latitude: true, longitude: true } });
+        const latitude = Number(location?.latitude), longitude = Number(location?.longitude);
+        if (Number.isFinite(latitude) && Number.isFinite(longitude)) originPoint = { latitude, longitude };
+      }
+
+      let route: Record<string, unknown>;
+      if (stored) {
+        route = {
+          source: stored.distanceType === "GOOGLE_ROUTES" ? "GOOGLE_ROUTES" : "ADMIN_VERIFIED",
+          distanceKm: Number(stored.distanceKm),
+          estimatedMinutes: stored.estimatedMinutes,
+          from: stored.from.name,
+          to: stored.to.name,
+          notes: stored.notes,
+        };
+      } else if (originPoint && destinationText && process.env.GOOGLE_MAPS_SERVER_API_KEY) {
+        const destinationPlace = await this.maps.firstPlace(destinationText).catch(() => null);
+        const liveRoute = destinationPlace
+          ? await this.maps.routePoints(originPoint, { latitude: destinationPlace.latitude, longitude: destinationPlace.longitude }).catch(() => null)
           : null;
-      // Abuse guard: at least one endpoint must resolve to an entity already registered in our system
-      // (selected project/location or a normalized Location record). This keeps Routes from becoming a public general-directions proxy.
-      const registeredEndpoint = Boolean(selectedProject || origins.length || destinations.length);
-      const route = stored
-        ? {
-            source: stored.distanceType === "GOOGLE_ROUTES" ? "GOOGLE_ROUTES" : "ADMIN_VERIFIED",
-            distanceKm: stored.distanceKm,
-            estimatedMinutes: stored.estimatedMinutes,
-            from: stored.from.name,
-            to: stored.to.name,
-            notes: stored.notes,
-          }
-        : registeredEndpoint && process.env.GOOGLE_MAPS_SERVER_API_KEY && originText && destinationText
+        route = liveRoute && destinationPlace
           ? {
-              source: "GOOGLE_ROUTES",
-              ...((await this.maps.route(
-                selectedProject?.latitude != null && selectedProject?.longitude != null ? `${selectedProject.latitude},${selectedProject.longitude}` : originText,
-                destinationText,
-              )) as object),
-            }
-          : { source: "UNAVAILABLE", reason: registeredEndpoint ? "ROUTE_DATA_UNAVAILABLE" : "NO_REGISTERED_ENDPOINT" };
+            source: "GOOGLE_ROUTES",
+            ...liveRoute,
+            from: originText ?? "المشروع",
+            to: destinationPlace.name,
+            destinationName: destinationPlace.name,
+            destinationAddress: destinationPlace.formattedAddress,
+          }
+          : { source: "UNAVAILABLE", reason: "ROUTE_DATA_UNAVAILABLE" };
+      } else {
+        route = { source: "UNAVAILABLE", reason: originPoint ? "DESTINATION_UNRESOLVED" : "PROJECT_COORDINATES_MISSING" };
+      }
       contextKind = "DISTANCE";
       verifiedFacts = [this.serialize(route)];
       payload.uiActions.push({ type: "DISTANCE_RESULT", payload: { route: this.serialize(route), origin: originText ?? null, destination: destinationText ?? null } });
@@ -534,17 +577,18 @@ export class ChatService {
           approvedKnowledge,
           existingState?.summary,
           contextKind,
+          plan.deterministicResponse,
           trace,
           startedAt,
         );
       const interestedUnits = [...new Set([...priorUnitIds, ...unitIds])];
       const interestedProjects = interestedUnits.length
         ? (
-            await this.prisma.unit.findMany({
-              where: { id: { in: interestedUnits } },
-              select: { projectId: true },
-            })
-          ).map((item) => item.projectId)
+          await this.prisma.unit.findMany({
+            where: { id: { in: interestedUnits } },
+            select: { projectId: true },
+          })
+        ).map((item) => item.projectId)
         : [];
       const conversationSummary = {
         customerGoal: state.purpose,
@@ -570,31 +614,31 @@ export class ChatService {
       const lead =
         persistence === "update" && existingLead
           ? await this.prisma.lead.update({
-              where: { id: existingLead.id },
-              data: {
-                name: state.contactName || existingLead.name,
-                phone: state.contactPhone,
-                intentScore: state.purchaseIntent ?? existingLead.intentScore,
-                payload: leadPayload,
-                events: {
-                  create: { type: "LEAD_UPDATED", payload: { channel: "WEB" } },
-                },
+            where: { id: existingLead.id },
+            data: {
+              name: state.contactName || existingLead.name,
+              phone: state.contactPhone,
+              intentScore: state.purchaseIntent ?? existingLead.intentScore,
+              payload: leadPayload,
+              events: {
+                create: { type: "LEAD_UPDATED", payload: { channel: "WEB" } },
               },
-            })
+            },
+          })
           : await this.prisma.lead.create({
-              data: {
-                conversationId,
-                name: state.contactName || "Anonymous customer",
-                phone: state.contactPhone,
-                intent: "PURCHASE",
-                intentScore: state.purchaseIntent ?? 80,
-                payload: leadPayload,
-                source: "WEB_AI",
-                events: {
-                  create: { type: "LEAD_CREATED", payload: { channel: "WEB" } },
-                },
+            data: {
+              conversationId,
+              name: state.contactName || "Anonymous customer",
+              phone: state.contactPhone,
+              intent: "PURCHASE",
+              intentScore: state.purchaseIntent ?? 80,
+              payload: leadPayload,
+              source: "WEB_AI",
+              events: {
+                create: { type: "LEAD_CREATED", payload: { channel: "WEB" } },
               },
-            });
+            },
+          });
       await this.prisma.conversationState.upsert({
         where: { conversationId },
         create: {
@@ -631,6 +675,7 @@ export class ChatService {
       approvedKnowledge,
       existingState?.summary,
       contextKind,
+      plan.deterministicResponse,
       trace,
       startedAt,
     );
@@ -647,6 +692,7 @@ export class ChatService {
     approvedKnowledge: unknown[],
     conversationSummary: unknown,
     contextKind: AIContextKind,
+    deterministicResponse: string | undefined,
     trace: Record<string, unknown>,
     startedAt: number,
   ): Promise<Prepared> {
@@ -688,9 +734,9 @@ export class ChatService {
       conversationId,
     });
     const contextMetrics = answerContextMetrics(answerInput);
-    const directAnswer = this.directToolAnswer(state, payload, verifiedFacts);
+    const directAnswer = deterministicResponse ?? this.directToolAnswer(state, payload, verifiedFacts);
     trace.requiresGroq = !directAnswer;
-    this.logger.log(`AIContextTrace ${JSON.stringify({requestId:answerInput.requestId,conversationId,intent:contextKind,candidatesBeforeRanking:properties.length||verifiedFacts.length,candidatesSent:contextMetrics.resultCount,historyMessagesSent:contextMetrics.recentHistoryCount,contextBytes:contextMetrics.contextBytes,estimatedTokens:contextMetrics.estimatedInputTokens})}`);
+    this.logger.log(`AIContextTrace ${JSON.stringify({ requestId: answerInput.requestId, conversationId, intent: contextKind, candidatesBeforeRanking: properties.length || verifiedFacts.length, candidatesSent: contextMetrics.resultCount, historyMessagesSent: contextMetrics.recentHistoryCount, contextBytes: contextMetrics.contextBytes, estimatedTokens: contextMetrics.estimatedInputTokens })}`);
     return {
       conversationId,
       answerInput,
@@ -705,7 +751,8 @@ export class ChatService {
 
   async send(conversationId: string, rawToken: string, content: string, requestId = "unknown") {
     const prepared = await this.prepare(conversationId, rawToken, content, requestId);
-    const answer = prepared.directAnswer ?? await this.ai.composeAnswer(prepared.answerInput);
+    const rawAnswer = prepared.directAnswer ?? await this.ai.composeAnswer(prepared.answerInput);
+    const answer = this.sanitizeCustomerAnswer(rawAnswer, prepared.state.language);
     const message = await this.persistAssistant(prepared, answer);
     this.logTrace(prepared, { finalResponseProvider: "HYBRID", completed: true });
     return { message, state: prepared.state, ...prepared.payload };
@@ -715,9 +762,11 @@ export class ChatService {
     const prepared = await this.prepare(conversationId, rawToken, content, requestId);
     let answer = "";
     try {
-      if (prepared.directAnswer) { answer = prepared.directAnswer; yield { event: "token", data: { text: answer } }; }
-      else for await (const chunk of this.ai.streamAnswer(prepared.answerInput)) { answer += chunk; yield { event: "token", data: { text: chunk } }; }
+      if (prepared.directAnswer) answer = prepared.directAnswer;
+      else for await (const chunk of this.ai.streamAnswer(prepared.answerInput)) answer += chunk;
       if (!answer.trim()) throw new Error("AI_EMPTY_CUSTOMER_RESPONSE");
+      answer = this.sanitizeCustomerAnswer(answer, prepared.state.language);
+      for (let offset = 0; offset < answer.length; offset += 180) yield { event: "token", data: { text: answer.slice(offset, offset + 180) } };
       const message = await this.persistAssistant(prepared, answer);
       this.logTrace(prepared, { finalResponseProvider: "HYBRID_STREAM", completed: true });
       yield { event: "complete", data: { message, state: prepared.state, ...prepared.payload } };
@@ -725,6 +774,18 @@ export class ChatService {
       this.logTrace(prepared, { finalResponseProvider: "HYBRID_STREAM", completed: false, errorCategory: this.errorCategory(error) });
       throw error;
     }
+  }
+
+  private sanitizeCustomerAnswer(answer: string, language?: string) {
+    const fallback = language?.startsWith("ar") ? "المعلومة الداخلية دي غير مخصصة للعرض، لكن أقدر أوضح لك البيانات المتاحة باسم المشروع أو الوحدة." : "That internal identifier is not meant for display; I can provide the available information using the project or unit name.";
+    // Customer links are delivered by verified UI actions. Free-form model text never gets
+    // to construct a route, brochure, media, or external URL on its own.
+    let safe = answer.replace(/\[([^\]]+)\]\(https?:\/\/[^)]+\)/giu, "$1");
+    safe = safe.replace(/https?:\/\/[^\s)>]+/giu, "");
+    safe = safe.replace(/\bc[a-z0-9]{20,}\b/giu, language?.startsWith("ar") ? "المشروع" : "the project");
+    safe = safe.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/giu, language?.startsWith("ar") ? "العنصر" : "the item");
+    safe = safe.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    return safe || fallback;
   }
 
   private safeTraceState(state: StructuredIntent) {

@@ -241,6 +241,7 @@ export class ImporterService {
     if (!sheet.projectId) required("projectId", "اختر المشروع الخاص بهذا الجدول.", "PROJECT_SELECT", { allowCreate: true });
     if (!sheet.developerId) required("developerId", "اختر المطور الخاص بهذا الجدول.", "DEVELOPER_SELECT", { allowCreate: true });
     if (!sheet.locationId) required("locationId", "اختر موقع المشروع الخاص بهذا الجدول.", "LOCATION_SELECT", { allowCreate: true });
+    if (!sheet.phaseId) required("phaseId", "اختر المرحلة التي تنتمي إليها وحدات هذا الجدول.", "PHASE_SELECT", { allowCreate: true });
     if (!sheet.defaultCurrency && !Object.values(mappings).includes("currency")) required("currency", "حدد عملة أسعار هذا الجدول.", "CURRENCY_SELECT", SUPPORTED_CURRENCIES);
     if (!Object.values(mappings).includes("externalUnitId")) required("mapping:externalUnitId", "اختر عمود كود الوحدة.", "CANONICAL_FIELD_SELECT", { sourceHeaders: columns.map((column) => column.key), detectedColumns: columns });
     for (const column of columns) {
@@ -314,6 +315,7 @@ export class ImporterService {
       projectId: string | null;
       developerId: string | null;
       locationId: string | null;
+      phaseId: string | null;
       defaultCurrency: string | null;
       mappings: unknown;
       mappingVersion: number;
@@ -364,6 +366,7 @@ export class ImporterService {
       if (!sheet.projectId) missingContext.push(`${sheet.sheetName}:projectId`);
       if (!sheet.developerId) missingContext.push(`${sheet.sheetName}:developerId`);
       if (!sheet.locationId) missingContext.push(`${sheet.sheetName}:locationId`);
+      if (!sheet.phaseId) missingContext.push(`${sheet.sheetName}:phaseId`);
       if (!sheet.defaultCurrency && !values.includes("currency")) missingContext.push(`${sheet.sheetName}:currency`);
     }
     if (item.sheets?.length && selectedSheets.length === 0) missingContext.push("workbook:selectedSheet");
@@ -382,6 +385,7 @@ export class ImporterService {
         sheet.projectId &&
         sheet.developerId &&
         sheet.locationId &&
+        sheet.phaseId &&
         (sheet.defaultCurrency || Object.values(sheetMappings).includes("currency")) &&
         Object.values(sheetMappings).includes("externalUnitId"),
       );
@@ -925,7 +929,7 @@ export class ImporterService {
         },
         sheets: {
           orderBy: [{ sheetName: "asc" }, { startRow: "asc" }],
-          include: { project: true, developer: true, location: true, corrections: { orderBy: { createdAt: "desc" }, take: 5 } },
+          include: { project: true, phase: true, developer: true, location: true, corrections: { orderBy: { createdAt: "desc" }, take: 5 } },
         },
         corrections: { orderBy: { createdAt: "desc" }, take: 20 },
       },
@@ -1057,6 +1061,17 @@ export class ImporterService {
       data.projectId = project.id;
       data.developerId = project.developerId;
       data.locationId = project.locationId;
+      if (sheet.projectId !== project.id) data.phaseId = null;
+    }
+    if (body.phaseId !== undefined) {
+      if (!body.phaseId) data.phaseId = null;
+      else {
+        const projectId = String(body.projectId ?? sheet.projectId ?? "");
+        if (!projectId) throw new BadRequestException("اختر المشروع أولاً ثم المرحلة.");
+        const phase = await this.prisma.projectPhase.findFirst({ where: { id: String(body.phaseId), projectId }, select: { id: true } });
+        if (!phase) throw new BadRequestException("اختر مرحلة تابعة للمشروع المحدد.");
+        data.phaseId = phase.id;
+      }
     }
     if (body.developerId != null) data.developerId = String(body.developerId);
     if (body.locationId != null) data.locationId = String(body.locationId);
@@ -1436,10 +1451,19 @@ export class ImporterService {
     };
   }
 
+  private resolveStructuredPhase(values: Record<string, unknown>, phases: Array<{ id: string; code: string | null; name: string; nameAr: string | null; nameEn: string | null }>, fallbackPhaseId?: string | null) {
+    const raw = String(values.phase ?? "").trim();
+    if (!raw) return { phaseId: fallbackPhaseId ?? undefined, unmatched: false };
+    const needle = this.normalize(raw);
+    const match = phases.find((phase) => [phase.code, phase.name, phase.nameAr, phase.nameEn].filter(Boolean).some((candidate) => this.normalize(String(candidate)) === needle));
+    return { phaseId: match?.id, unmatched: !match };
+  }
+
   private valuesForSheet(row: Record<string, unknown>, sheet: any) {
     const values: Record<string, unknown> = {};
     if (sheet.defaultCurrency) values.currency = sheet.defaultCurrency;
     if (sheet.defaultUnitType) values.unitType = sheet.defaultUnitType;
+    if (sheet.phaseId) values.phaseId = sheet.phaseId;
     values.isResale = Boolean(sheet.defaultIsResale);
     const metadata: Record<string, unknown> = {};
     for (const [source, target] of Object.entries((sheet.mappings ?? {}) as Record<string, string>)) {
@@ -1473,8 +1497,14 @@ export class ImporterService {
     const seen = new Set<string>();
     for (const sheet of selected) {
       const rows = recordsForTable(workbook, this.persistedTable(sheet));
-      const normalized = rows.map((row) => this.valuesForSheet(row, sheet));
-      const validRows = normalized.filter(({ values }) => this.sheetValueErrors(values).length === 0);
+      const phases = await this.prisma.projectPhase.findMany({ where: { projectId: sheet.projectId! }, select: { id: true, code: true, name: true, nameAr: true, nameEn: true } });
+      const normalized = rows.map((row) => {
+        const entry = this.valuesForSheet(row, sheet);
+        const resolved = this.resolveStructuredPhase(entry.values, phases, sheet.phaseId);
+        if (resolved.phaseId) entry.values.phaseId = resolved.phaseId;
+        return { ...entry, phaseUnmatched: resolved.unmatched };
+      });
+      const validRows = normalized.filter(({ values, phaseUnmatched }) => !phaseUnmatched && this.sheetValueErrors(values).length === 0);
       const invalidRows = normalized.length - validRows.length;
       let duplicates = 0;
       for (const { values } of validRows) {
@@ -1762,6 +1792,7 @@ export class ImporterService {
         : String(values[field]);
     const deliveryDate = parseImportDate(values.deliveryDate);
     return {
+      phaseId: text("phaseId"),
       phase: text("phase"),
       cluster: text("cluster"),
       building: text("building"),
@@ -1851,10 +1882,13 @@ export class ImporterService {
         for (const sheet of selected) {
           let sheetCreated = 0, sheetUpdated = 0;
           const rows = recordsForTable(workbook, this.persistedTable(sheet));
+          const phases = await tx.projectPhase.findMany({ where: { projectId: sheet.projectId! }, select: { id: true, code: true, name: true, nameAr: true, nameEn: true } });
           for (const [index, row] of rows.entries()) {
             const { values, metadata } = this.valuesForSheet(row, sheet);
+            const resolvedPhase = this.resolveStructuredPhase(values, phases, sheet.phaseId);
+            if (resolvedPhase.phaseId) values.phaseId = resolvedPhase.phaseId;
             const externalUnitId = String(values.externalUnitId ?? "").trim();
-            if (!externalUnitId) { rejected++; continue; }
+            if (!externalUnitId || resolvedPhase.unmatched || !values.phaseId) { rejected++; continue; }
             const existing = await tx.unit.findUnique({
               where: { developerId_projectId_externalUnitId: { developerId: sheet.developerId!, projectId: sheet.projectId!, externalUnitId } },
               include: { paymentPlans: true, offers: true },

@@ -6,6 +6,45 @@ import { ApplicationCache } from "./cache/application-cache";
 import { closestGate, spatialScore } from "./spatial-ranking";
 import { chooseBestPaymentPlan } from "./payment-calculator";
 
+const projectPublicInclude = {
+  developer: {
+    include: {
+      portfolioProjects: {
+        where: { verifiedAt: { not: null } },
+        include: { location: true },
+      },
+    },
+  },
+  location: { include: { parent: true } },
+  phases: {
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+    include: {
+      marketProfiles: true,
+      paymentPlans: { where: { isActive: true } },
+    },
+  },
+  gates: {
+    where: { isActive: true },
+    include: { phase: true },
+    orderBy: [{ isMain: "desc" }, { gateNumber: "asc" }],
+  },
+  zones: { include: { phase: true, buildings: { include: { phase: true } } } },
+  amenities: { where: { verified: true }, include: { amenity: true } },
+  investmentProfile: true,
+  marketProfiles: true,
+  landmarks: {
+    where: { verifiedAt: { not: null } },
+    include: { location: true },
+  },
+  competitorsFrom: {
+    where: { verified: true },
+    include: { competitorProject: { include: { developer: true, location: true } } },
+  },
+  knowledgeItems: { where: { approvalStatus: ApprovalStatus.APPROVED } },
+} satisfies Prisma.ProjectInclude;
+
+type PublicProject = Prisma.ProjectGetPayload<{ include: typeof projectPublicInclude }>;
+
 @Injectable()
 export class PropertySearchService {
   constructor(private readonly prisma: PrismaService, @Optional() private readonly cache?: ApplicationCache) { }
@@ -25,18 +64,27 @@ export class PropertySearchService {
     return [...ids];
   }
 
-  private async attachEffectivePaymentPlans<T extends { id: string; projectId: string; price?: unknown; currency?: string | null; paymentPlans?: any[] }>(units: T[], intent?: StructuredIntent): Promise<Array<T & { paymentPlans: any[]; bestPaymentPlan: any | null }>> {
+  private async attachEffectivePaymentPlans<T extends { id: string; projectId: string; phaseId?: string | null; price?: unknown; currency?: string | null; paymentPlans?: any[] }>(units: T[], intent?: StructuredIntent): Promise<Array<T & { paymentPlans: any[]; bestPaymentPlan: any | null }>> {
     if (!units.length) return [];
     const projectIds = [...new Set(units.map(unit => unit.projectId))];
-    const projectPlans = await this.prisma.paymentPlan.findMany({
-      where: { projectId: { in: projectIds }, unitId: null, isActive: true, OR: [{ validFrom: null }, { validFrom: { lte: new Date() } }], AND: [{ OR: [{ validTo: null }, { validTo: { gte: new Date() } }] }] },
-      orderBy: [{ durationMonths: "desc" }, { id: "asc" }],
-    });
+    const phaseIds = [...new Set(units.map(unit => unit.phaseId).filter((id): id is string => Boolean(id)))];
+    const validity = { OR: [{ validFrom: null }, { validFrom: { lte: new Date() } }], AND: [{ OR: [{ validTo: null }, { validTo: { gte: new Date() } }] }] };
+    const [projectPlans, phasePlans] = await Promise.all([
+      this.prisma.paymentPlan.findMany({
+        where: { projectId: { in: projectIds }, phaseId: null, unitId: null, isActive: true, ...validity },
+        orderBy: [{ durationMonths: "desc" }, { id: "asc" }],
+      }),
+      phaseIds.length ? this.prisma.paymentPlan.findMany({
+        where: { phaseId: { in: phaseIds }, unitId: null, isActive: true, ...validity },
+        orderBy: [{ durationMonths: "desc" }, { id: "asc" }],
+      }) : Promise.resolve([]),
+    ]);
     return units.map(unit => {
       const direct = Array.isArray(unit.paymentPlans) ? unit.paymentPlans : [];
-      const inherited = projectPlans.filter(plan => plan.projectId === unit.projectId);
+      const inheritedProject = projectPlans.filter(plan => plan.projectId === unit.projectId);
+      const inheritedPhase = unit.phaseId ? phasePlans.filter(plan => plan.phaseId === unit.phaseId) : [];
       const keyed = new Map<string, any>();
-      for (const plan of [...inherited, ...direct]) {
+      for (const plan of [...inheritedProject, ...inheritedPhase, ...direct]) {
         const key = `${plan.durationMonths ?? "x"}:${plan.name ?? ""}:${plan.installmentFrequency ?? ""}`;
         keyed.set(key, plan); // unit-level plan is later and overrides equivalent project plan
       }
@@ -88,7 +136,12 @@ export class PropertySearchService {
     if (intent.deliveryMaxYears != null) { const latest = new Date(); latest.setFullYear(latest.getFullYear() + Math.ceil(intent.deliveryMaxYears)); where.deliveryDate = { lte: latest }; }
     if (intent.propertyTypes?.length) where.unitType = { in: intent.propertyTypes, mode: "insensitive" };
     if (intent.preferredFloor != null) where.floor = { equals: String(intent.preferredFloor), mode: "insensitive" };
-    if (intent.preferredPhase) where.phase = { contains: intent.preferredPhase, mode: "insensitive" };
+    if (intent.preferredPhase) where.AND = [...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []), { OR: [
+      { phase: { contains: intent.preferredPhase, mode: "insensitive" } },
+      { phaseRef: { name: { contains: intent.preferredPhase, mode: "insensitive" } } },
+      { phaseRef: { nameAr: { contains: intent.preferredPhase, mode: "insensitive" } } },
+      { phaseRef: { nameEn: { contains: intent.preferredPhase, mode: "insensitive" } } },
+    ] }];
     if (intent.preferredProjectZone) where.OR = [
       { cluster: { contains: intent.preferredProjectZone, mode: "insensitive" } },
       { projectZone: { name: { contains: intent.preferredProjectZone, mode: "insensitive" } } },
@@ -217,6 +270,7 @@ export class PropertySearchService {
           investmentProfile: true,
         },
       },
+      phaseRef: true,
       projectZone: true,
       projectBuilding: true,
       proximities: {
@@ -259,10 +313,21 @@ export class PropertySearchService {
     }).sort((a, b) => b.matchScore - a.matchScore || Number(a.price ?? Number.MAX_SAFE_INTEGER) - Number(b.price ?? Number.MAX_SAFE_INTEGER)).slice(0, limit);
   }
 
-  async getProperty(id: string) { const unit = await this.prisma.unit.findUnique({ where: { id }, include: { developer: true, project: { include: { location: true, gates: { where: { isActive: true } } } }, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } }, paymentPlans: { where: { isActive: true } }, offers: true, media: true, priceHistory: { orderBy: { effectiveAt: "desc" } } } }); if (!unit) throw new NotFoundException("Property not found"); return (await this.attachEffectivePaymentPlans([unit]))[0]; }
-  async findUnitByExternalId(externalUnitId: string) { const unit = await this.prisma.unit.findFirst({ where: { externalUnitId: { equals: externalUnitId, mode: "insensitive" }, status: UnitStatus.AVAILABLE, archivedAt: null }, include: { developer: { select: { id: true, name: true, nameAr: true, nameEn: true } }, project: { include: { location: true, gates: { where: { isActive: true } } } }, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } }, paymentPlans: { where: { isActive: true } }, offers: { where: { isActive: true } }, media: { orderBy: { sortOrder: "asc" } } } }); return unit ? (await this.attachEffectivePaymentPlans([unit]))[0] : null; }
+  async getProperty(id: string) { const unit = await this.prisma.unit.findUnique({ where: { id }, include: { developer: true, project: { include: { location: true, gates: { where: { isActive: true } } } }, phaseRef: true, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } }, paymentPlans: { where: { isActive: true } }, offers: true, media: true, priceHistory: { orderBy: { effectiveAt: "desc" } } } }); if (!unit) throw new NotFoundException("Property not found"); return (await this.attachEffectivePaymentPlans([unit]))[0]; }
+  async findUnitByExternalId(externalUnitId: string) { const unit = await this.prisma.unit.findFirst({ where: { externalUnitId: { equals: externalUnitId, mode: "insensitive" }, status: UnitStatus.AVAILABLE, archivedAt: null }, include: { developer: { select: { id: true, name: true, nameAr: true, nameEn: true } }, project: { include: { location: true, gates: { where: { isActive: true } } } }, phaseRef: true, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } }, paymentPlans: { where: { isActive: true } }, offers: { where: { isActive: true } }, media: { orderBy: { sortOrder: "asc" } } } }); return unit ? (await this.attachEffectivePaymentPlans([unit]))[0] : null; }
   async findProjectByName(name: string) { return this.prisma.project.findFirst({ where: { OR: [{ name: { contains: name, mode: "insensitive" } }, { canonicalName: { contains: name, mode: "insensitive" } }, { nameAr: { contains: name, mode: "insensitive" } }, { nameEn: { contains: name, mode: "insensitive" } }] }, select: { id: true } }); }
-  async getProject(id: string) { const loader = async () => { const project = await this.prisma.project.findUnique({ where: { id }, include: { developer: { include: { portfolioProjects: { where: { verifiedAt: { not: null } }, include: { location: true } } } }, location: { include: { parent: true } }, gates: { where: { isActive: true }, orderBy: [{ isMain: "desc" }, { gateNumber: "asc" }] }, zones: { include: { buildings: true } }, amenities: { where: { verified: true }, include: { amenity: true } }, investmentProfile: true, landmarks: { where: { verifiedAt: { not: null } }, include: { location: true } }, competitorsFrom: { where: { verified: true }, include: { competitorProject: { include: { developer: true, location: true } } } }, knowledgeItems: { where: { approvalStatus: ApprovalStatus.APPROVED } } } }); if (!project) throw new NotFoundException("Project not found"); return project; }; return this.cache?.getOrLoad("project-public", id, 15 * 60_000, loader) ?? loader(); }
+  async getProject(id: string): Promise<PublicProject> {
+    const loader = async (): Promise<PublicProject> => {
+      const project = await this.prisma.project.findUnique({
+        where: { id },
+        include: projectPublicInclude,
+      });
+      if (!project) throw new NotFoundException("Project not found");
+      return project;
+    };
+    if (this.cache) return this.cache.getOrLoad<PublicProject>("project-public", id, 15 * 60_000, loader);
+    return loader();
+  }
   async getDeveloper(id: string) { const loader = async () => { const developer = await this.prisma.developer.findUnique({ where: { id }, include: { portfolioProjects: { where: { verifiedAt: { not: null } }, include: { location: true } }, projects: { where: { adminStatus: "READY_FOR_CUSTOMER" }, select: { id: true, name: true, nameAr: true, nameEn: true, projectStatus: true, deliveryStatus: true } } } }); if (!developer) throw new NotFoundException("Developer not found"); return developer; }; return this.cache?.getOrLoad("developer-public", id, 30 * 60_000, loader) ?? loader(); }
 
   async getUnitsByIds(ids: string[]) {
@@ -272,7 +337,7 @@ export class PropertySearchService {
       include: {
         developer: { select: { id: true, name: true, nameAr: true, nameEn: true, brandName: true } },
         project: { include: { location: true, gates: { where: { isActive: true } } } },
-        projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } },
+        phaseRef: true, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } },
         paymentPlans: { where: { isActive: true } },
         offers: { where: { isActive: true } },
         media: { take: 1, orderBy: { sortOrder: "asc" } },
@@ -281,9 +346,9 @@ export class PropertySearchService {
     return this.attachEffectivePaymentPlans(units as any[]);
   }
 
-  async getPaymentPlans(unitId: string) { const unit = await this.prisma.unit.findUnique({ where: { id: unitId }, select: { id: true, projectId: true, price: true, currency: true, paymentPlans: { where: { isActive: true } } } }); if (!unit) throw new NotFoundException("Property not found"); return (await this.attachEffectivePaymentPlans([unit]))[0].paymentPlans; }
+  async getPaymentPlans(unitId: string) { const unit = await this.prisma.unit.findUnique({ where: { id: unitId }, select: { id: true, projectId: true, phaseId: true, price: true, currency: true, paymentPlans: { where: { isActive: true } } } }); if (!unit) throw new NotFoundException("Property not found"); return (await this.attachEffectivePaymentPlans([unit]))[0].paymentPlans; }
   async compareProperties(ids: string[]) { return this.prisma.unit.findMany({ where: { id: { in: ids }, status: UnitStatus.AVAILABLE }, include: { project: true, paymentPlans: { where: { isActive: true } }, offers: { where: { isActive: true } } } }); }
-  async getProjectMedia(projectId: string) { return this.cache?.getOrLoad("project-media", projectId, 15 * 60_000, () => this.prisma.media.findMany({ where: { projectId }, orderBy: { sortOrder: "asc" } })) ?? this.prisma.media.findMany({ where: { projectId }, orderBy: { sortOrder: "asc" } }); }
-  async getProjectDocuments(projectId: string, type?: DocumentType) { const key = `${projectId}:${type ?? "ALL"}`; return this.cache?.getOrLoad("project-documents", key, 15 * 60_000, () => this.prisma.document.findMany({ where: { projectId, ...(type ? { type } : {}) }, orderBy: { createdAt: "desc" } })) ?? this.prisma.document.findMany({ where: { projectId, ...(type ? { type } : {}) }, orderBy: { createdAt: "desc" } }); }
+  async getProjectMedia(projectId: string) { return this.cache?.getOrLoad("project-media", projectId, 15 * 60_000, () => this.prisma.media.findMany({ where: { projectId, phaseId: null, type: "IMAGE" }, orderBy: { sortOrder: "asc" } })) ?? this.prisma.media.findMany({ where: { projectId, phaseId: null, type: "IMAGE" }, orderBy: { sortOrder: "asc" } }); }
+  async getProjectDocuments(projectId: string, type?: DocumentType) { const key = `${projectId}:${type ?? "ALL"}`; return this.cache?.getOrLoad("project-documents", key, 15 * 60_000, () => this.prisma.document.findMany({ where: { projectId, phaseId: null, ...(type ? { type } : {}) }, orderBy: { createdAt: "desc" } })) ?? this.prisma.document.findMany({ where: { projectId, phaseId: null, ...(type ? { type } : {}) }, orderBy: { createdAt: "desc" } }); }
   async findNearbyLocations(locationIds: string[], maxMinutes?: number) { return this.prisma.locationDistance.findMany({ where: { fromLocationId: { in: locationIds }, ...(maxMinutes ? { estimatedMinutes: { lte: maxMinutes } } : {}) }, include: { from: true, to: true }, orderBy: { estimatedMinutes: "asc" } }); }
 }
