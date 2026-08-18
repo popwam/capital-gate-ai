@@ -52,6 +52,21 @@ export class ImportsController {
   @Post(":id/corrections/:correctionId/preview") previewCorrection(@Param("id") id:string,@Param("correctionId") correctionId:string){return this.imports.previewCorrection(id,correctionId);}
   @Post(":id/corrections/:correctionId/confirm") async confirmCorrection(@Param("id") id:string,@Param("correctionId") correctionId:string,@Body() body:CorrectionDecisionDto,@Req() req:any){const result=await this.imports.confirmCorrection(id,correctionId,body.decisions);await this.audit.record(req.admin.id,"IMPORT_CORRECTION_CONFIRMED","DataImport",id,{correctionId,...result});return result;}
   @Post(":id/preview") preview(@Param("id") id: string) { return this.imports.preview(id); }
-  @Post(":id/confirm") async confirm(@Param("id") id: string, @Req() req: any) { const result = await this.imports.confirm(id); await this.audit.record(req.admin.id, "IMPORT_CONFIRMED", "DataImport", id, result.result); return result; }
+  @Post(":id/confirm")
+  async confirm(@Param("id") id: string, @Req() req: any) {
+    try {
+      const result = await this.imports.confirm(id);
+      try {
+        await this.audit.record(req.admin.id, "IMPORT_CONFIRMED", "DataImport", id, result.result);
+      } catch (auditError) {
+        this.logger.error(`ImportAuditFailure requestId=${req.requestId ?? "unknown"} adminUserId=${req.admin.id} importId=${id} action=IMPORT_CONFIRMED error=${auditError instanceof Error ? auditError.message : String(auditError)}`);
+      }
+      return result;
+    } catch (error) {
+      const details = importErrorDetails(error);
+      this.logger.error(`ImportConfirmFailure requestId=${req.requestId ?? "unknown"} adminUserId=${req.admin.id} importId=${id} code=${details.code ?? (error as any)?.code ?? "UNKNOWN"} stage=${details.stage ?? "unknown"} error=${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  }
   @Delete(":id") async remove(@Param("id") id: string, @Body() body: RemoveBatchDto, @Req() req: any) { const result = await this.imports.removeBatch(id, body.mode); await this.audit.record(req.admin.id, "IMPORT_BATCH_REMOVED", "DataImport", id, { mode: body.mode, affected: result.affected, conflicts: result.conflicts, sourceObjectDeleted: result.sourceObjectDeleted, sourceObjectRetained: result.sourceObjectRetained, storageCleanupFailed: result.storageCleanupFailed }); return result; }
 }

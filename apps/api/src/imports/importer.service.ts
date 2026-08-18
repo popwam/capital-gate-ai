@@ -2059,6 +2059,51 @@ export class ImporterService {
       .map(([field]) => field);
   }
 
+  private confirmDatabaseException(importId: string, error: unknown) {
+    const code = String((error as any)?.code ?? "");
+    const message = String((error as any)?.message ?? "");
+    const meta = (error as any)?.meta;
+    this.logger.error(`ImportTransactionFailure importId=${importId} prismaCode=${code || "UNKNOWN"} message=${message} meta=${meta ? JSON.stringify(meta) : "none"}`);
+
+    if (code === "P2021" || /ProjectPhaseAlias|does not exist|table .* not exist/i.test(message)) {
+      return new ImportHttpException(
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "IMPORT_SCHEMA_OUT_OF_DATE",
+        "قاعدة البيانات لم تُحدَّث بآخر migrations الخاصة بالاستيراد. شغّل npm run db:migrate:deploy على خدمة API ثم أعد المحاولة.",
+        "database-schema",
+        importId,
+      );
+    }
+
+    if (code === "P2002") {
+      return new ImportHttpException(
+        HttpStatus.CONFLICT,
+        "IMPORT_DUPLICATE_UNIT",
+        "يوجد كود وحدة مكرر يتعارض مع سجل موجود. راجع هوية الوحدة أو بيانات الملف ثم أعد إنشاء المعاينة.",
+        "database-constraint",
+        importId,
+      );
+    }
+
+    if (code === "P2003" || code === "P2004" || /must belong|must own|same project|foreign key|constraint/i.test(message)) {
+      return new ImportHttpException(
+        HttpStatus.CONFLICT,
+        "IMPORT_RELATION_CONFLICT",
+        "تعذر الحفظ لأن علاقة المطور أو المشروع أو المرحلة غير متطابقة. أعد اختيار سياق الجدول والمرحلة ثم أنشئ معاينة جديدة.",
+        "database-constraint",
+        importId,
+      );
+    }
+
+    return new ImportHttpException(
+      HttpStatus.INTERNAL_SERVER_ERROR,
+      "IMPORT_CONFIRM_FAILED",
+      "فشل اعتماد الاستيراد داخل المعاملة. لم يتم حفظ بيانات جزئية. راجع سجل API باستخدام Request ID ثم أعد المحاولة.",
+      "database-transaction",
+      importId,
+    );
+  }
+
   private async confirmSheets(item: any) {
     const selected = item.sheets.filter((sheet: any) => sheet.action === "IMPORT");
     const stale = selected.some((sheet: any) => sheet.previewMappingVersion !== sheet.mappingVersion);
@@ -2130,8 +2175,13 @@ export class ImporterService {
       this.cache?.invalidateCustomerData();
       return { import: await this.get(item.id), result };
     } catch (error) {
-      await this.prisma.dataImport.update({ where: { id: item.id }, data: { status: ImportStatus.READY } });
-      throw error;
+      try {
+        await this.prisma.dataImport.update({ where: { id: item.id }, data: { status: ImportStatus.READY } });
+      } catch (statusError) {
+        this.logger.error(`ImportStatusRecoveryFailure importId=${item.id} error=${statusError instanceof Error ? statusError.message : String(statusError)}`);
+      }
+      if (error instanceof ImportHttpException) throw error;
+      throw this.confirmDatabaseException(item.id, error);
     }
   }
 

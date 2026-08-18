@@ -40,6 +40,10 @@ export function adminErrorMessage(error: unknown) {
     IMPORT_STORAGE_NETWORK_FAILED: "Storage is temporarily unavailable. Retry shortly.",
     IMPORT_STORAGE_FAILED: "Storage upload failed. Retry shortly.",
     IMPORT_DATABASE_FAILED: "The import could not be recorded. Retry or contact an administrator.",
+    IMPORT_SCHEMA_OUT_OF_DATE: "قاعدة البيانات أقدم من الكود المنشور. شغّل db:migrate:deploy على خدمة API ثم أعد المحاولة.",
+    IMPORT_RELATION_CONFLICT: "هناك تعارض في علاقة المطور أو المشروع أو المرحلة. راجع سياق الجدول ثم أنشئ معاينة جديدة.",
+    IMPORT_DUPLICATE_UNIT: "يوجد كود وحدة مكرر يتعارض مع سجل موجود. راجع أكواد الوحدات ثم أعد المعاينة.",
+    IMPORT_CONFIRM_FAILED: "فشل اعتماد الاستيراد داخل قاعدة البيانات. لم يتم حفظ بيانات جزئية؛ راجع Request ID في سجل API.",
   };
   const base = known[error.code ?? ""] || error.message || "An unexpected error occurred.";
   return `${base}${error.requestId ? ` Request ID: ${error.requestId}` : ""}`;

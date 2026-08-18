@@ -156,7 +156,7 @@ export function ImportAssistant() {
       );
       setItem(result.import);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Import failed");
+      setError(adminErrorMessage(e));
     } finally {
       setLoading(false);
     }
