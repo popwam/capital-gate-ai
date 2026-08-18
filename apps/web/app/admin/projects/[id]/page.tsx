@@ -139,6 +139,25 @@ export default function ProjectDetails({ params }: { params: Promise<{ id: strin
     return points;
   }
 
+  function readinessLabel(value: string) {
+    if (value === "canonical identity") return "اسم المشروع";
+    if (value === "location") return "موقع المشروع";
+    if (value === "coordinates") return "حدود أو إحداثيات المشروع";
+    if (value === "short description") return "الوصف المختصر";
+    if (value === "project type") return "نوع المشروع";
+    if (value === "at least one phase") return "مرحلة واحدة على الأقل";
+    if (value === "project default payment plan") return "خطة سداد افتراضية للمشروع";
+    if (value === "verified amenities") return "خدمات ومرافق موثقة";
+    if (value === "at least 3 project images") return "3 صور للمشروع على الأقل";
+    const units = value.match(/^assign (\d+) active units? to a phase$/);
+    if (units) return `ربط ${units[1]} وحدة نشطة بمرحلة`;
+    return value;
+  }
+
+  function readinessMessage(value: Readiness) {
+    return arr(value.missing).map(readinessLabel).join(" · ");
+  }
+
   async function load(projectId = id, preserveDraft = false) {
     if (!projectId) return;
     try {
@@ -177,51 +196,104 @@ export default function ProjectDetails({ params }: { params: Promise<{ id: strin
 
   async function persistBase(status?: "DRAFT" | "READY_FOR_CUSTOMER") {
     if (!draft || !id) return;
+    let draftSaved = false;
     try {
-      setBusy(true); setError("");
+      setBusy(true);
+      setError("");
       const boundaryDraftKey = `cgai-boundary-draft:${id}`;
       const hasBoundaryDraft = localStorage.getItem(boundaryDraftKey) !== null;
       if (hasBoundaryDraft && boundary.length > 0 && boundary.length < 3) {
         throw new Error("حدود المشروع تحتاج 3 نقاط على الأقل، أو امسحها بالكامل ثم احفظ.");
       }
+
       await adminApi.patch(`/real-estate/projects/${id}`, {
         canonicalName: draft.canonicalName || undefined,
-        nameAr: draft.nameAr || undefined, nameEn: draft.nameEn || undefined,
-        launchYear: draft.launchYear ? Number(draft.launchYear) : undefined, projectStatus: draft.projectStatus || undefined,
-        projectTypes: draft.projectTypes, deliveryStatuses: draft.deliveryStatuses,
-        shortDescriptionAr: draft.shortDescriptionAr || undefined, shortDescriptionEn: draft.shortDescriptionEn || undefined,
-        fullDescriptionAr: draft.fullDescriptionAr || undefined, fullDescriptionEn: draft.fullDescriptionEn || undefined,
-        deliveryInformation: draft.deliveryInformation || undefined, officialWebsite: draft.officialWebsite || undefined,
+        nameAr: draft.nameAr || undefined,
+        nameEn: draft.nameEn || undefined,
+        launchYear: draft.launchYear ? Number(draft.launchYear) : undefined,
+        projectStatus: draft.projectStatus || undefined,
+        projectTypes: draft.projectTypes,
+        deliveryStatuses: draft.deliveryStatuses,
+        shortDescriptionAr: draft.shortDescriptionAr || undefined,
+        shortDescriptionEn: draft.shortDescriptionEn || undefined,
+        fullDescriptionAr: draft.fullDescriptionAr || undefined,
+        fullDescriptionEn: draft.fullDescriptionEn || undefined,
+        deliveryInformation: draft.deliveryInformation || undefined,
+        officialWebsite: draft.officialWebsite || undefined,
       });
+
       const phaseWrites = arr(item?.phases).flatMap((phase) => {
         const raw = localStorage.getItem(phaseDraftKey(phase.id));
         if (!raw) return [];
-        try { return [adminApi.patch(`/real-estate/phases/${phase.id}`, phasePayload(JSON.parse(raw), phase.name))]; } catch { return []; }
+        try {
+          return [adminApi.patch(`/real-estate/phases/${phase.id}`, phasePayload(JSON.parse(raw), phase.name))];
+        } catch {
+          return [];
+        }
       });
+
       const marketEntries: Array<{ key: string; value: Record<string, unknown> }> = [];
       for (let index = 0; index < localStorage.length; index++) {
         const key = localStorage.key(index);
         if (!key?.startsWith(marketDraftPrefix(id))) continue;
-        try { marketEntries.push({ key, value: JSON.parse(localStorage.getItem(key) || "{}") }); } catch { /* ignore invalid local draft */ }
+        try {
+          marketEntries.push({ key, value: JSON.parse(localStorage.getItem(key) || "{}") });
+        } catch {
+          // Ignore malformed local draft; valid server data remains untouched.
+        }
       }
+
       await Promise.all([
         adminApi.patch(`/real-estate/projects/${id}/amenities`, { amenityIds: draft.amenityIds }),
         adminApi.patch(`/real-estate/projects/${id}/competitors`, { projectIds: draft.competitorIds }),
-        ...(hasBoundaryDraft && boundary.length >= 3 ? [adminApi.patch(`/real-estate/projects/${id}/boundary`, { points: boundary, source: "MAP_DRAWN" })] : []),
-        ...(hasBoundaryDraft && boundary.length === 0 ? [adminApi.delete(`/real-estate/projects/${id}/boundary`)] : []),
+        ...(hasBoundaryDraft && boundary.length >= 3
+          ? [adminApi.patch(`/real-estate/projects/${id}/boundary`, { points: boundary, source: "MAP_DRAWN" })]
+          : []),
+        ...(hasBoundaryDraft && boundary.length === 0
+          ? [adminApi.delete(`/real-estate/projects/${id}/boundary`)]
+          : []),
         ...phaseWrites,
         ...marketEntries.map((entry) => adminApi.post(`/real-estate/projects/${id}/market-profiles`, entry.value)),
       ]);
-      // Publish only after all pending project/phase/boundary/tag writes are on the server,
-      // so readiness evaluates the same state the admin is actually publishing.
-      if (status) await adminApi.patch(`/real-estate/projects/${id}`, { adminStatus: status });
+
+      // At this point all edits are already committed. Clear the local drafts before trying
+      // to publish, so a readiness rejection can never make the admin repeat successful writes.
+      draftSaved = true;
       localStorage.removeItem(`cgai-project-draft:${id}`);
       localStorage.removeItem(boundaryDraftKey);
       arr(item?.phases).forEach((phase) => localStorage.removeItem(phaseDraftKey(phase.id)));
       marketEntries.forEach((entry) => localStorage.removeItem(entry.key));
-      setDirty(false); setAutosaveAt(new Date());
+      setDirty(false);
+      setAutosaveAt(new Date());
+
+      const latestReadiness = await adminApi.get<Readiness>(`/real-estate/projects/${id}/readiness`);
+      setReadiness(latestReadiness);
+
+      if (status === "READY_FOR_CUSTOMER") {
+        if (!latestReadiness.ready) {
+          const missing = readinessMessage(latestReadiness);
+          setError(`تم حفظ كل التغييرات كمسودة، لكن لم يتم النشر لأن البيانات الناقصة هي: ${missing || "متطلبات النشر غير مكتملة"}.`);
+          await load(id, false);
+          return;
+        }
+        await adminApi.patch(`/real-estate/projects/${id}`, { adminStatus: "READY_FOR_CUSTOMER" });
+      } else if (status === "DRAFT") {
+        await adminApi.patch(`/real-estate/projects/${id}`, { adminStatus: "DRAFT" });
+      }
+
       await load(id, false);
-    } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
+    } catch (err) {
+      const message = adminErrorMessage(err);
+      if (draftSaved) {
+        setDirty(false);
+        setError(`تم حفظ التغييرات بالفعل، لكن خطوة النشر/التحقق لم تكتمل: ${message}`);
+        await load(id, false).catch(() => undefined);
+      } else {
+        setError(message);
+      }
+    } finally {
+      setBusy(false);
+    }
   }
 
   const selectedPaymentPhase = paymentScope === "PROJECT" ? null : arr(item?.phases).find((phase) => phase.id === paymentScope) ?? null;
@@ -261,7 +333,7 @@ export default function ProjectDetails({ params }: { params: Promise<{ id: strin
           const created = await adminApi.post<Amenity>("/real-estate/amenities", { canonicalName, nameAr: value.nameAr, nameEn: value.nameEn, category: value.category });
           setAmenities((current) => [...current.filter((item) => item.id !== created.id), created]);
           return { id: created.id, label: created.nameAr || created.nameEn || created.canonicalName, secondary: created.nameEn || created.canonicalName, category: created.category };
-        }} readiness={readiness} /> : null}
+        }} readiness={readiness} dirty={dirty} /> : null}
 
         {tab === "phases" ? <PhasesTab projectId={id} phases={arr(item.phases)} selectedPhaseId={selectedPhaseId} setSelectedPhaseId={setSelectedPhaseId} onChanged={() => load(id, true)} onLocalChange={() => { setDirty(true); setAutosaveAt(new Date()); }} /> : null}
 
@@ -281,7 +353,7 @@ export default function ProjectDetails({ params }: { params: Promise<{ id: strin
   );
 }
 
-function OverviewTab({ draft, updateDraft, amenityOptions, competitorOptions, onCreateAmenity, readiness }: { draft: BaseDraft; updateDraft: (patch: Partial<BaseDraft>) => void; amenityOptions: SmartOption[]; competitorOptions: SmartOption[]; onCreateAmenity: (value: { nameAr: string; nameEn?: string; category?: string }) => Promise<SmartOption>; readiness: Readiness | null }) {
+function OverviewTab({ draft, updateDraft, amenityOptions, competitorOptions, onCreateAmenity, readiness, dirty }: { draft: BaseDraft; updateDraft: (patch: Partial<BaseDraft>) => void; amenityOptions: SmartOption[]; competitorOptions: SmartOption[]; onCreateAmenity: (value: { nameAr: string; nameEn?: string; category?: string }) => Promise<SmartOption>; readiness: Readiness | null; dirty: boolean }) {
   const [lang, setLang] = useState<"AR" | "EN">("AR");
   return <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
     <div className="space-y-4">
@@ -304,7 +376,7 @@ function OverviewTab({ draft, updateDraft, amenityOptions, competitorOptions, on
 
       <section className="grid gap-4 lg:grid-cols-2"><div className="rounded-[28px] border border-[#dfe4e0] bg-white p-4 sm:p-5"><SectionTitle eyebrow="System library" title="الخدمات والمرافق" description="ابدأ الكتابة واختار من المكتبة. لو العنصر جديد تقدر تضيفه للنظام مرة واحدة." /><div className="mt-4"><SmartTagPicker options={amenityOptions} value={draft.amenityIds} onChange={(value) => updateDraft({ amenityIds: value })} onCreate={onCreateAmenity} placeholder="مثال: جيم، حمام سباحة…" createLabel="إضافة مرفق جديد" /></div></div><div className="rounded-[28px] border border-[#dfe4e0] bg-white p-4 sm:p-5"><SectionTitle eyebrow="Competitive set" title="المشروعات المنافسة" description="اختار مشاريع موجودة بالنظام. Cg Ai هيستخدم المجموعة دي تلقائيًا عند طلب مقارنة المشروع." /><div className="mt-4"><SmartTagPicker options={competitorOptions} value={draft.competitorIds} onChange={(value) => updateDraft({ competitorIds: value })} placeholder="ابحث باسم المشروع أو المطور…" emptyLabel="المشروع المنافس غير مسجل بعد" /></div></div></section>
     </div>
-    <aside className="space-y-4"><section className="rounded-[26px] border bg-[#14211f] p-5 text-white"><p className="text-[10px] font-black uppercase tracking-[.2em] text-[#d6ba80]">Customer readiness</p><div className="mt-2 flex items-end justify-between"><b className="text-2xl">{readiness?.ready ? "جاهز" : "يحتاج مراجعة"}</b><span className="text-xs opacity-70">{readiness?.imageCount ?? 0} صور</span></div><div className="mt-4 space-y-2">{arr(readiness?.missing).slice(0, 8).map((entry) => <div key={entry} className="flex items-start gap-2 rounded-xl bg-white/7 px-3 py-2 text-xs"><span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#d6ba80]" /><span>{entry}</span></div>)}{readiness?.ready ? <div className="flex items-center gap-2 text-sm"><Check size={15} />كل متطلبات النشر الأساسية مكتملة.</div> : null}{arr(readiness?.warnings).map((entry) => <div key={entry} className="rounded-xl border border-[#d6ba80]/30 bg-[#d6ba80]/10 px-3 py-2 text-xs leading-5 text-[#f2dfb3]">{entry}</div>)}</div></section><section className="rounded-[26px] border bg-white p-5"><b>مبدأ البيانات الجديد</b><div className="mt-3 space-y-2 text-sm"><div className="rounded-xl bg-[#f5f4ef] p-3">Project <span className="text-[#74817b]">→ Defaults</span></div><div className="rounded-xl bg-[#edf3f0] p-3 font-bold text-[#17483e]">Phase <span className="font-normal">→ Override</span></div><div className="rounded-xl bg-[#f5f4ef] p-3">Building → Unit</div></div></section></aside>
+    <aside className="space-y-4"><section className="rounded-[26px] border bg-[#14211f] p-5 text-white"><p className="text-[10px] font-black uppercase tracking-[.2em] text-[#d6ba80]">Customer readiness</p><div className="mt-2 flex items-end justify-between"><b className="text-2xl">{dirty ? "بانتظار الحفظ" : readiness?.ready ? "جاهز" : "يحتاج مراجعة"}</b><span className="text-xs opacity-70">{readiness?.imageCount ?? 0} صور</span></div><div className="mt-4 space-y-2">{arr(readiness?.missing).slice(0, 8).map((entry) => <div key={entry} className="flex items-start gap-2 rounded-xl bg-white/7 px-3 py-2 text-xs"><span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[#d6ba80]" /><span>{entry}</span></div>)}{dirty ? <div className="rounded-xl bg-white/7 px-3 py-2 text-xs leading-5">الجاهزية المعروضة تخص آخر نسخة محفوظة. اضغط حفظ أو نشر لإعادة فحصها بعد تثبيت المسودة الحالية.</div> : readiness?.ready ? <div className="flex items-center gap-2 text-sm"><Check size={15} />كل متطلبات النشر الأساسية مكتملة.</div> : null}{arr(readiness?.warnings).map((entry) => <div key={entry} className="rounded-xl border border-[#d6ba80]/30 bg-[#d6ba80]/10 px-3 py-2 text-xs leading-5 text-[#f2dfb3]">{entry}</div>)}</div></section><section className="rounded-[26px] border bg-white p-5"><b>مبدأ البيانات الجديد</b><div className="mt-3 space-y-2 text-sm"><div className="rounded-xl bg-[#f5f4ef] p-3">Project <span className="text-[#74817b]">→ Defaults</span></div><div className="rounded-xl bg-[#edf3f0] p-3 font-bold text-[#17483e]">Phase <span className="font-normal">→ Override</span></div><div className="rounded-xl bg-[#f5f4ef] p-3">Building → Unit</div></div></section></aside>
   </div>;
 }
 

@@ -72,8 +72,12 @@ async function request<T>(path: string, init: RequestInit = {}, device = true): 
   if (device) headers.set("x-device-token", getDeviceToken());
   const method = String(init.method ?? "GET").toUpperCase();
   const isAdminMutation = path.startsWith("/admin") && !["GET", "HEAD", "OPTIONS"].includes(method);
-  const mutationId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-  if (isAdminMutation) emitAdminMutation({ id: mutationId, state: "saving", method, path });
+  const requestId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+  // Send our request id to the API so the id shown in the browser is the same id
+  // searchable in application logs. Railway also has its own edge request id; they are separate.
+  if (path.startsWith("/admin")) headers.set("x-request-id", requestId);
+  const mutationId = requestId;
+  if (isAdminMutation) emitAdminMutation({ id: mutationId, state: "saving", method, path, requestId });
   try {
     const response = await fetch(`${API_URL}/v1${path}`, { ...init, headers, credentials: "include" });
     if (!response.ok) {

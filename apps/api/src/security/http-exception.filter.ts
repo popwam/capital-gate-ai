@@ -13,6 +13,8 @@ type ErrorBody = {
   safe?: boolean;
   stage?: string;
   importId?: string;
+  missing?: string[];
+  warnings?: string[];
 };
 
 function multerError(exception: unknown) {
@@ -41,7 +43,11 @@ function multerError(exception: unknown) {
 }
 
 function safeLogText(value: unknown) {
-  const text = value instanceof Error ? value.message : String(value ?? "");
+  const text = value instanceof Error
+    ? value.message
+    : typeof value === "string"
+      ? value
+      : (() => { try { return JSON.stringify(value ?? ""); } catch { return String(value ?? ""); } })();
   return text
     .replace(/([?&]key=)[^&\s]+/gi, "$1[REDACTED]")
     .replace(/(authorization|cookie|secret|password)(["':=\s]+)[^,\s}]+/gi, "$1$2[REDACTED]")
@@ -97,7 +103,11 @@ export class SafeHttpExceptionFilter implements ExceptionFilter {
 
     if (status >= 500) {
       console.error(
-        `RequestFailure requestId=${request.requestId ?? "unknown"} method=${request.method} path=${request.originalUrl} status=${status} code=${code} error=${JSON.stringify(safeLogText(exception))}`,
+        `RequestFailure requestId=${request.requestId ?? "unknown"} method=${request.method} path=${request.originalUrl} status=${status} code=${code} detail=${JSON.stringify(safeLogText(detail))} error=${JSON.stringify(safeLogText(exception))}`,
+      );
+    } else if (status >= 400) {
+      console.warn(
+        `RequestRejected requestId=${request.requestId ?? "unknown"} method=${request.method} path=${request.originalUrl} status=${status} code=${code} detail=${JSON.stringify(safeLogText(detail))}`,
       );
     }
     response.status(status).json({
@@ -109,6 +119,8 @@ export class SafeHttpExceptionFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
       ...(detail.stage ? { stage: detail.stage } : {}),
       ...(detail.importId ? { importId: detail.importId } : {}),
+      ...(Array.isArray(detail.missing) ? { missing: detail.missing } : {}),
+      ...(Array.isArray(detail.warnings) ? { warnings: detail.warnings } : {}),
     });
   }
 }
