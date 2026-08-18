@@ -10,9 +10,10 @@ import { LogoMark } from "./logo";
 import { ApiMessage, conversationsApi } from "@/lib/api";
 import { textDirection } from "@/lib/text-direction";
 
-type MessageKind = "text" | "properties" | "media" | "documents" | "map" | "lead_prompt" | "lead_created";
+type MessageKind = "text" | "properties" | "media" | "documents" | "map" | "lead_prompt" | "lead_created" | "conversation_closed";
 type Message = { id: string; role: "user" | "assistant"; text: string; kind?: MessageKind; payload?: any };
-type Conversation = { id: string; title: string; updatedAt: string; messages: Message[] };
+type Conversation = { id: string; title: string; updatedAt: string; messages: Message[]; closed?: boolean };
+type ActionSend = (value: string, displayValue?: string) => void;
 
 const starters = [
   { icon: Building2, label: "بدور على بيت", prompt: "عاوز شقة في القاهرة الجديدة" },
@@ -43,7 +44,7 @@ export default function ChatApp() {
     if (localStorage.getItem("cgai-cache-version") !== "3") localStorage.setItem("cgai-cache-version", "3");
     const saved = localStorage.getItem("cgai-conversations");
     if (saved) try { setConversations(JSON.parse(saved)); } catch { /* cache is optional */ }
-    conversationsApi.list().then(items => { setConversations(items.map(c => ({ id: c.id, title: c.title || "New conversation", updatedAt: new Date(c.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }), messages: [] }))); setConnectionError(""); }).catch(error => setConnectionError(error.message)).finally(() => setHydrated(true));
+    conversationsApi.list().then(items => { setConversations(items.map(c => ({ id: c.id, title: c.title || "New conversation", updatedAt: new Date(c.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }), messages: [], closed: Boolean(c.closed) }))); setConnectionError(""); }).catch(error => setConnectionError(error.message)).finally(() => setHydrated(true));
   }, []);
 
   useEffect(() => {
@@ -62,16 +63,21 @@ export default function ChatApp() {
     setConversations(prev => prev.map(c => c.id === id ? { ...c, updatedAt: "Now", messages: [...c.messages, message] } : c));
   }
 
-  async function send(value = input) {
+  async function send(value = input, displayValue?: string) {
     const clean = value.trim();
-    if (!clean || generating) return;
+    const visible = (displayValue ?? value).trim();
+    if (!clean || generating || active?.closed) return;
     let id = activeId;
     try {
-      if (id === "fresh") { const title = clean.length > 50 ? clean.slice(0, 50) + "…" : clean; const created = await conversationsApi.create(title); id = created.id; setConversations(prev => [{ id, title: created.title || title, updatedAt: "الآن", messages: [] }, ...prev]); setActiveId(id); }
-      append(id, { id: uid(), role: "user", text: clean }); setInput(""); setGenerating(true); setStreamingText(""); setConnectionError("");
+      if (id === "fresh") { const title = clean.length > 50 ? clean.slice(0, 50) + "…" : clean; const created = await conversationsApi.create(title); id = created.id; setConversations(prev => [{ id, title: created.title || title, updatedAt: "الآن", messages: [], closed: false }, ...prev]); setActiveId(id); }
+      append(id, { id: uid(), role: "user", text: visible }); setInput(""); setGenerating(true); setStreamingText(""); setConnectionError("");
       let completed: any;
-      await conversationsApi.stream(id, clean, { token: text => setStreamingText(current => current + text), complete: data => { completed = data; } });
+      await conversationsApi.stream(id, clean, { token: text => setStreamingText(current => current + text), complete: data => { completed = data; } }, visible !== clean ? visible : undefined);
       if (completed?.message) append(id, normalizeMessage(completed.message));
+      if (String(completed?.state?.language ?? "").startsWith("en")) setLang("EN");
+      else if (String(completed?.state?.language ?? "").startsWith("ar")) setLang("AR");
+      const closed = Boolean(completed?.state?.presentation?.conversationClosed) || completed?.message?.toolPayload?.type === "conversation_closed";
+      if (closed) setConversations(prev => prev.map(c => c.id === id ? { ...c, closed: true } : c));
       setStreamingText("");
     } catch (error) { setConnectionError(error instanceof Error ? error.message : "Connection failed"); append(id, { id: uid(), role: "assistant", text: isArabic ? "تعذر الاتصال بالمستشار حالياً. حاول مرة أخرى بعد قليل." : "I couldn’t reach the property service. Please try again shortly." }); }
     finally { setGenerating(false); }
@@ -109,12 +115,12 @@ export default function ChatApp() {
           {messages.length === 0 ? <Welcome isArabic={isArabic} onSelect={setInput}/> : (
             <div className="mx-auto w-full max-w-[860px] px-4 pb-44 pt-7 sm:px-8 sm:pt-10">
               {messages.map((m, i) => <MessageView key={m.id} message={m} liked={liked} setLiked={setLiked} onAction={send} isLast={i === messages.length - 1} isArabic={isArabic}/>) }
-              {generating && <div className="message-rise mb-7 flex gap-3"><AssistantAvatar/>{streamingText ? <div className="chat-copy max-w-[92%] pt-0.5 text-[17px] leading-[1.9] tracking-[.005em] text-[#27322e] sm:max-w-[86%] sm:text-[18px]" dir={textDirection(streamingText)}>{streamingText}<span className="ms-1 inline-block h-4 w-0.5 animate-pulse bg-forest"/></div> : <div className="mt-1 flex h-9 items-center gap-1 rounded-2xl rounded-tl-sm bg-[#efede6] px-4"><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/></div>}</div>}
+              {generating && <div className="message-rise mb-7 flex gap-3"><AssistantAvatar/>{streamingText ? <div className="chat-copy max-w-[92%] pt-0.5 text-[17px] leading-[1.9] tracking-[.005em] text-[#27322e] sm:max-w-[86%] sm:text-[18px]" dir={textDirection(streamingText)}><><RichChatText text={streamingText}/><span className="ms-1 inline-block h-4 w-0.5 animate-pulse bg-forest"/></></div> : <div className="mt-1 flex h-9 items-center gap-1 rounded-2xl rounded-tl-sm bg-[#efede6] px-4"><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/><i className="typing-dot h-1.5 w-1.5 rounded-full bg-[#61706a]"/></div>}</div>}
             </div>
           )}
         </div>
         {connectionError && <div className="absolute bottom-[132px] left-1/2 z-30 -translate-x-1/2 rounded-full bg-[#742f25] px-4 py-2 text-[11px] font-semibold text-white shadow-lg">{connectionError}</div>}
-        <Composer input={input} setInput={setInput} send={() => send()} disabled={generating} isArabic={isArabic}/>
+        {active?.closed ? <ClosedComposer isArabic={isArabic} onNew={newChat}/> : <Composer input={input} setInput={setInput} send={() => send()} disabled={generating} isArabic={isArabic}/>}
       </section>
     </main>
   );
@@ -145,7 +151,7 @@ function Welcome({ onSelect, isArabic }: { onSelect:(v:string)=>void; isArabic:b
 
 function AssistantAvatar() { return <div className="grid h-8 w-8 shrink-0 place-items-center rounded-[11px] bg-[#142927] text-[#e2c58e] shadow-sm"><span className="text-[11px] font-black tracking-[-.08em]">Cg</span></div>; }
 
-function MessageView({ message, liked, setLiked, onAction, isLast, isArabic }: { message:Message;liked:boolean;setLiked:(v:boolean)=>void;onAction:(v:string)=>void;isLast:boolean;isArabic:boolean }) {
+function MessageView({ message, liked, setLiked, onAction, isLast, isArabic }: { message:Message;liked:boolean;setLiked:(v:boolean)=>void;onAction:ActionSend;isLast:boolean;isArabic:boolean }) {
   const assistant = message.role === "assistant";
   const actions = Array.isArray(message.payload?.uiActions) ? message.payload.uiActions : [];
   const cards = actions.find((action:any) => action.type === "PROPERTY_CARDS")?.payload?.properties ?? [];
@@ -154,23 +160,27 @@ function MessageView({ message, liked, setLiked, onAction, isLast, isArabic }: {
   const location = actions.find((action:any) => action.type === "PROJECT_LOCATION")?.payload?.map;
   const distance = actions.find((action:any) => action.type === "DISTANCE_RESULT")?.payload;
   const contactAction = actions.find((action:any) => action.type === "CONTACT_REQUEST");
+  const paymentAction = actions.find((action:any) => action.type === "PAYMENT_CHOICES");
+  const closedAction = actions.find((action:any) => action.type === "CONVERSATION_CLOSED");
   const contact = Boolean(contactAction);
   return <div className={`message-rise mb-7 flex gap-3 ${assistant ? "justify-start" : "justify-end"}`}>
     {assistant && <AssistantAvatar/>}
     <div className={assistant ? "max-w-[94%] sm:max-w-[86%]" : "max-w-[88%] sm:max-w-[78%]"}>
-      <div dir={textDirection(message.text)} className={assistant ? "chat-copy pt-0.5 text-start text-[17px] leading-[1.9] tracking-[.005em] text-[#27322e] sm:text-[18px]" : "chat-copy rounded-[20px] rounded-tr-md bg-[#ebe8e1] px-4 py-3 text-start text-[17px] leading-[1.85] text-[#26312d] sm:text-[18px]"}>{message.text}</div>
+      <div dir={textDirection(message.text)} className={assistant ? "chat-copy pt-0.5 text-start text-[17px] leading-[1.9] tracking-[.005em] text-[#27322e] sm:text-[18px]" : "chat-copy rounded-[20px] rounded-tr-md bg-[#ebe8e1] px-4 py-3 text-start text-[17px] leading-[1.85] text-[#26312d] sm:text-[18px]"}><RichChatText text={message.text}/></div>
       {!!cards.length && <PropertyResults properties={cards} liked={liked} setLiked={setLiked} onAction={onAction} isArabic={isArabic}/>}
       {!!photos.length && <MediaGallery media={photos}/>}
       {!!brochures.length && <Documents documents={brochures}/>}
       {!!location && <MapResult map={location}/>}
       {!!distance && <DistanceResult result={distance}/>}
+      {!!paymentAction && <PaymentChoices action={paymentAction.payload} onAction={onAction} isArabic={isArabic}/>}
+      {!!closedAction && <ConversationClosedNotice isArabic={isArabic}/>}
       {(contact || message.kind === "lead_created") && <LeadHint created={message.kind === "lead_created"} action={contactAction?.payload} onAction={onAction} isArabic={isArabic}/>}
       {assistant && isLast && <div className="mt-2 flex gap-1"><button className="rounded-lg p-1.5 text-[#8b958f] hover:bg-[#efede7]"><Check size={13}/></button><button className="rounded-lg p-1.5 text-[#8b958f] hover:bg-[#efede7]"><MoreHorizontal size={14}/></button></div>}
     </div>
   </div>;
 }
 
-function PropertyResults({ properties, liked, setLiked, onAction, isArabic }: {properties:any[];liked:boolean;setLiked:(v:boolean)=>void;onAction:(v:string)=>void;isArabic:boolean}) {
+function PropertyResults({ properties, liked, setLiked, onAction, isArabic }: {properties:any[];liked:boolean;setLiked:(v:boolean)=>void;onAction:ActionSend;isArabic:boolean}) {
   if (!properties.length) return null;
   const money = (value:any, currency="EGP") => value == null ? (isArabic ? "السعر غير متاح" : "Price unavailable") : `${new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 }).format(Number(value))} ${currency}`;
   const paymentLabel = (property:any) => {
@@ -189,10 +199,10 @@ function PropertyResults({ properties, liked, setLiked, onAction, isArabic }: {p
     return [duration, dp ? (isArabic ? `مقدم ${dp}` : `DP ${dp}`) : null].filter(Boolean).join(" · ");
   };
 
-  return <div className="mt-4 space-y-3">{properties.slice(0,5).map((property,index)=>{
+  return <div className="scrollbar-none mt-4 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2 pe-2">{properties.slice(0,5).map((property,index)=>{
     const image = property.media?.[0]?.url;
     const plan = paymentLabel(property);
-    return <div key={property.id} className="overflow-hidden rounded-[22px] border border-[#dcddd7] bg-white shadow-[0_10px_35px_rgba(29,48,41,.07)]" dir={isArabic ? "rtl" : "ltr"}>
+    return <div key={property.id} className="w-[min(360px,86vw)] shrink-0 snap-start overflow-hidden rounded-[22px] border border-[#dcddd7] bg-white shadow-[0_10px_35px_rgba(29,48,41,.07)]" dir={isArabic ? "rtl" : "ltr"}>
       {image && <div className="aspect-[16/8] w-full overflow-hidden bg-[#f1efe9]"><img src={image} alt={property.media?.[0]?.altText || property.project?.name || "Unit"} className="h-full w-full object-cover"/></div>}
       <div className="p-4 sm:p-5">
         <div className="flex items-start justify-between gap-3">
@@ -227,12 +237,39 @@ function PropertyResults({ properties, liked, setLiked, onAction, isArabic }: {p
           <button onClick={() => onAction(isArabic ? `وريني صور الوحدة ${property.externalUnitId}` : `Show me photos of unit ${property.externalUnitId}`)} className="flex h-10 items-center gap-1.5 rounded-full border border-[#d9dcd6] px-4 text-[12px] font-bold hover:bg-[#f7f5f0]"><ImageIcon size={14}/> {isArabic ? "صور الوحدة" : "Unit photos"}</button>
           <button onClick={() => onAction(isArabic ? `نظام السداد للوحدة ${property.externalUnitId}` : `Payment plan for unit ${property.externalUnitId}`)} className="flex h-10 items-center gap-1.5 rounded-full border border-[#d9dcd6] px-4 text-[12px] font-bold hover:bg-[#f7f5f0]"><FileText size={14}/> {isArabic ? "نظام السداد" : "Payment plan"}</button>
           <button onClick={() => onAction(isArabic ? `وريني موقع مشروع ${property.project?.name}` : `Show me the location of ${property.project?.name}`)} className="flex h-10 items-center gap-1.5 rounded-full border border-[#d9dcd6] px-4 text-[12px] font-bold hover:bg-[#f7f5f0]"><MapPin size={14}/> {isArabic ? "الموقع" : "Location"}</button>
-          <button onClick={() => onAction(isArabic ? `عاوز أعاين الوحدة ${property.externalUnitId}` : `I want to book a viewing for unit ${property.externalUnitId}`)} className="h-10 rounded-full bg-forest px-4 text-[12px] font-bold text-white">{isArabic ? "طلب معاينة" : "Request viewing"}</button>
+          <button onClick={() => { const label = humanPropertyLabel(property, isArabic); onAction(isArabic ? `عاوز أعاين الوحدة ${property.externalUnitId}` : `I want to book a viewing for unit ${property.externalUnitId}`, isArabic ? `عاوز أعاين ${label}` : `I want to view ${label}`); }} className="h-10 rounded-full bg-forest px-4 text-[12px] font-bold text-white">{isArabic ? "طلب معاينة" : "Request viewing"}</button>
         </div>
       </div>
     </div>;
   })}</div>;
 }
+
+function humanPropertyLabel(property:any,isArabic:boolean) {
+  const area=property?.builtUpArea!=null?`${Number(property.builtUpArea)} ${isArabic?"م²":"m²"}`:null;
+  const rooms=property?.bedrooms!=null?`${property.bedrooms} ${isArabic?"غرف":property.bedrooms===1?"bedroom":"bedrooms"}`:null;
+  const type=property?.unitType && !rooms ? String(property.unitType) : null;
+  const project=property?.project?.name ? (isArabic?`مشروع ${property.project.name}`:`in ${property.project.name}`) : null;
+  return [isArabic?"وحدة":"Unit",area,rooms,type,project].filter(Boolean).join(" · ");
+}
+
+function RichChatText({text}:{text:string}) {
+  const inline=(line:string,key:string)=>line.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part,index)=>part.startsWith("**")&&part.endsWith("**")?<strong key={`${key}-${index}`} className="font-bold text-[#1d2d29]">{part.slice(2,-2)}</strong>:<span key={`${key}-${index}`}>{part}</span>);
+  return <>{String(text??"").split("\n").map((line,index)=><span key={index}>{inline(line,String(index))}{index<String(text??"").split("\n").length-1&&<br/>}</span>)}</>;
+}
+
+function PaymentChoices({action,onAction,isArabic}:{action?:any;onAction:ActionSend;isArabic:boolean}) {
+  const choices=action?.choices ?? {};
+  if (!choices?.hasCash && !choices?.hasInstallment) return null;
+  return <div className="mt-3 rounded-2xl border border-[#dce3dd] bg-white p-3">
+    <p className="text-[12px] font-bold text-[#31443d]">{isArabic?"اختار طريقة الدفع":"Choose payment route"}</p>
+    <div className="mt-2 flex flex-wrap gap-2">
+      {choices.hasCash&&<button onClick={()=>onAction(isArabic?"كاش":"Cash")} className="rounded-full bg-forest px-4 py-2.5 text-[12px] font-bold text-white">{isArabic?"كاش":"Cash"}</button>}
+      {choices.hasInstallment&&<button onClick={()=>onAction(isArabic?"تقسيط":"Installments")} className="rounded-full border border-[#b8c8c0] bg-[#f8faf8] px-4 py-2.5 text-[12px] font-bold text-[#315f55]">{isArabic?"تقسيط":"Installments"}</button>}
+    </div>
+  </div>;
+}
+
+function ConversationClosedNotice({isArabic}:{isArabic:boolean}) { return <div className="mt-3 rounded-2xl border border-[#e3d8c8] bg-[#f7f2e9] p-3 text-[12px] text-[#715d3e]">{isArabic?"تم إنهاء المحادثة دي. ابدأ محادثة جديدة لو حابب ترجع للاستشارات العقارية.":"This conversation is closed. Start a new conversation if you want to return to property advice."}</div>; }
 
 function MediaGallery({media}:{media:any[]}) { if(!media.length) return <EmptyAttachment label="No approved project images are available yet."/>; return <div className="mt-4 grid grid-cols-2 gap-2 rounded-[20px] border border-[#dcddd7] bg-white p-2" dir="ltr">{media.slice(0,6).map((item,index)=><a key={item.id} href={item.url} target="_blank" rel="noreferrer" className={`${index===0?"col-span-2 aspect-[16/9]":"aspect-square"} relative overflow-hidden rounded-[14px]`}><img src={item.url} alt={item.altText || "Project image"} className="h-full w-full object-cover"/></a>)}</div>; }
 function Documents({documents}:{documents:any[]}) { if(!documents.length) return <EmptyAttachment label="No approved brochure is available yet."/>; return <div className="mt-3 space-y-2">{documents.map(item=><a key={item.id} href={item.url} target="_blank" rel="noreferrer" className="flex w-full items-center gap-3 rounded-2xl border border-[#dcddd7] bg-white p-4 text-start shadow-sm" dir="ltr"><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#f7ded7] text-coral"><FileText size={19}/></div><div className="min-w-0 flex-1"><p className="truncate text-[11px] font-bold" dir="auto">{item.name}</p><p className="mt-1 text-[11px] text-[#89938f]">{item.mimeType} · Verified project document</p></div><ArrowUp className="rotate-45 text-[#73817a]" size={16}/></a>)}</div>; }
@@ -246,27 +283,20 @@ function DistanceResult({result}:{result:any}) {
   return <div className="mt-3 flex flex-wrap items-center gap-3 rounded-2xl border border-[#dcddd7] bg-white p-4"><div className="grid h-10 w-10 place-items-center rounded-xl bg-[#e2f0e9] text-forest"><Clock3 size={18}/></div><div className="min-w-[150px] flex-1"><p className="text-[14px] font-bold">{km!=null?`${km.toFixed(1)} km`:"Route"}{minutes!=null?` · ${minutes} min`:""}</p><p className="mt-1 text-[12px] text-[#89938f]">{route.source==="ADMIN_VERIFIED"?"مسافة موثقة":"Google Routes"}</p></div>{href&&<a href={href} target="_blank" rel="noreferrer" className="rounded-full bg-forest px-4 py-2 text-[12px] font-bold text-white">الاتجاهات</a>}</div>;
 }
 function EmptyAttachment({label}:{label:string}) { return <div className="mt-3 rounded-xl border border-dashed border-[#cfd3ce] px-4 py-3 text-[11px] text-[#738079]">{label}</div>; }
-function LeadHint({created,action,onAction,isArabic}:{created:boolean;action?:any;onAction:(v:string)=>void;isArabic:boolean}) {
-  const stage=action?.stage;
-  const needsContact=Boolean(action?.needsContactChannel);
-  const needsConfirmation=Boolean(action?.needsConfirmationChannel);
+function LeadHint({created,action,onAction,isArabic}:{created:boolean;action?:any;onAction:ActionSend;isArabic:boolean}) {
+  const stage=String(action?.stage ?? "");
+  if (stage === "COMPLETE") return <div className="mt-3 rounded-2xl border border-[#dce8e1] bg-[#edf5f1] p-3 text-[12px] text-[#39705b]"><div className="flex items-center gap-2 font-semibold"><ShieldCheck size={14}/><span>{isArabic?"الطلب كامل وجاهز للتنسيق مع المبيعات":"The request is complete and ready for sales coordination"}</span></div></div>;
   return <div className="mt-3 rounded-2xl border border-[#dce8e1] bg-[#edf5f1] p-3 text-[12px] text-[#39705b]">
-    <div className="flex items-center gap-2 font-semibold"><ShieldCheck size={14}/><span>{stage==="VERIFY_CONTACT"?(isArabic?"البيانات محتاجة تصحيح قبل تسجيل الطلب":"Contact details need correction before saving") : created?(isArabic?"الطلب محفوظ لفريق المبيعات":"The request is saved for the sales team"):(isArabic?"بيانات التواصل مطلوبة فقط لإكمال الطلب":"Contact details are only needed to proceed")}</span></div>
-    {stage==="CONTACT_PREFERENCES"&&<div className="mt-3 space-y-2">
-      {needsContact&&<div><p className="mb-1.5 text-[10px] font-bold text-[#65776f]">{isArabic?"وسيلة التواصل الأساسية":"Main contact channel"}</p><div className="flex flex-wrap gap-2">
-        <button onClick={()=>onAction(isArabic?"التواصل المفضل مكالمة":"Preferred contact is a phone call")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">{isArabic?"مكالمة":"Call"}</button>
-        <button onClick={()=>onAction(isArabic?"التواصل المفضل واتساب":"Preferred contact is WhatsApp")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">WhatsApp</button>
-        <button onClick={()=>onAction(isArabic?"التواصل المفضل SMS":"Preferred contact is SMS")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">SMS</button>
-        <button onClick={()=>onAction(isArabic?"التواصل المفضل إيميل":"Preferred contact is email")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">{isArabic?"إيميل":"Email"}</button>
-      </div></div>}
-      {needsConfirmation&&<div><p className="mb-1.5 text-[10px] font-bold text-[#65776f]">{isArabic?"وسيلة تأكيد الموعد":"Appointment confirmation"}</p><div className="flex flex-wrap gap-2">
-        <button onClick={()=>onAction(isArabic?"التأكيد المفضل واتساب":"Preferred confirmation is WhatsApp")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">WhatsApp</button>
-        <button onClick={()=>onAction(isArabic?"التأكيد المفضل SMS":"Preferred confirmation is SMS")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">SMS</button>
-        <button onClick={()=>onAction(isArabic?"التأكيد المفضل مكالمة":"Preferred confirmation is a phone call")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">{isArabic?"مكالمة":"Call"}</button>
-        <button onClick={()=>onAction(isArabic?"التأكيد المفضل إيميل":"Preferred confirmation is email")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">{isArabic?"إيميل":"Email"}</button>
-      </div></div>}
+    <div className="flex items-center gap-2 font-semibold"><ShieldCheck size={14}/><span>{stage==="VERIFY_CONTACT"?(isArabic?"راجع الاسم ورقم الموبايل ونكمل":"Check the name and mobile number and we can continue") : stage==="CONFIRMATION"?(isArabic?"اختار طريقة تأكيد الموعد":"Choose how the appointment should be confirmed") : created?(isArabic?"الطلب محفوظ ونكمل آخر خطوة":"The request is saved; one last step"):(isArabic?"الاسم ورقم الموبايل كفاية للخطوة دي":"Name and mobile number are enough for this step")}</span></div>
+    {stage==="CONFIRMATION"&&<div className="mt-3 flex flex-wrap gap-2">
+      <button onClick={()=>onAction(isArabic?"التأكيد المفضل مكالمة":"Preferred confirmation is a phone call")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">{isArabic?"مكالمة":"Call"}</button>
+      <button onClick={()=>onAction(isArabic?"التأكيد المفضل واتساب":"Preferred confirmation is WhatsApp")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">WhatsApp</button>
     </div>}
   </div>;
+}
+
+function ClosedComposer({isArabic,onNew}:{isArabic:boolean;onNew:()=>void}) {
+  return <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-[#faf9f5] via-[#faf9f5]/96 to-transparent px-3 pb-[max(14px,env(safe-area-inset-bottom))] pt-10 sm:px-6"><div className="pointer-events-auto mx-auto flex max-w-[860px] items-center justify-between gap-3 rounded-[22px] border border-[#dfd8cc] bg-white/96 p-3 shadow-[0_18px_60px_rgba(20,41,39,.10)]"><p className="text-[13px] text-[#716d65]">{isArabic?"المحادثة دي انتهت.":"This conversation has ended."}</p><button onClick={onNew} className="shrink-0 rounded-full bg-forest px-4 py-2.5 text-[12px] font-bold text-white">{isArabic?"محادثة جديدة":"New conversation"}</button></div></div>;
 }
 
 function Composer({ input, setInput, send, disabled, isArabic }: {input:string;setInput:(v:string)=>void;send:()=>void;disabled:boolean;isArabic:boolean}) {

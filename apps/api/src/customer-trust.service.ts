@@ -3,7 +3,7 @@ import { MessageRole, Prisma } from "@prisma/client";
 import { PrismaService } from "./database/prisma.service";
 import { StructuredIntent } from "./providers/ai-provider";
 
-export type ContactChannel = "CALL" | "WHATSAPP" | "SMS" | "EMAIL";
+export type ContactChannel = "CALL" | "WHATSAPP";
 export type TrustLevel = "CONTACT_VALID" | "NEEDS_VERIFICATION" | "SUSPICIOUS";
 
 export type ContactPreferences = {
@@ -105,8 +105,6 @@ function looksLikeGibberish(value: string) {
 
 function channelFrom(value: string): ContactChannel | undefined {
   if (/(?:واتساب|whats?app)/iu.test(value)) return "WHATSAPP";
-  if (/(?:sms|رساله\s*نصيه|رسالة\s*نصية|رساله|رسالة)/iu.test(value)) return "SMS";
-  if (/(?:ايميل|إيميل|email|mail)/iu.test(value)) return "EMAIL";
   if (/(?:مكالمه|مكالمة|اتصال|كلمني|call|phone call)/iu.test(value)) return "CALL";
   return undefined;
 }
@@ -128,7 +126,7 @@ export function contactPreferencesFromText(source: string, current: ContactPrefe
   if (confirmationChannel) result.preferredConfirmationChannel = confirmationChannel;
   if (contactChannel) result.preferredContactChannel = contactChannel;
 
-  const channels = [...text.matchAll(/واتساب|whats?app|sms|رساله\s*نصيه|رسالة\s*نصية|ايميل|إيميل|email|مكالمه|مكالمة|اتصال|call/giu)]
+  const channels = [...text.matchAll(/واتساب|whats?app|مكالمه|مكالمة|اتصال|call/giu)]
     .map((match) => channelFrom(match[0]))
     .filter((value): value is ContactChannel => Boolean(value));
   if (!contactMatch && !confirmationMatch) {

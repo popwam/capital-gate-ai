@@ -56,6 +56,18 @@ export function deterministicIntent(messages: AIMessage[], previous: StructuredI
   const resale = /(?:ريسيل|ري\s*سيل|إعادة\s*بيع|اعادة\s*بيع|resale|secondary\s*market)/iu.test(text);
   const primary = /(?:primary|من\s+المطور|بيع\s+أول|بيع\s+اول|أول\s+بيع|اول\s+بيع|new\s+from\s+(?:the\s+)?developer)/iu.test(text);
   const route = detectExplicitRouteRequest(source);
+  const propertyTypes = /(?:شقه|شقة|apartment|flat)/iu.test(text) ? ["Apartment"]
+    : /(?:عياده|عيادة|clinic)/iu.test(text) ? ["Clinics"]
+    : /(?:فيلا|villa)/iu.test(text) ? ["Villa"]
+    : /(?:تاون\s*هاوس|town\s*house)/iu.test(text) ? ["Townhouse"]
+    : /(?:توين\s*هاوس|twin\s*house)/iu.test(text) ? ["Twin House"]
+    : /(?:دوبلكس|duplex)/iu.test(text) ? ["Duplex"]
+    : /(?:محل|retail|shop)/iu.test(text) ? ["Retail"]
+    : /(?:مكتب|office)/iu.test(text) ? ["Office"]
+    : previous.propertyTypes;
+  const locationMatch = text.match(/(?:عاوز|عايز|محتاج|ابحث|دور|show|find).*?(?:\sفي\s|\sin\s)([\p{L}][\p{L}\s-]{2,45})(?:[؟?.,،]|$)/iu);
+  const locationCandidate = locationMatch?.[1]?.trim();
+  const locations = locationCandidate && !/(?:حدود|مليون|سعر|ميزاني|غرف|متر|مشروع|وحد)/iu.test(locationCandidate) ? [locationCandidate] : previous.locations;
   return {
     ...previous,
     requestedMedia: detectRequestedMedia(text),
@@ -66,6 +78,8 @@ export function deterministicIntent(messages: AIMessage[], previous: StructuredI
     dialect: hasArabic && hasLatin ? "MIXED" : hasArabic ? "EGYPTIAN_ARABIC" : "ENGLISH",
     purpose: /(?:استثمار|investment|resale|ريسيل|إعادة\s*بيع|اعادة\s*بيع)/iu.test(text) ? "INVESTMENT" : previous.purpose,
     inventoryMarket: resale ? "RESALE" : primary ? "PRIMARY" : previous.inventoryMarket,
+    propertyTypes,
+    locations,
     bedrooms: bedroom ? Number(bedroom[1]) : previous.bedrooms,
     preferredFloor: floor ? Number(floor[1]) : previous.preferredFloor,
     preferredPhase: phase?.[1]?.trim() ?? previous.preferredPhase,

@@ -53,12 +53,14 @@ test("admin confirmed fake contact becomes suspicious on a future conversation",
   assert.equal(result.canCreateLead, false);
 });
 
-test("contact and confirmation preferences are separated", () => {
+test("only supported call and WhatsApp preferences are captured", () => {
   const result = contactPreferencesFromText("التواصل واتساب والتأكيد SMS والعصر في نص الأسبوع");
   assert.equal(result.preferredContactChannel, "WHATSAPP");
-  assert.equal(result.preferredConfirmationChannel, "SMS");
+  assert.equal(result.preferredConfirmationChannel, undefined);
   assert.equal(result.preferredVisitDayPart, "AFTERNOON");
   assert.equal(result.preferredVisitTiming, "MIDWEEK");
+  const call = contactPreferencesFromText("التأكيد مكالمة");
+  assert.equal(call.preferredConfirmationChannel, "CALL");
 });
 
 

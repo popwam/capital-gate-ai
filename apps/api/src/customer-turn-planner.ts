@@ -1,6 +1,6 @@
 import { CustomerTurnIntent, PresentationState, StructuredIntent } from "./providers/ai-provider";
 
-export type UIActionType = "PROPERTY_CARDS" | "PROJECT_PHOTOS" | "PROJECT_BROCHURE" | "PROJECT_LOCATION" | "DISTANCE_RESULT" | "VIEWING_REQUEST" | "CONTACT_REQUEST";
+export type UIActionType = "PROPERTY_CARDS" | "PROJECT_PHOTOS" | "PROJECT_BROCHURE" | "PROJECT_LOCATION" | "DISTANCE_RESULT" | "VIEWING_REQUEST" | "CONTACT_REQUEST" | "PAYMENT_CHOICES" | "CONVERSATION_CLOSED";
 export type UIAction = { type: UIActionType; payload: Record<string, unknown> };
 export type TurnPlan = {
   intent: CustomerTurnIntent;
@@ -15,6 +15,13 @@ export type TurnPlan = {
 
 const normalize = (value: string) => value.toLowerCase().normalize("NFKC").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").replace(/\s+/g, " ").trim();
 const affirmative = /^(?:(?:اه|ايوه|أيوه|تمام|ماشي|yes|yeah|yep|sure|ok|okay)(?:\s+(?:وريني|ابعت|ابعته))?|ابعت|ابعته|وريني(?:\s+كده)?)$/iu;
+
+const greeting = /^(?:(?:مساء|صباح)\s+(?:الفل|الخير|النور)|(?:اهلا|أهلا|هاي|هلا|hello|hi|hey|good\s+(?:morning|evening)|عامل ايه))[!.؟?\s]*$/iu;
+const thanks = /^(?:شكرا|شكرًا|تسلم|متشكر|thanks?|thank\s+you)[!.؟?\s]*$/iu;
+const paymentChoice = /(?:^|\s)(?:كاش|نقدي|cash|تقسيط|اقساط|أقساط|installments?|installment)(?:\s|$)/iu;
+const confirmationChoice = /(?:واتساب|whats?app|مكالمه|مكالمة|اتصال|call)/iu;
+const clearOutOfDomain = /(?:لبن|حليب|milk|اكل|أكل|طعام|food|مطعم|restaurant|سياس(?:ه|ة)|politic|طب(?:ي|ية)?|doctor|medicine|weather|طقس|كوره|كرة\s*قدم|football|programming|برمجه|برمجة|code\b|كود\s+برمجي|relationship|علاقه|علاقة|نكت(?:ه|ة)|joke)/iu;
+const argumentative = /(?:انت\s+(?:غبي|كذاب|نصاب)|انت\s+مش\s+فاهم|شتيم|خناق|اتخانق|argue|debate\s+me)/iu;
 
 export function exactExternalUnitId(source: string) {
   // Normalize the punctuation people commonly paste from WhatsApp/Office first.
@@ -43,7 +50,13 @@ export function planCustomerTurn(source: string, previous: StructuredIntent): Tu
   const unitId = exactExternalUnitId(source);
   const offered = previous.presentation?.awaitingConfirmation ? previous.presentation.lastOfferedAction : undefined;
   const handoffStage = previous.presentation?.leadHandoffStage;
-  const contactLike = /(?:\+?\d[\d\s().-]{3,}\d|اسمي|انا\s+[\p{L}]|رقمي|رقم\s*(?:الموبايل|الهاتف)|واتساب|whats?app|مكالمه|مكالمة|اتصال|call|sms|رساله|رسالة|ايميل|إيميل|email|التاكيد|التأكيد|تاكيد|تأكيد)/iu.test(source);
+  const contactLike = /(?:\+?\d[\d\s().-]{3,}\d|اسمي|انا\s+[\p{L}]|رقمي|رقم\s*(?:الموبايل|الهاتف)|واتساب|whats?app|مكالمه|مكالمة|اتصال|call|التاكيد|التأكيد|تاكيد|تأكيد)/iu.test(source);
+  if (offered === "CONTACT_REQUEST" && handoffStage === "PAYMENT" && paymentChoice.test(source)) {
+    return { intent: "PAYMENT_PLAN", requiresDatabase: true, requiresExtraction: false, emitCards: false, executeBrochure: false };
+  }
+  if (offered === "CONTACT_REQUEST" && handoffStage === "CONFIRMATION" && confirmationChoice.test(source)) {
+    return { intent: "CONTACT_REQUEST", requiresDatabase: false, requiresExtraction: false, emitCards: false, executeBrochure: false };
+  }
   if (offered === "CONTACT_REQUEST" && handoffStage && handoffStage !== "COMPLETE" && contactLike) {
     return { intent: "CONTACT_REQUEST", requiresDatabase: false, requiresExtraction: true, emitCards: false, executeBrochure: false };
   }
@@ -59,7 +72,7 @@ export function planCustomerTurn(source: string, previous: StructuredIntent): Tu
     };
   }
 
-  if (/(?:عاوز|عايز|محتاج).*(?:احجز|اعاين)|(?:احجز|حجز|معاينه)|book\s+(?:a\s+)?viewing|request\s+viewing|viewing\s+for/iu.test(text))
+  if (/(?:عاوز|عايز|محتاج).*(?:احجز|اعاين|معاينه|معاينة|ميعاد|موعد|زياره|زيارة)|(?:احجز|حجز|معاينه|معاينة|ميعاد\s+(?:معاينه|معاينة|زيارة)|موعد\s+(?:معاينه|معاينة|زيارة))|book\s+(?:a\s+)?viewing|request\s+viewing|viewing\s+for|(?:need|want)\s+(?:an?\s+)?appointment|book\s+(?:an?\s+)?appointment|schedule\s+(?:a\s+)?visit/iu.test(text))
     return { intent: "VIEWING_REQUEST", requiresDatabase: true, requiresExtraction: false, emitCards: true, executeBrochure: false, exactUnitId: unitId };
 
   if (/(?:وريني|هات|اعرض|ابعت).*(?:الصور|صور)|(?:photos?|images?)\b/iu.test(text))
@@ -134,8 +147,13 @@ export function planCustomerTurn(source: string, previous: StructuredIntent): Tu
   if (/(?:تقدر|ممكن|بتقدر|يمكنك).*(?:تسا+ع+دني|تساعدني|تساعد|تعمل|تقدم)|(?:تسا+ع+دني|تساعدني|تساعدنى)\s*(?:ب|في)?\s*(?:اي|إيه|ايه)|(?:what can you do|how can you help|can you help me)/iu.test(text))
     return { intent: "SMALL_TALK", requiresDatabase: false, requiresExtraction: false, emitCards: false, executeBrochure: false, deterministicResponse: /[\u0600-\u06ff]/u.test(source) ? "أقدر أساعدك تدور على وحدة مناسبة، تقارن بين المشاريع والمراحل، تعرف الأسعار وخطط السداد، تراجع فرص الاستثمار أو إعادة البيع والإيجار، وتحسب المسافات من الخريطة ببيانات فعلية. قولّي المنطقة أو الميزانية أو اسم المشروع ونبدأ." : "I can help you find units, compare projects and phases, review prices and payment plans, assess investment/resale/rental options, and calculate real map routes. Tell me an area, budget, or project name to start." };
 
-  if (/^(?:مساء|صباح)\s+(?:الفل|الخير|النور)|^(?:اهلا|أهلا|هاي|هلا|hello|hi|hey|عامل ايه)[!.؟?\s]*$/iu.test(text))
+  if (greeting.test(source) || thanks.test(source))
     return { intent: "SMALL_TALK", requiresDatabase: false, requiresExtraction: false, emitCards: false, executeBrochure: false };
+
+  // Clear non-property requests end the session instead of falling through to an inventory search.
+  // A greeting or an ambiguous short follow-up is not enough to close a conversation.
+  if (clearOutOfDomain.test(source) || argumentative.test(source))
+    return { intent: "OUT_OF_DOMAIN", requiresDatabase: false, requiresExtraction: false, emitCards: false, executeBrochure: false };
 
   if (/(?:المطور|developer|track record|سابقة اعمال)/iu.test(text))
     return { intent: "DEVELOPER_DETAILS", requiresDatabase: true, requiresExtraction: true, emitCards: false, executeBrochure: false };
@@ -148,6 +166,19 @@ function money(value: string) { const n = Number(value.replace(",", ".")); retur
 export function applyDeterministicTurnSemantics(source: string, extracted: StructuredIntent, previous: StructuredIntent, plan: TurnPlan): StructuredIntent {
   const text = normalize(source);
   const next: StructuredIntent = { ...extracted, turnIntent: plan.intent, presentation: previous.presentation ?? {} };
+  const hasArabic = /[\u0600-\u06ff]/u.test(source);
+  const hasLatin = /[a-z]/iu.test(source);
+  if (hasArabic && !hasLatin) { next.language = "ar-EG"; next.dialect = "EGYPTIAN_ARABIC"; }
+  else if (hasLatin && !hasArabic) { next.language = "en"; next.dialect = "ENGLISH"; }
+  else if (hasArabic && hasLatin) { next.language = "ar-EG"; next.dialect = "MIXED"; }
+
+  if (/(?:^|\s)(?:كاش|نقدي|cash)(?:\s|$)/iu.test(text)) next.preferredPaymentMode = "CASH";
+  if (/(?:تقسيط|اقساط|أقساط|installments?|installment)/iu.test(text)) next.preferredPaymentMode = "INSTALLMENT";
+  if (/(?:واتساب|whats?app)/iu.test(text) && previous.presentation?.leadHandoffStage === "CONFIRMATION") { next.preferredConfirmationChannel = "WHATSAPP"; next.preferredContactChannel = "WHATSAPP"; }
+  if (/(?:مكالمه|مكالمة|اتصال|call)/iu.test(text) && previous.presentation?.leadHandoffStage === "CONFIRMATION") { next.preferredConfirmationChannel = "CALL"; next.preferredContactChannel = "CALL"; }
+
+  const explicitType = /(?:شقه|شقة|apartment|flat)/iu.test(text) ? "Apartment" : /(?:عياده|عيادة|clinic)/iu.test(text) ? "Clinics" : /(?:فيلا|villa)/iu.test(text) ? "Villa" : /(?:تاون\s*هاوس|town\s*house)/iu.test(text) ? "Townhouse" : /(?:توين\s*هاوس|twin\s*house)/iu.test(text) ? "Twin House" : /(?:دوبلكس|duplex)/iu.test(text) ? "Duplex" : /(?:محل|retail|shop)/iu.test(text) ? "Retail" : /(?:مكتب|office)/iu.test(text) ? "Office" : null;
+  if (explicitType) next.propertyTypes = [explicitType];
 
   if (plan.exactUnitId) {
     next.externalUnitId = plan.exactUnitId;
@@ -157,11 +188,19 @@ export function applyDeterministicTurnSemantics(source: string, extracted: Struc
 
   if (plan.intent === "VIEWING_REQUEST") next.purchaseIntent = Math.max(next.purchaseIntent ?? 0, 90);
   if (plan.intent === "CONTACT_REQUEST") next.purchaseIntent = Math.max(next.purchaseIntent ?? 0, 85);
+  if (plan.intent === "OUT_OF_DOMAIN") next.presentation = { ...(next.presentation ?? {}), conversationClosed: true, conversationClosedReason: "OUT_OF_DOMAIN" };
 
   const around = text.match(/(?:في\s+حدود|حوالي|around|about)\s*(\d+(?:[.,]\d+)?)\s*(?:مليون|m|mn|million)/iu);
   const strict = text.match(/(?:لا\s+)?(?:عاوزها|عايزها|عاوز|عايز)\s*(\d+(?:[.,]\d+)?)\s*(?:مليون|m|mn|million)?/iu);
   const under = text.match(/(?:اقل|أقل|تحت|under|less than)\s*(?:من\s*)?(\d+(?:[.,]\d+)?)\s*(?:مليون|m|mn|million)?/iu);
   const rejected = text.match(/(?:بس\s+)?مش\s*(\d+(?:[.,]\d+)?)\s*(?:مليون|m|mn|million)?/iu);
+
+
+  const explicitBudget = text.match(/(?:ب(?:سعر|ميزانيه|ميزانية)|ميزانيتي|معايا|معي|بمبلغ|budget(?:\s+of)?|for)\s*(?:حوالي\s*)?(\d+(?:[.,]\d+)?)\s*(?:مليون|m|mn|million)/iu);
+  if (explicitBudget && !around) {
+    const cap = money(explicitBudget[1]);
+    next.priceMax = cap; next.budgetMax = cap; next.currency = "EGP"; next.budgetFlexibility = "NONE";
+  }
 
   if (around) {
     const target = money(around[1]);

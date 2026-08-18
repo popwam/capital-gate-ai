@@ -83,9 +83,46 @@ test("natural map, distance and cash questions route to deterministic tools", ()
   assert.equal(planCustomerTurn("سعرها كام لو هدفع كاش", state()).intent, "PAYMENT_PLAN");
 });
 
-test("contact preference replies stay inside the lead handoff instead of becoming a property search", () => {
-  const previous = state({ presentation: { awaitingConfirmation: true, lastOfferedAction: "CONTACT_REQUEST", leadHandoffStage: "CONTACT_PREFERENCES" } });
-  assert.equal(planCustomerTurn("التواصل واتساب والتأكيد SMS", previous).intent, "CONTACT_REQUEST");
+test("payment choice stays inside viewing handoff", () => {
+  const previous = state({ presentation: { awaitingConfirmation: true, lastOfferedAction: "CONTACT_REQUEST", leadHandoffStage: "PAYMENT" } });
+  assert.equal(planCustomerTurn("كاش", previous).intent, "PAYMENT_PLAN");
+});
+
+test("call or WhatsApp confirmation stays inside the lead handoff", () => {
+  const previous = state({ presentation: { awaitingConfirmation: true, lastOfferedAction: "CONTACT_REQUEST", leadHandoffStage: "CONFIRMATION" } });
+  assert.equal(planCustomerTurn("التأكيد واتساب", previous).intent, "CONTACT_REQUEST");
+  assert.equal(planCustomerTurn("مكالمة", previous).intent, "CONTACT_REQUEST");
+});
+
+test("unsupported confirmation channels do not become valid preferences", () => {
+  const previous = state({ presentation: { awaitingConfirmation: true, lastOfferedAction: "CONTACT_REQUEST", leadHandoffStage: "CONFIRMATION" } });
+  const source = "التأكيد SMS";
+  const result = applyDeterministicTurnSemantics(source, previous, previous, planCustomerTurn(source, previous));
+  assert.equal(result.preferredConfirmationChannel, undefined);
+});
+
+test("clear out-of-domain discussion closes the conversation", () => {
+  const plan = planCustomerTurn("i need some milk", state({ language: "en" }));
+  assert.equal(plan.intent, "OUT_OF_DOMAIN");
+  const result = applyDeterministicTurnSemantics("i need some milk", state({ language: "en" }), state({ language: "en" }), plan);
+  assert.equal(result.presentation?.conversationClosed, true);
+});
+
+test("the current message controls response language", () => {
+  const previous = state({ language: "ar-EG" });
+  const source = "good morning";
+  const result = applyDeterministicTurnSemantics(source, previous, previous, planCustomerTurn(source, previous));
+  assert.equal(result.language, "en");
+});
+
+test("explicit apartment and budget are hard deterministic constraints", () => {
+  const previous = state();
+  const source = "محتاج شقة بسعر 12 مليون";
+  const result = applyDeterministicTurnSemantics(source, previous, previous, planCustomerTurn(source, previous));
+  assert.deepEqual(result.propertyTypes, ["Apartment"]);
+  assert.equal(result.budgetMax, 12_000_000);
+  assert.equal(result.priceMax, 12_000_000);
+  assert.equal(result.budgetFlexibility, "NONE");
 });
 
 test("identity replies stay inside the lead handoff", () => {

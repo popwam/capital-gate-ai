@@ -7,7 +7,7 @@ export type CustomerTurnIntent =
   | "UNIT_TYPE_AGGREGATION" | "MEDIA_REQUEST" | "BROCHURE_REQUEST" | "LOCATION_REQUEST"
   | "DISTANCE_REQUEST" | "VIEWING_REQUEST" | "CONTACT_REQUEST" | "COMPARISON"
   | "INVESTMENT" | "RESALE" | "RENTAL" | "PAYMENT_PLAN" | "AVAILABILITY_CHECK"
-  | "FOLLOW_UP_CONFIRMATION" | "UNKNOWN";
+  | "FOLLOW_UP_CONFIRMATION" | "OUT_OF_DOMAIN" | "UNKNOWN";
 
 export type ProximityPreference = {
   targetType: "GATE" | "AMENITY" | "LANDMARK" | "PROJECT_CENTER";
@@ -26,7 +26,9 @@ export type PresentationState = {
   lastReferencedEntity?: { type: "PROJECT" | "UNIT"; id: string };
   lastOfferedAction?: "PROPERTY_CARDS" | "PROJECT_BROCHURE" | "SEARCH_WIDEN" | "CONTACT_REQUEST";
   awaitingConfirmation?: boolean;
-  leadHandoffStage?: "IDENTITY" | "CONTACT_PREFERENCES" | "COMPLETE";
+  leadHandoffStage?: "PAYMENT" | "IDENTITY" | "CONFIRMATION" | "CONTACT_PREFERENCES" | "COMPLETE";
+  conversationClosed?: boolean;
+  conversationClosedReason?: string;
 };
 
 export type StructuredIntent = {
@@ -54,8 +56,9 @@ export type StructuredIntent = {
   purchaseIntent?: number;
   contactName?: string;
   contactPhone?: string;
-  preferredContactChannel?: "CALL" | "WHATSAPP" | "SMS" | "EMAIL";
-  preferredConfirmationChannel?: "CALL" | "WHATSAPP" | "SMS" | "EMAIL";
+  preferredContactChannel?: "CALL" | "WHATSAPP";
+  preferredConfirmationChannel?: "CALL" | "WHATSAPP";
+  preferredPaymentMode?: "CASH" | "INSTALLMENT";
   preferredVisitDayPart?: "MORNING" | "AFTERNOON" | "EVENING";
   preferredVisitTiming?: "MIDWEEK" | "WEEKEND" | "WEEKDAY";
   budgetFlexible?: boolean;

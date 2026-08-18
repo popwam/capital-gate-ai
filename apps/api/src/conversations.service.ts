@@ -13,7 +13,11 @@ export class ConversationsService {
   }
   async list(rawToken: string) {
     const device = await this.devices.resolve(rawToken);
-    return this.prisma.conversation.findMany({ where: { deviceId: device.id }, orderBy: { updatedAt: "desc" }, select: { id: true, title: true, detectedLanguage: true, createdAt: true, updatedAt: true, _count: { select: { messages: true } } } });
+    const rows = await this.prisma.conversation.findMany({ where: { deviceId: device.id }, orderBy: { updatedAt: "desc" }, select: { id: true, title: true, detectedLanguage: true, createdAt: true, updatedAt: true, state: { select: { searchContext: true } }, _count: { select: { messages: true } } } });
+    return rows.map((row) => {
+      const context = row.state?.searchContext as any;
+      return { ...row, closed: Boolean(context?.presentation?.conversationClosed), state: undefined };
+    });
   }
   async create(rawToken: string, title?: string) {
     const device = await this.devices.resolve(rawToken);
