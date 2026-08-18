@@ -211,7 +211,7 @@ class GateMasterPlanLocationDto {
   @Type(() => Number) @IsNumber() @Min(0) @Max(1) y!: number;
 }
 class MasterPlanCalibrationDto {
-  @IsArray() anchors!: Array<{ x:number; y:number; latitude:number; longitude:number }>;
+  @IsArray() anchors!: Array<{ x: number; y: number; latitude: number; longitude: number }>;
 }
 class BuildingMasterPlanLocationDto {
   @Type(() => Number) @IsNumber() @Min(0) @Max(1) x!: number;
@@ -227,7 +227,7 @@ class BulkMasterPlanAssignmentDto {
 @UseGuards(AdminAuthGuard)
 @Controller("admin/real-estate")
 export class RealEstateController {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) { }
 
   private async geoFromMasterPlan(projectId: string, x: number, y: number) {
     const project = await this.prisma.project.findUniqueOrThrow({ where: { id: projectId }, select: { masterPlanCalibration: true } });
@@ -235,7 +235,7 @@ export class RealEstateController {
     const anchors = Array.isArray(raw?.anchors) ? raw.anchors : [];
     if (anchors.length < 3) return null;
     try {
-      return calibrateMasterPlan(anchors.map((anchor:any) => ({ x:Number(anchor.x), y:Number(anchor.y), latitude:Number(anchor.latitude), longitude:Number(anchor.longitude) })))({ x, y });
+      return calibrateMasterPlan(anchors.map((anchor: any) => ({ x: Number(anchor.x), y: Number(anchor.y), latitude: Number(anchor.latitude), longitude: Number(anchor.longitude) })))({ x, y });
     } catch { return null; }
   }
   private async readinessFor(projectId: string, pending: Record<string, unknown> = {}) {
@@ -247,7 +247,14 @@ export class RealEstateController {
       this.prisma.marketProfile.count({ where: { projectId } }),
       this.prisma.unit.count({ where: { projectId, archivedAt: null, phaseId: null } }),
     ]);
-    const value = { ...project, ...pending } as Record<string, any>;
+    const definedPending = Object.fromEntries(
+      Object.entries(pending).filter(([, value]) => value !== undefined),
+    );
+
+    const value = {
+      ...project,
+      ...definedPending,
+    } as Record<string, any>;
     const missing: string[] = [];
     if (!value.canonicalName && !value.nameAr && !value.nameEn) missing.push("canonical identity");
     if (!value.locationId) missing.push("location");
@@ -470,8 +477,8 @@ export class RealEstateController {
   }
 
   @Patch("projects/:id/master-plan/calibration") async setMasterPlanCalibration(@Param("id") projectId: string, @Body() body: MasterPlanCalibrationDto, @Req() req: any) {
-    const anchors = (body.anchors ?? []).map((anchor:any) => ({ x:Number(anchor.x), y:Number(anchor.y), latitude:Number(anchor.latitude), longitude:Number(anchor.longitude) }));
-    if (anchors.length < 3 || anchors.some((a:any) => !Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(a.latitude) || !Number.isFinite(a.longitude) || a.x < 0 || a.x > 1 || a.y < 0 || a.y > 1 || a.latitude < -90 || a.latitude > 90 || a.longitude < -180 || a.longitude > 180)) throw new BadRequestException("المعايرة تحتاج 3 نقاط صحيحة على الأقل.");
+    const anchors = (body.anchors ?? []).map((anchor: any) => ({ x: Number(anchor.x), y: Number(anchor.y), latitude: Number(anchor.latitude), longitude: Number(anchor.longitude) }));
+    if (anchors.length < 3 || anchors.some((a: any) => !Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(a.latitude) || !Number.isFinite(a.longitude) || a.x < 0 || a.x > 1 || a.y < 0 || a.y > 1 || a.latitude < -90 || a.latitude > 90 || a.longitude < -180 || a.longitude > 180)) throw new BadRequestException("المعايرة تحتاج 3 نقاط صحيحة على الأقل.");
     try { calibrateMasterPlan(anchors); } catch { throw new BadRequestException("نقاط المعايرة غير صالحة أو على خط واحد."); }
     const value = { anchors, confirmedAt: new Date().toISOString(), confirmedByAdminId: req.admin.id };
     await this.prisma.project.update({ where: { id: projectId }, data: { masterPlanCalibration: value } });
