@@ -7,6 +7,8 @@ import {
   NotebookPen,
   Phone,
   UserRound,
+  AlertTriangle,
+  ShieldCheck,
 } from "lucide-react";
 import { adminApi } from "@/lib/api";
 const statuses = [
@@ -59,6 +61,16 @@ export default function LeadDetail({
       setError(e instanceof Error ? e.message : "Update failed");
     }
   }
+  async function reviewTrust(disposition: "ADMIN_CONFIRMED_REAL" | "ADMIN_CONFIRMED_FAKE" | "RESOLVED") {
+    const alert = lead?.trustAlerts?.find((item:any)=>item.status==="OPEN");
+    if (!alert) return;
+    try {
+      await adminApi.patch(`/leads/trust-alerts/${alert.id}`, { disposition });
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Trust review failed");
+    }
+  }
   async function addNote(e: FormEvent) {
     e.preventDefault();
     if (!note.trim()) return;
@@ -91,7 +103,7 @@ export default function LeadDetail({
             </h1>
             <p className="mt-1 flex items-center gap-2 text-[10px] text-[#6e7a75]">
               <Phone size={12} />
-              {lead.phone} · {lead.intentScore} / 100
+              {lead.phone} · {lead.intentScore} / 100 · {trustLabel(lead.trustStatus)}
             </p>
           </div>
           <a
@@ -112,6 +124,18 @@ export default function LeadDetail({
                   ["Last activity", fmt(lead.updatedAt)],
                 ]}
               />
+            </Section>
+            <Section title="التواصل والثقة" icon={<ShieldCheck size={15} />}>
+              <Grid values={[
+                ["حالة البيانات", trustLabel(lead.trustStatus)],
+                ["درجة الثقة", `${lead.trustScore ?? 0} / 100`],
+                ["التواصل المفضل", channelLabel(lead.preferredContactChannel)],
+                ["تأكيد الموعد", channelLabel(lead.preferredConfirmationChannel)],
+                ["وقت المعاينة", visitLabel(lead.preferredVisitDayPart, lead.preferredVisitTiming)],
+                ["تم فحص صيغة التواصل", lead.contactValidatedAt ? fmt(lead.contactValidatedAt) : "—"],
+              ]}/>
+              {lead.trustReasons?.length>0&&<div className="mt-3 flex flex-wrap gap-2">{lead.trustReasons.map((reason:string)=><span key={reason} className="rounded-full bg-[#fff3df] px-2.5 py-1 text-[10px] font-bold text-[#8a642d]">{reasonLabel(reason)}</span>)}</div>}
+              {lead.trustAlerts?.some((item:any)=>item.status==="OPEN")&&<div className="mt-4 rounded-2xl border border-[#ead8b9] bg-[#fffaf0] p-4"><div className="flex items-center gap-2 text-[#8b6225]"><AlertTriangle size={15}/><b>مراجعة بشرية مطلوبة</b></div><p className="mt-2 text-[11px] leading-6 text-[#766b59]">Cg رصد إشارات تستحق التحقق فقط؛ ما تمش تصنيف العميل Fake تلقائيًا.</p><div className="mt-3 flex flex-wrap gap-2"><button onClick={()=>reviewTrust("ADMIN_CONFIRMED_REAL")} className="rounded-xl bg-[#e5f3eb] px-3 py-2 text-[11px] font-bold text-[#2f6d52]">عميل حقيقي</button><button onClick={()=>reviewTrust("RESOLVED")} className="rounded-xl border bg-white px-3 py-2 text-[11px] font-bold">تمت المراجعة</button><button onClick={()=>reviewTrust("ADMIN_CONFIRMED_FAKE")} className="rounded-xl bg-red-50 px-3 py-2 text-[11px] font-bold text-red-700">Fake / Spam مؤكد</button></div></div>}
             </Section>
             <Section title="Interest">
               <Grid
@@ -145,10 +169,19 @@ export default function LeadDetail({
                     <div className="flex justify-between gap-3" dir="auto">
                       <div>
                         <b>{u.externalUnitId}</b>
-                        <p className="mt-1 text-[8px] text-[#75817c]">
-                          {u.project.name} · {u.unitType || "Unit"}{" "}
-                          {u.bedrooms ? `· ${u.bedrooms} bedrooms` : ""}
+                        <p className="mt-1 text-[8px] leading-4 text-[#75817c]">
+                          {u.project.nameAr || u.project.nameEn || u.project.name}
+                          {u.project.developer ? ` · ${u.project.developer.nameAr || u.project.developer.nameEn || u.project.developer.brandName || u.project.developer.name}` : ""}
+                          {u.unitType ? ` · ${u.unitType}` : ""}
+                          {u.bedrooms != null ? ` · ${u.bedrooms} bedrooms` : ""}
+                          {u.bathrooms != null ? ` / ${u.bathrooms} baths` : ""}
+                          {u.builtUpArea != null ? ` · ${Number(u.builtUpArea)} m²` : ""}
                         </p>
+                        {(u.phaseRef || u.project.location || u.project.formattedAddress) && <p className="mt-1 text-[8px] text-[#8a948f]">
+                          {u.phaseRef ? `Phase: ${u.phaseRef.nameAr || u.phaseRef.nameEn || u.phaseRef.name}` : ""}
+                          {u.phaseRef && (u.project.location || u.project.formattedAddress) ? " · " : ""}
+                          {u.project.location?.nameAr || u.project.location?.nameEn || u.project.location?.name || u.project.formattedAddress || ""}
+                        </p>}
                       </div>
                       <div className="text-right">
                         <b>
@@ -351,12 +384,42 @@ function budget(v: any) {
   return `${v.min ? Number(v.min).toLocaleString() : ""}${v.min && v.max ? " – " : ""}${v.max ? Number(v.max).toLocaleString() : ""} ${v.currency || ""}`;
 }
 function summaryText(v: any) {
-  if (!v || !Object.keys(v).length) return "No structured summary available.";
-  return Object.entries(v)
-    .filter(([, x]) => x != null && (!Array.isArray(x) || x.length))
-    .map(
-      ([k, x]) =>
-        `${k.replace(/([A-Z])/g, " $1")}: ${typeof x === "object" ? JSON.stringify(x) : x}`,
-    )
-    .join("\n");
+  if (!v || typeof v !== "object") return "No structured summary available.";
+  const labels: Record<string, string> = {
+    customerGoal: "Goal",
+    budget: "Budget",
+    preferredLocations: "Preferred locations",
+    propertyTypes: "Property types",
+    bedrooms: "Bedrooms",
+    bathrooms: "Bathrooms",
+    preferredPhase: "Preferred phase",
+    preferredBuilding: "Preferred building",
+    preferredPaymentDurationMonths: "Payment duration",
+    maxDownPayment: "Max down payment",
+    hardRequirements: "Must have",
+    softPreferences: "Preferences",
+    intentScore: "Intent score",
+    selectedUnitCode: "Selected unit",
+    preferredContactChannel: "Contact channel",
+    preferredConfirmationChannel: "Confirmation channel",
+    preferredVisitDayPart: "Visit day part",
+    preferredVisitTiming: "Visit timing",
+  };
+  const format = (key: string, value: any) => {
+    if (key === "budget" && value && typeof value === "object") return budget(value);
+    if (key === "preferredPaymentDurationMonths" && Number.isFinite(Number(value))) return `${value} months`;
+    if (key === "maxDownPayment" && Number.isFinite(Number(value))) return Number(value).toLocaleString();
+    if (Array.isArray(value)) return value.join("، ");
+    if (value && typeof value === "object") return Object.entries(value).filter(([, item]) => item != null).map(([subKey, item]) => `${subKey}: ${String(item)}`).join(" · ");
+    return String(value);
+  };
+  const rows = Object.entries(v)
+    .filter(([key, value]) => key !== "recentConversation" && value != null && value !== "" && (!Array.isArray(value) || value.length))
+    .map(([key, value]) => `${labels[key] || key.replace(/([A-Z])/g, " $1")}: ${format(key, value)}`);
+  return rows.length ? rows.join("\n") : "No structured summary available.";
 }
+
+function trustLabel(value?:string){return ({CONTACT_VALID:"بيانات صالحة مبدئيًا",NEEDS_VERIFICATION:"يحتاج تحقق",SUSPICIOUS:"مشبوه ويحتاج مراجعة",ADMIN_CONFIRMED_REAL:"أكد الأدمن أنه حقيقي",ADMIN_CONFIRMED_FAKE:"أكد الأدمن أنه Fake"} as Record<string,string>)[value||""]||value||"—";}
+function channelLabel(value?:string|null){return ({CALL:"مكالمة",WHATSAPP:"WhatsApp",SMS:"SMS",EMAIL:"Email"} as Record<string,string>)[value||""]||"—";}
+function visitLabel(day?:string|null,timing?:string|null){const a=({MORNING:"الصبح",AFTERNOON:"العصر",EVENING:"المساء"} as Record<string,string>)[day||""];const b=({MIDWEEK:"نص الأسبوع",WEEKEND:"نهاية الأسبوع",WEEKDAY:"يوم عمل"} as Record<string,string>)[timing||""];return [a,b].filter(Boolean).join(" · ")||"—";}
+function reasonLabel(value:string){return ({invalid_phone:"رقم الهاتف غير صالح",implausible_phone:"رقم يبدو تجريبيًا",placeholder_name:"اسم تجريبي",unit_code_as_name:"تم إدخال كود وحدة بدل الاسم",implausible_name:"الاسم يحتاج تحقق",repeated_name_token:"الاسم مكرر بشكل غير طبيعي",missing_name:"الاسم غير مكتمل",unclear_input:"رسالة غير مفهومة",repeated_nonsense_input:"إدخالات غير مفهومة متكررة",previous_admin_confirmed_fake_contact:"نفس بيانات التواصل سبق تأكيدها Fake"} as Record<string,string>)[value]||value.replaceAll("_"," ");}

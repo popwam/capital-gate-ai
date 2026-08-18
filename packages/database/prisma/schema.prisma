@@ -943,6 +943,7 @@ model Conversation {
   messages         Message[]
   state            ConversationState?
   leads            Lead[]
+  trustAlerts      CustomerTrustAlert[]
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 
@@ -976,27 +977,63 @@ model ConversationState {
 }
 
 model Lead {
-  id                String       @id @default(cuid())
-  conversationId    String
-  conversation      Conversation @relation(fields: [conversationId], references: [id])
-  name              String
-  phone             String
-  intent            LeadIntent
-  intentScore       Int
-  status            LeadStatus   @default(NEW)
-  payload           Json
-  source            String       @default("WEB_AI")
-  assignedToAdminId String?
-  assignedTo        AdminUser?   @relation("LeadAssignment", fields: [assignedToAdminId], references: [id], onDelete: SetNull)
-  followUpAt        DateTime?
-  events            LeadEvent[]
-  notes             LeadNote[]
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  id                           String       @id @default(cuid())
+  conversationId               String
+  conversation                 Conversation @relation(fields: [conversationId], references: [id])
+  name                         String
+  phone                        String
+  intent                       LeadIntent
+  intentScore                  Int
+  status                       LeadStatus   @default(NEW)
+  payload                      Json
+  source                       String       @default("WEB_AI")
+  trustStatus                  String       @default("CONTACT_VALID")
+  trustScore                   Int          @default(100)
+  trustReasons                 String[]     @default([])
+  preferredContactChannel      String?
+  preferredConfirmationChannel String?
+  preferredVisitDayPart        String?
+  preferredVisitTiming         String?
+  contactValidatedAt           DateTime?
+  assignedToAdminId            String?
+  assignedTo                   AdminUser?   @relation("LeadAssignment", fields: [assignedToAdminId], references: [id], onDelete: SetNull)
+  followUpAt                   DateTime?
+  events                       LeadEvent[]
+  notes                        LeadNote[]
+  trustAlerts                  CustomerTrustAlert[]
+  createdAt                    DateTime     @default(now())
+  updatedAt                    DateTime     @updatedAt
 
   @@index([status, createdAt])
   @@index([assignedToAdminId, followUpAt])
   @@index([intentScore])
+  @@index([trustStatus, createdAt])
+}
+
+model CustomerTrustAlert {
+  id                String       @id @default(cuid())
+  conversationId    String
+  conversation      Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  leadId            String?
+  lead              Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  riskLevel         String
+  score             Int
+  reasons           String[]     @default([])
+  candidateName     String?
+  candidatePhone    String?
+  messagePreview    String?
+  payload           Json?
+  status            String       @default("OPEN")
+  resolvedAt        DateTime?
+  resolvedByAdminId String?
+  resolvedBy        AdminUser?   @relation("TrustAlertResolution", fields: [resolvedByAdminId], references: [id], onDelete: SetNull)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([status, createdAt])
+  @@index([conversationId, status])
+  @@index([leadId])
+  @@index([candidatePhone])
 }
 
 model LeadEvent {
@@ -1038,6 +1075,7 @@ model AdminUser {
   assignedLeads Lead[]      @relation("LeadAssignment")
   leadNotes     LeadNote[]
   leadEvents    LeadEvent[]
+  resolvedTrustAlerts CustomerTrustAlert[] @relation("TrustAlertResolution")
   imports       DataImport[]
   importCorrections ImportCorrection[]
   approvedKnowledgeItems ProjectKnowledgeItem[]

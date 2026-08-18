@@ -1,6 +1,6 @@
 "use client";
 import { FormEvent, useEffect, useState } from "react";
-import { ArrowRight, Filter, Search, Users } from "lucide-react";
+import { AlertTriangle, ArrowRight, Filter, Search, Users } from "lucide-react";
 import { adminApi } from "@/lib/api";
 
 type Lead = {
@@ -10,6 +10,9 @@ type Lead = {
   status: string;
   intent: string;
   intentScore: number;
+  trustStatus: string;
+  trustScore: number;
+  trustReasons: string[];
   budget?: { min?: number; max?: number; currency?: string } | null;
   preferredAreas: string[];
   interestedProject?: { id: string; name: string } | null;
@@ -27,6 +30,7 @@ type Page = {
   totalPages: number;
 };
 type Option = { id: string; name: string };
+type TrustAlert = { id:string; riskLevel:string; score:number; reasons:string[]; candidateName?:string|null; candidatePhone?:string|null; messagePreview?:string|null; createdAt:string; conversationId:string; leadId?:string|null };
 const statuses = [
   "NEW",
   "CONTACTED",
@@ -62,12 +66,14 @@ export default function LeadsPage() {
   });
   const [admins, setAdmins] = useState<Option[]>([]);
   const [projects, setProjects] = useState<Option[]>([]);
+  const [trustAlerts, setTrustAlerts] = useState<TrustAlert[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState({
     search: "",
     status: "",
     intentLevel: "",
+    trustStatus: "",
     projectId: "",
     assignedTo: "",
     followUp: "",
@@ -75,6 +81,13 @@ export default function LeadsPage() {
     createdTo: "",
     sort: "newest",
   });
+  async function loadAlerts() {
+    try { setTrustAlerts(await adminApi.get<TrustAlert[]>("/leads/trust-alerts?limit=8")); } catch { /* alerts are supplemental */ }
+  }
+  async function reviewAlert(id:string, disposition:"ADMIN_CONFIRMED_REAL"|"ADMIN_CONFIRMED_FAKE"|"RESOLVED") {
+    try { await adminApi.patch(`/leads/trust-alerts/${id}`, { disposition }); await loadAlerts(); await load(data.page); }
+    catch (e) { setError(e instanceof Error ? e.message : "Trust review failed"); }
+  }
   async function load(page = 1) {
     setLoading(true);
     setError("");
@@ -83,7 +96,7 @@ export default function LeadsPage() {
       Object.entries(filters).forEach(([k, v]) => v && q.set(k, v));
       setData(await adminApi.get<Page>(`/leads?${q}`));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load leads");
+      setError(e instanceof Error ? e.message : "تعذر تحميل العملاء");
     } finally {
       setLoading(false);
     }
@@ -93,6 +106,7 @@ export default function LeadsPage() {
       adminApi.get<Option[]>("/leads/options/admins").then(setAdmins),
       adminApi.get<Option[]>("/leads/options/projects").then(setProjects),
     ]);
+    void loadAlerts();
     void load();
   }, []);
   function submit(e: FormEvent) {
@@ -104,6 +118,7 @@ export default function LeadsPage() {
       <section className="rounded-[24px] border border-[#dfe4e0] bg-white p-5 sm:p-6">
         <div className="flex items-end justify-between gap-4"><div><div className="flex items-center gap-2 text-[12px] font-bold text-[#4f7568]"><Users size={16}/> إدارة فرص البيع</div><h2 className="mt-2 text-[24px] font-bold">العملاء المحتملون</h2><p className="mt-1 text-[13px] text-[#74817b]">{data.total} فرصة ناتجة من محادثات العملاء، مع المتابعة والتعيين وسياق الاهتمام.</p></div></div>
       </section>
+      {trustAlerts.length>0&&<section className="mt-4 rounded-[22px] border border-[#ead7b9] bg-[#fffaf0] p-4 sm:p-5"><div className="flex items-center gap-2 text-[#8b6225]"><AlertTriangle size={17}/><b>تنبيهات ثقة العملاء</b><span className="rounded-full bg-white px-2 py-1 text-[11px] font-bold">{trustAlerts.length}</span></div><p className="mt-1 text-[12px] text-[#8a7a62]">دي تنبيهات مراجعة، مش حكم تلقائي إن العميل Fake. قرار التأكيد النهائي للأدمن.</p><div className="mt-3 grid gap-2 lg:grid-cols-2">{trustAlerts.slice(0,4).map(alert=><div key={alert.id} className="rounded-xl border border-[#eadfcf] bg-white p-3"><a href={alert.leadId?`/admin/leads/${alert.leadId}`:`/admin/conversations/${alert.conversationId}`} className="block transition hover:opacity-80"><div className="flex items-center justify-between gap-2"><b className="text-[12px]" dir="auto">{alert.candidateName||"بيانات غير مكتملة"}</b><TrustStatus value={alert.riskLevel}/></div><p className="mt-1 text-[11px] text-[#756f64]" dir="auto">{alert.candidatePhone||alert.messagePreview||"—"}</p><p className="mt-2 text-[10px] text-[#9a7650]">{alert.reasons.slice(0,3).map(reasonLabel).join(" · ")}</p></a><div className="mt-3 flex gap-2"><button onClick={()=>reviewAlert(alert.id,"ADMIN_CONFIRMED_REAL")} className="rounded-lg bg-[#e5f3eb] px-2.5 py-1.5 text-[10px] font-bold text-[#2f6d52]">حقيقي</button><button onClick={()=>reviewAlert(alert.id,"RESOLVED")} className="rounded-lg border px-2.5 py-1.5 text-[10px] font-bold">مراجَع</button><button onClick={()=>reviewAlert(alert.id,"ADMIN_CONFIRMED_FAKE")} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-[10px] font-bold text-red-700">Fake مؤكد</button></div></div>)}</div></section>}
         <form onSubmit={submit} className="mt-5 rounded-[22px] border border-[#dfe4e0] bg-white p-4">
           <div className="flex items-center gap-2 text-[9px] font-bold">
             <Filter size={13} /> البحث والفلاتر
@@ -127,34 +142,40 @@ export default function LeadsPage() {
               value={filters.status}
               change={(v) => setFilters({ ...filters, status: v })}
               options={statuses}
-              label="All statuses"
+              label="كل الحالات"
+            />
+            <Select
+              value={filters.trustStatus}
+              change={(v) => setFilters({ ...filters, trustStatus: v })}
+              options={["CONTACT_VALID","NEEDS_VERIFICATION","SUSPICIOUS","ADMIN_CONFIRMED_REAL","ADMIN_CONFIRMED_FAKE"]}
+              label="كل حالات الثقة"
             />
             <Select
               value={filters.intentLevel}
               change={(v) => setFilters({ ...filters, intentLevel: v })}
               options={["high", "medium", "low"]}
-              label="All intent levels"
+              label="كل درجات النية"
             />
             <Select
               value={filters.projectId}
               change={(v) => setFilters({ ...filters, projectId: v })}
               entries={projects}
-              label="All projects"
+              label="كل المشروعات"
             />
             <Select
               value={filters.assignedTo}
               change={(v) => setFilters({ ...filters, assignedTo: v })}
-              entries={[{ id: "unassigned", name: "Unassigned" }, ...admins]}
-              label="Any assignment"
+              entries={[{ id: "unassigned", name: "غير معيّن" }, ...admins]}
+              label="أي مسؤول"
             />
             <Select
               value={filters.followUp}
               change={(v) => setFilters({ ...filters, followUp: v })}
               options={["due", "upcoming", "none"]}
-              label="Any follow-up"
+              label="أي متابعة"
             />
             <label className="text-[7px] font-bold text-[#7d8883]">
-              Created from
+              من تاريخ
               <input
                 type="date"
                 value={filters.createdFrom}
@@ -165,7 +186,7 @@ export default function LeadsPage() {
               />
             </label>
             <label className="text-[7px] font-bold text-[#7d8883]">
-              Created to
+              إلى تاريخ
               <input
                 type="date"
                 value={filters.createdTo}
@@ -186,10 +207,10 @@ export default function LeadsPage() {
                 "last_activity",
                 "follow_up",
               ]}
-              label="Sort"
+              label="الترتيب"
             />
             <button className="h-10 rounded-xl bg-forest px-4 text-[9px] font-bold text-white">
-              Apply
+              تطبيق
             </button>
           </div>
         </form>
@@ -228,9 +249,8 @@ export default function LeadsPage() {
               >
                 <Cell label="Customer">
                   <b className="block text-[10px]">{lead.name}</b>
-                  <span className="text-[8px] text-[#74817b]">
-                    {lead.phone}
-                  </span>
+                  <span className="text-[8px] text-[#74817b]">{lead.phone}</span>
+                  <div className="mt-1"><TrustStatus value={lead.trustStatus}/></div>
                 </Cell>
                 <Cell label="Status">
                   <Status value={lead.status} />
@@ -254,7 +274,7 @@ export default function LeadsPage() {
                 <Cell label="Created">{fmt(lead.createdAt)}</Cell>
                 <Cell label="Last activity">{fmt(lead.lastActivityAt)}</Cell>
                 <Cell label="Assigned">
-                  {lead.assignedTo?.name || "Unassigned"}
+                  {lead.assignedTo?.name || "غير معيّن"}
                 </Cell>
                 <ArrowRight size={13} className="hidden xl:block" />
               </a>
@@ -348,3 +368,6 @@ function Status({ value }: { value: string }) {
     </span>
   );
 }
+
+function reasonLabel(value:string){return ({invalid_phone:"رقم غير صالح",implausible_phone:"رقم تجريبي",placeholder_name:"اسم تجريبي",unit_code_as_name:"كود وحدة بدل الاسم",implausible_name:"اسم يحتاج تحقق",repeated_name_token:"الاسم مكرر بشكل غير طبيعي",missing_name:"الاسم ناقص",unclear_input:"رسالة غير مفهومة",repeated_nonsense_input:"إدخالات غير مفهومة متكررة",previous_admin_confirmed_fake_contact:"سبق تأكيده كبيانات وهمية"} as Record<string,string>)[value]||value.replaceAll("_"," ");}
+function TrustStatus({value}:{value?:string}){const v=value||"CONTACT_VALID";const cls=v==="SUSPICIOUS"||v==="ADMIN_CONFIRMED_FAKE"?"bg-red-50 text-red-700":v==="NEEDS_VERIFICATION"?"bg-amber-50 text-amber-800":v==="ADMIN_CONFIRMED_REAL"?"bg-emerald-50 text-emerald-700":"bg-[#edf3ef] text-[#39705b]";const label=({CONTACT_VALID:"بيانات صالحة",NEEDS_VERIFICATION:"يحتاج تحقق",SUSPICIOUS:"مشبوه",ADMIN_CONFIRMED_REAL:"أكده الأدمن حقيقي",ADMIN_CONFIRMED_FAKE:"أكده الأدمن وهمي"} as Record<string,string>)[v]||v;return <span className={`inline-flex rounded-full px-2 py-1 text-[9px] font-bold ${cls}`}>{label}</span>}

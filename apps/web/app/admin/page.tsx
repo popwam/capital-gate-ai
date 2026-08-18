@@ -13,7 +13,7 @@ type ImportBatch = { id:string; name?:string|null; fileName:string; uploadedAt:s
 type ImportPage = { items:ImportBatch[]; total:number };
 type AIHealthItem = { provider?:string; healthy?:boolean; status?:string; model?:string|null; selectedModel?:string|null; errorCode?:string };
 type AIHealth = AIHealthItem | AIHealthItem[];
-type LeadSummary = { newLeads:number; highIntent:number; followUpsDue:number; thisWeek:number };
+type LeadSummary = { newLeads:number; highIntent:number; followUpsDue:number; thisWeek:number; trustAlertsOpen:number };
 type Tab = "OVERVIEW" | "INVENTORY" | "AI" | "ATTENTION";
 
 const fmt = new Intl.NumberFormat("ar-EG");
@@ -57,7 +57,7 @@ export default function AdminDashboardPage(){
 
       {tab==="AI"&&<div className="rounded-2xl border bg-white p-5"><div className="flex items-center justify-between gap-3"><div><b>عقول Cg Ai</b><p className="mt-1 text-xs text-[#7d8983]">الحالة الفعلية للمزودين والموديلات</p></div><span className={`grid h-11 w-11 place-items-center rounded-xl ${aiHealthy?"bg-[#eaf3ee] text-[#356c58]":"bg-[#f8ecdd] text-[#8a672f]"}`}>{aiHealthy?<CheckCircle2 size={20}/>:<AlertCircle size={20}/>}</span></div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{aiItems.length?aiItems.map((item,index)=><div key={`${item.provider}-${index}`} className="rounded-2xl border bg-[#fbfbf8] p-4"><div className="flex items-center gap-2"><Bot size={17}/><b>{item.provider||"AI"}</b><span className={`me-auto h-2.5 w-2.5 rounded-full ${item.healthy===false?"bg-red-500":"bg-emerald-500"}`}/></div><p className="mt-2 truncate text-xs text-[#718079]" dir="auto">{item.model||item.selectedModel||"Dynamic route"}</p>{item.errorCode&&<p className="mt-2 text-xs text-red-700">{item.errorCode}</p>}</div>):<p className="text-sm text-[#7d8983]">لم تصل بيانات الصحة بعد.</p>}</div><a href="/admin/system" className="mt-4 inline-flex rounded-xl border px-4 py-2.5 text-xs font-bold">تفاصيل النظام</a></div>}
 
-      {tab==="ATTENTION"&&<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><Action icon={FileSpreadsheet} label="استيرادات تحتاج قرار" value={dashboard?.importsNeedingInput??0} href="/admin/data" warn/><Action icon={Sparkles} label="معرفة تحتاج مراجعة" value={dashboard?.pendingKnowledge??0} href="/admin/projects" warn/><Action icon={Clock3} label="متابعات مطلوبة" value={leadSummary?.followUpsDue??dashboard?.followUps??0} href="/admin/leads" warn/><Action icon={MapPinned} label="مشروعات بحدود" value={dashboard?.projectsWithBoundary??0} href="/admin/projects"/><Action icon={Network} label="وحدات محددة مكانيًا" value={dashboard?.mappedUnits??0} href="/admin/inventory"/></div>}
+      {tab==="ATTENTION"&&<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><Action icon={FileSpreadsheet} label="استيرادات تحتاج قرار" value={dashboard?.importsNeedingInput??0} href="/admin/data" warn/><Action icon={Sparkles} label="معرفة تحتاج مراجعة" value={dashboard?.pendingKnowledge??0} href="/admin/projects" warn/><Action icon={Clock3} label="متابعات مطلوبة" value={leadSummary?.followUpsDue??dashboard?.followUps??0} href="/admin/leads" warn/><Action icon={AlertCircle} label="بيانات عملاء تحتاج تحقق" value={leadSummary?.trustAlertsOpen??0} href="/admin/leads" warn/><Action icon={MapPinned} label="مشروعات بحدود" value={dashboard?.projectsWithBoundary??0} href="/admin/projects"/><Action icon={Network} label="وحدات محددة مكانيًا" value={dashboard?.mappedUnits??0} href="/admin/inventory"/></div>}
     </section>
   </main>;
 }

@@ -17,19 +17,36 @@ const normalize = (value: string) => value.toLowerCase().normalize("NFKC").repla
 const affirmative = /^(?:(?:اه|ايوه|أيوه|تمام|ماشي|yes|yeah|yep|sure|ok|okay)(?:\s+(?:وريني|ابعت|ابعته))?|ابعت|ابعته|وريني(?:\s+كده)?)$/iu;
 
 export function exactExternalUnitId(source: string) {
-  const strict = source.match(/(?:unit|الوحده|الوحدة|وحده|وحدة)?\s*([a-z][a-z0-9-]*\s+\d+\s*\/\s*\d+)\b/iu)?.[1];
+  // Normalize the punctuation people commonly paste from WhatsApp/Office first.
+  // A unit code must resolve the same whether the customer writes LS8-C-402,
+  // LS8‑C‑402, ls8-c-402, or labels it as "الوحدة LS8-C-402".
+  const clean = source
+    .replace(/[‐‑‒–—−]/g, "-")
+    .replace(/[／⁄]/g, "/");
+
+  const strict = clean.match(/(?:unit|الوحده|الوحدة|وحده|وحدة)?\s*([a-z][a-z0-9-]*\s+\d+\s*\/\s*\d+)\b/iu)?.[1];
   if (strict) return strict.replace(/\s*\/\s*/g, "/").replace(/\s+/g, " ").trim();
 
-  const labeled = source.match(/(?:unit|الوحده|الوحدة|وحده|وحدة)\s*[:#-]?\s*([a-z0-9][a-z0-9_-]*(?:\s+\d+\s*\/\s*\d+)?)/iu)?.[1];
-  const normalized = labeled?.replace(/\s*\/\s*/g, "/").replace(/\s+/g, " ").trim();
-  if (!normalized || /^(?:دي|ده|دا|this|that)$/iu.test(normalized)) return undefined;
-  return normalized;
+  const labeled = clean.match(/(?:unit|الوحده|الوحدة|وحده|وحدة)\s*[:#-]?\s*([a-z0-9][a-z0-9_-]*(?:\s+\d+\s*\/\s*\d+)?)/iu)?.[1];
+  const labeledNormalized = labeled?.replace(/\s*\/\s*/g, "/").replace(/\s+/g, " ").trim();
+  if (labeledNormalized && !/^(?:دي|ده|دا|this|that)$/iu.test(labeledNormalized)) return labeledNormalized;
+
+  // Bare inventory codes are very common follow-ups ("ls8-c-402").
+  // Require at least three chunks so a partial family/building reference such as
+  // "LS8-C" is not incorrectly treated as one exact unit.
+  const bare = clean.match(/(?:^|\s)([a-z0-9]{1,16}(?:[-_][a-z0-9]{1,16}){2,})(?=\s|[.,،؛;!?؟]|$)/iu)?.[1];
+  return bare?.trim();
 }
 
 export function planCustomerTurn(source: string, previous: StructuredIntent): TurnPlan {
   const text = normalize(source);
   const unitId = exactExternalUnitId(source);
   const offered = previous.presentation?.awaitingConfirmation ? previous.presentation.lastOfferedAction : undefined;
+  const handoffStage = previous.presentation?.leadHandoffStage;
+  const contactLike = /(?:\+?\d[\d\s().-]{3,}\d|اسمي|انا\s+[\p{L}]|رقمي|رقم\s*(?:الموبايل|الهاتف)|واتساب|whats?app|مكالمه|مكالمة|اتصال|call|sms|رساله|رسالة|ايميل|إيميل|email|التاكيد|التأكيد|تاكيد|تأكيد)/iu.test(source);
+  if (offered === "CONTACT_REQUEST" && handoffStage && handoffStage !== "COMPLETE" && contactLike) {
+    return { intent: "CONTACT_REQUEST", requiresDatabase: false, requiresExtraction: true, emitCards: false, executeBrochure: false };
+  }
 
   if (affirmative.test(text) && offered) {
     return {
@@ -51,10 +68,10 @@ export function planCustomerTurn(source: string, previous: StructuredIntent): Tu
   if (/(?:بروشور|brochure|pdf\s+(?:المشروع|project))/iu.test(text))
     return { intent: "BROCHURE_REQUEST", requiresDatabase: true, requiresExtraction: false, emitCards: false, executeBrochure: /(?:ابعت|ابعته|هات|نزل|download|send|show)/iu.test(text) };
 
-  if (/(?:بعيد كام|المسافه|كام\s*(?:كيلو|كم|دقيقه)|بينه\s+وبين|بينها\s+وبين|how far|distance|route duration)/iu.test(text))
+  if (/(?:بعيد(?:ه|ة)?(?:\s+قد\s*(?:ايه|اي)|\s+كام|.*?\s+عن)|قد\s*(?:ايه|اي)\s+(?:عن|من)|المسافه|المسافة|كام\s*(?:كيلو|كم|دقيقه)|بينه\s+وبين|بينها\s+وبين|how far|distance|route duration)/iu.test(text))
     return { intent: "DISTANCE_REQUEST", requiresDatabase: true, requiresExtraction: false, emitCards: false, executeBrochure: false };
 
-  if (/(?:فين\s+(?:المشروع|مكان)|المشروع\s+فين|الموقع|لوكيشن|project location|where is)/iu.test(text))
+  if (/(?:فين\s+(?:المشروع|مكان)|المشروع\s+فين|(?:وريني|اعرض|هات)?\s*(?:الموقع|موقع)(?:\s+المشروع)?|مكان\s+المشروع|لوكيشن|project location|where is)/iu.test(text))
     return { intent: "LOCATION_REQUEST", requiresDatabase: true, requiresExtraction: false, emitCards: false, executeBrochure: false };
 
   if (/(?:تعرف|عندك|المتاح|الموجود).*(?:مطورين|المطورين|developers?)|(?:ايه|اي|what)\s+(?:المطورين|developers?)/iu.test(text))
@@ -93,7 +110,7 @@ export function planCustomerTurn(source: string, previous: StructuredIntent): Tu
   if (/(?:قارن|مقارنه|compare|comparison|انهي احسن)/iu.test(text))
     return { intent: "COMPARISON", requiresDatabase: true, requiresExtraction: true, emitCards: false, executeBrochure: false };
 
-  if (/(?:نظام\s+السداد|خطه\s+السداد|خطة\s+السداد|تقسيط|قسط|مقدم|payment plan|installments?)/iu.test(text))
+  if (/(?:نظام\s+السداد|خطه\s+السداد|خطة\s+السداد|تقسيط|قسط|مقدم|كاش|نقدي|cash|payment plan|installments?)/iu.test(text))
     return { intent: "PAYMENT_PLAN", requiresDatabase: true, requiresExtraction: false, emitCards: false, executeBrochure: false, exactUnitId: unitId };
 
   if (/(?:متاحه|متاح|availability|available).*(?:وحده|unit)|(?:في|هل).*(?:وحده|unit).*(?:اقل|أقل|under)/iu.test(text))

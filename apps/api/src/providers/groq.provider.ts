@@ -88,7 +88,7 @@ export class GroqProvider implements AIProvider {
   }
 
   async composeAnswerWithModel(input: AnswerInput, model: string) {
-    const response = await this.request(model, advisorMessages(input), { temperature: 0.42, maxTokens: 1000 });
+    const response = await this.request(model, advisorMessages(input), { temperature: 0.2, maxTokens: 1000 });
     const body = (await response.json()) as GroqChatResponse;
     const content = this.finalText(body.choices?.[0]?.message?.content ?? "");
     if (!content) throw new AIUpstreamError("groq", "EMPTY_RESPONSE", 502, true);
@@ -96,7 +96,7 @@ export class GroqProvider implements AIProvider {
   }
 
   async *streamAnswerWithModel(input: AnswerInput, model: string): AsyncIterable<string> {
-    const response = await this.request(model, advisorMessages(input), { stream: true, temperature: 0.42, maxTokens: 1000 });
+    const response = await this.request(model, advisorMessages(input), { stream: true, temperature: 0.2, maxTokens: 1000 });
     if (!response.body) throw new AIUpstreamError("groq", "EMPTY_STREAM", 502, true);
 
     const reader = response.body.getReader();

@@ -15,6 +15,7 @@ import {
   CreateLeadNoteDto,
   LeadListQueryDto,
   UpdateLeadDto,
+  TrustAlertFeedbackDto,
 } from "./lead-crm.dto";
 import { LeadCrmService } from "./lead-crm.service";
 
@@ -30,6 +31,16 @@ export class LeadCrmController {
   }
   @Get("summary") summary() {
     return this.crm.summaryCounts();
+  }
+  @Get("trust-alerts") trustAlerts(@Query("limit") limit?: string) {
+    return this.crm.trustAlerts(limit ? Number(limit) : 20);
+  }
+  @Patch("trust-alerts/:id") reviewTrustAlert(
+    @Param("id") id: string,
+    @Body() body: TrustAlertFeedbackDto,
+    @Req() req: any,
+  ) {
+    return this.crm.reviewTrustAlert(id, body, this.admin(req));
   }
   @Get("options/admins") admins() {
     return this.crm.admins();

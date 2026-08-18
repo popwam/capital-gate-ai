@@ -57,7 +57,7 @@ export class ApplicationCache implements CacheAdapter {
     for (const [key, entry] of this.entries) if (entry.namespace === namespace || entry.namespace.startsWith(`${namespace}:`)) this.entries.delete(key);
   }
   invalidateCustomerData() {
-    for (const namespace of ["location-aliases", "property-search", "aggregation", "project-public", "developer-public", "project-media", "project-documents"]) this.invalidate(namespace);
+    for (const namespace of ["location-aliases", "property-search", "property-search-v3", "aggregation", "project-public", "developer-public", "project-media", "project-documents"]) this.invalidate(namespace);
   }
   stats(): CacheStats {
     const total = this.hits + this.misses;

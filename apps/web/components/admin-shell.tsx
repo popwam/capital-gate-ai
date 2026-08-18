@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, LogOut, Menu, X } from "lucide-react";
+import { AlertTriangle, Bell, CheckCircle2, Loader2, LogOut, Menu, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { AdminSectionNav } from "./admin-section-nav";
 import { LogoMark } from "./logo";
@@ -29,7 +29,24 @@ export function AdminShell({ children, privateEntry = false }: { children: React
   const [open, setOpen] = useState(false);
   const [mutation, setMutation] = useState<AdminMutationDetail | null>(null);
   const [activeMutationCount, setActiveMutationCount] = useState(0);
+  const [trustAlertCount, setTrustAlertCount] = useState(0);
   const activeMutationsRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (privateEntry || pathname === "/admin/login") return;
+    let cancelled = false;
+    const loadTrustAlerts = async () => {
+      try {
+        const summary = await adminApi.get<{ trustAlertsOpen?: number }>("/leads/summary");
+        if (!cancelled) setTrustAlertCount(Number(summary.trustAlertsOpen ?? 0));
+      } catch {
+        // A trust badge must never block the admin shell. The leads page still shows the full alert list.
+      }
+    };
+    void loadTrustAlerts();
+    const timer = window.setInterval(loadTrustAlerts, 60_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [pathname, privateEntry]);
+
   useEffect(() => {
     let clearTimer: number | undefined;
     const handler = (event: Event) => {
@@ -105,7 +122,8 @@ export function AdminShell({ children, privateEntry = false }: { children: React
                 <p className="hidden truncate text-[12px] text-[#718079] sm:block">{subtitle}</p>
               </div>
             </div>
-<div className="flex min-w-[132px] justify-end">
+<div className="flex min-w-[132px] items-center justify-end gap-2">
+              {trustAlertCount > 0 ? <a href="/admin/leads" className="inline-flex h-10 items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 text-xs font-black text-amber-800" title="بيانات عملاء تحتاج مراجعة"><Bell size={14}/><span>{trustAlertCount}</span><span className="hidden sm:inline">تحتاج تحقق</span></a> : null}
               {mutation ? <div className={`inline-flex max-w-[360px] items-center gap-2 rounded-full border px-3 py-2 text-xs font-black shadow-sm ${mutation.state === "saving" ? "border-[#d7ded9] bg-white text-[#55645e]" : mutation.state === "saved" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>
                 {mutation.state === "saving" ? <Loader2 size={14} className="animate-spin" /> : mutation.state === "saved" ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
                 <span className="truncate">{mutation.state === "saving" ? `جاري الحفظ${activeMutationCount > 1 ? ` · ${activeMutationCount} عمليات` : ""}…` : mutation.state === "saved" ? "تم حفظ كل التغييرات" : "فشل الحفظ"}</span>

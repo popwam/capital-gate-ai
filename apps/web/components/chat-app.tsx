@@ -153,7 +153,8 @@ function MessageView({ message, liked, setLiked, onAction, isLast, isArabic }: {
   const brochures = actions.find((action:any) => action.type === "PROJECT_BROCHURE")?.payload?.documents ?? [];
   const location = actions.find((action:any) => action.type === "PROJECT_LOCATION")?.payload?.map;
   const distance = actions.find((action:any) => action.type === "DISTANCE_RESULT")?.payload;
-  const contact = actions.some((action:any) => action.type === "CONTACT_REQUEST");
+  const contactAction = actions.find((action:any) => action.type === "CONTACT_REQUEST");
+  const contact = Boolean(contactAction);
   return <div className={`message-rise mb-7 flex gap-3 ${assistant ? "justify-start" : "justify-end"}`}>
     {assistant && <AssistantAvatar/>}
     <div className={assistant ? "max-w-[94%] sm:max-w-[86%]" : "max-w-[88%] sm:max-w-[78%]"}>
@@ -163,7 +164,7 @@ function MessageView({ message, liked, setLiked, onAction, isLast, isArabic }: {
       {!!brochures.length && <Documents documents={brochures}/>}
       {!!location && <MapResult map={location}/>}
       {!!distance && <DistanceResult result={distance}/>}
-      {(contact || message.kind === "lead_created") && <LeadHint created={message.kind === "lead_created"}/>}
+      {(contact || message.kind === "lead_created") && <LeadHint created={message.kind === "lead_created"} action={contactAction?.payload} onAction={onAction} isArabic={isArabic}/>}
       {assistant && isLast && <div className="mt-2 flex gap-1"><button className="rounded-lg p-1.5 text-[#8b958f] hover:bg-[#efede7]"><Check size={13}/></button><button className="rounded-lg p-1.5 text-[#8b958f] hover:bg-[#efede7]"><MoreHorizontal size={14}/></button></div>}
     </div>
   </div>;
@@ -245,7 +246,28 @@ function DistanceResult({result}:{result:any}) {
   return <div className="mt-3 flex flex-wrap items-center gap-3 rounded-2xl border border-[#dcddd7] bg-white p-4"><div className="grid h-10 w-10 place-items-center rounded-xl bg-[#e2f0e9] text-forest"><Clock3 size={18}/></div><div className="min-w-[150px] flex-1"><p className="text-[14px] font-bold">{km!=null?`${km.toFixed(1)} km`:"Route"}{minutes!=null?` · ${minutes} min`:""}</p><p className="mt-1 text-[12px] text-[#89938f]">{route.source==="ADMIN_VERIFIED"?"مسافة موثقة":"Google Routes"}</p></div>{href&&<a href={href} target="_blank" rel="noreferrer" className="rounded-full bg-forest px-4 py-2 text-[12px] font-bold text-white">الاتجاهات</a>}</div>;
 }
 function EmptyAttachment({label}:{label:string}) { return <div className="mt-3 rounded-xl border border-dashed border-[#cfd3ce] px-4 py-3 text-[11px] text-[#738079]">{label}</div>; }
-function LeadHint({created}:{created:boolean}) { return <div className="mt-3 flex items-center gap-2 rounded-xl bg-[#edf5f1] px-3 py-2 text-[11px] font-semibold text-[#39705b]"><ShieldCheck size={13}/>{created ? "Your request was saved securely. A property advisor can follow up from the lead record." : "Your details are only requested when you ask to proceed and are stored securely."}</div>; }
+function LeadHint({created,action,onAction,isArabic}:{created:boolean;action?:any;onAction:(v:string)=>void;isArabic:boolean}) {
+  const stage=action?.stage;
+  const needsContact=Boolean(action?.needsContactChannel);
+  const needsConfirmation=Boolean(action?.needsConfirmationChannel);
+  return <div className="mt-3 rounded-2xl border border-[#dce8e1] bg-[#edf5f1] p-3 text-[12px] text-[#39705b]">
+    <div className="flex items-center gap-2 font-semibold"><ShieldCheck size={14}/><span>{stage==="VERIFY_CONTACT"?(isArabic?"البيانات محتاجة تصحيح قبل تسجيل الطلب":"Contact details need correction before saving") : created?(isArabic?"الطلب محفوظ لفريق المبيعات":"The request is saved for the sales team"):(isArabic?"بيانات التواصل مطلوبة فقط لإكمال الطلب":"Contact details are only needed to proceed")}</span></div>
+    {stage==="CONTACT_PREFERENCES"&&<div className="mt-3 space-y-2">
+      {needsContact&&<div><p className="mb-1.5 text-[10px] font-bold text-[#65776f]">{isArabic?"وسيلة التواصل الأساسية":"Main contact channel"}</p><div className="flex flex-wrap gap-2">
+        <button onClick={()=>onAction(isArabic?"التواصل المفضل مكالمة":"Preferred contact is a phone call")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">{isArabic?"مكالمة":"Call"}</button>
+        <button onClick={()=>onAction(isArabic?"التواصل المفضل واتساب":"Preferred contact is WhatsApp")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">WhatsApp</button>
+        <button onClick={()=>onAction(isArabic?"التواصل المفضل SMS":"Preferred contact is SMS")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">SMS</button>
+        <button onClick={()=>onAction(isArabic?"التواصل المفضل إيميل":"Preferred contact is email")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">{isArabic?"إيميل":"Email"}</button>
+      </div></div>}
+      {needsConfirmation&&<div><p className="mb-1.5 text-[10px] font-bold text-[#65776f]">{isArabic?"وسيلة تأكيد الموعد":"Appointment confirmation"}</p><div className="flex flex-wrap gap-2">
+        <button onClick={()=>onAction(isArabic?"التأكيد المفضل واتساب":"Preferred confirmation is WhatsApp")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">WhatsApp</button>
+        <button onClick={()=>onAction(isArabic?"التأكيد المفضل SMS":"Preferred confirmation is SMS")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">SMS</button>
+        <button onClick={()=>onAction(isArabic?"التأكيد المفضل مكالمة":"Preferred confirmation is a phone call")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">{isArabic?"مكالمة":"Call"}</button>
+        <button onClick={()=>onAction(isArabic?"التأكيد المفضل إيميل":"Preferred confirmation is email")} className="rounded-full border border-[#b9d0c6] bg-white px-3 py-2 text-[11px] font-bold">{isArabic?"إيميل":"Email"}</button>
+      </div></div>}
+    </div>}
+  </div>;
+}
 
 function Composer({ input, setInput, send, disabled, isArabic }: {input:string;setInput:(v:string)=>void;send:()=>void;disabled:boolean;isArabic:boolean}) {
   return <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-[#faf9f5] via-[#faf9f5]/96 to-transparent px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-10 sm:px-6">

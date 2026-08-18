@@ -15,11 +15,13 @@ test("bounded cache returns a hit and namespace invalidation forces a miss", asy
 
 test("customer-data invalidation clears search, aggregation, project and media data", () => {
   const cache = new ApplicationCache();
-  for (const namespace of ["property-search", "aggregation", "project-public", "project-media"]) cache.set(namespace, "key", { safe: true }, 60_000);
+  for (const namespace of ["property-search", "property-search-v3", "aggregation", "project-public", "developer-public", "project-media"]) cache.set(namespace, "key", { safe: true }, 60_000);
   cache.set("unrelated", "key", "kept", 60_000);
   cache.invalidateCustomerData();
   assert.equal(cache.get("property-search", "key"), undefined);
+  assert.equal(cache.get("property-search-v3", "key"), undefined);
   assert.equal(cache.get("aggregation", "key"), undefined);
+  assert.equal(cache.get("developer-public", "key"), undefined);
   assert.equal(cache.get("project-media", "key"), undefined);
   assert.equal(cache.get("unrelated", "key"), "kept");
 });

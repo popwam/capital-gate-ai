@@ -70,3 +70,30 @@ test("already presented property cards are not emitted again", () => {
   assert.deepEqual(unpresentedUnitIds(["u1", "u2", "u3"], ["u1", "u2"]), ["u3"]);
   assert.deepEqual(unpresentedUnitIds(["u1", "u2"], ["u1", "u2"]), []);
 });
+
+test("bare and Unicode-dash unit codes resolve as exact inventory references", () => {
+  assert.equal(exactExternalUnitId("ls8-c-402"), "ls8-c-402");
+  assert.equal(exactExternalUnitId("LS8‑C‑402"), "LS8-C-402");
+  assert.equal(planCustomerTurn("ls8-c-402", state()).intent, "PROPERTY_DETAILS");
+});
+
+test("natural map, distance and cash questions route to deterministic tools", () => {
+  assert.equal(planCustomerTurn("وريني موقع مشروع test", state()).intent, "LOCATION_REQUEST");
+  assert.equal(planCustomerTurn("هو بعيد قد اي عن الجامعة الامريكية", state()).intent, "DISTANCE_REQUEST");
+  assert.equal(planCustomerTurn("سعرها كام لو هدفع كاش", state()).intent, "PAYMENT_PLAN");
+});
+
+test("contact preference replies stay inside the lead handoff instead of becoming a property search", () => {
+  const previous = state({ presentation: { awaitingConfirmation: true, lastOfferedAction: "CONTACT_REQUEST", leadHandoffStage: "CONTACT_PREFERENCES" } });
+  assert.equal(planCustomerTurn("التواصل واتساب والتأكيد SMS", previous).intent, "CONTACT_REQUEST");
+});
+
+test("identity replies stay inside the lead handoff", () => {
+  const previous = state({ presentation: { awaitingConfirmation: true, lastOfferedAction: "CONTACT_REQUEST", leadHandoffStage: "IDENTITY" } });
+  assert.equal(planCustomerTurn("ممدوح ممدوح 01033662552", previous).intent, "CONTACT_REQUEST");
+});
+
+test("a short invalid phone attempt still stays inside contact verification", () => {
+  const previous = state({ presentation: { awaitingConfirmation: true, lastOfferedAction: "CONTACT_REQUEST", leadHandoffStage: "IDENTITY" } });
+  assert.equal(planCustomerTurn("test 12345", previous).intent, "CONTACT_REQUEST");
+});

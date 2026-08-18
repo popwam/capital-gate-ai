@@ -26,6 +26,7 @@ export type PresentationState = {
   lastReferencedEntity?: { type: "PROJECT" | "UNIT"; id: string };
   lastOfferedAction?: "PROPERTY_CARDS" | "PROJECT_BROCHURE" | "SEARCH_WIDEN" | "CONTACT_REQUEST";
   awaitingConfirmation?: boolean;
+  leadHandoffStage?: "IDENTITY" | "CONTACT_PREFERENCES" | "COMPLETE";
 };
 
 export type StructuredIntent = {
@@ -53,6 +54,10 @@ export type StructuredIntent = {
   purchaseIntent?: number;
   contactName?: string;
   contactPhone?: string;
+  preferredContactChannel?: "CALL" | "WHATSAPP" | "SMS" | "EMAIL";
+  preferredConfirmationChannel?: "CALL" | "WHATSAPP" | "SMS" | "EMAIL";
+  preferredVisitDayPart?: "MORNING" | "AFTERNOON" | "EVENING";
+  preferredVisitTiming?: "MIDWEEK" | "WEEKEND" | "WEEKDAY";
   budgetFlexible?: boolean;
   priceTarget?: number;
   priceMin?: number;

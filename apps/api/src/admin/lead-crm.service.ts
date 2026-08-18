@@ -11,6 +11,7 @@ import {
   CreateLeadNoteDto,
   LeadListQueryDto,
   UpdateLeadDto,
+  TrustAlertFeedbackDto,
 } from "./lead-crm.dto";
 
 type JsonObject = Record<string, any>;
@@ -31,7 +32,11 @@ export class LeadCrmService {
     const data = this.json(payload);
     const requirements = this.json(data.requirements ?? {});
     const summary = this.json(data.conversationSummary ?? {});
+    const { recentConversation: _recentConversation, ...structuredConversationSummary } = summary;
     const budget = this.json(summary.budget ?? {});
+    const presentation = this.json(requirements.presentation ?? {});
+    const selectedUnitId = typeof presentation.selectedUnitId === "string" ? presentation.selectedUnitId : null;
+    const selectedProjectId = typeof presentation.selectedProjectId === "string" ? presentation.selectedProjectId : null;
     return {
       budget:
         budget.min != null || budget.max != null
@@ -52,19 +57,29 @@ export class LeadCrmService {
         summary.hardRequirements ?? requirements.hardRequirements ?? [],
       softPreferences:
         summary.softPreferences ?? requirements.softPreferences ?? [],
-      interestedProjectIds: Array.isArray(data.interestedProjects)
-        ? data.interestedProjects
-        : [],
-      interestedUnitIds: Array.isArray(data.interestedUnits)
-        ? data.interestedUnits
-        : [],
-      conversationSummary: summary,
+      interestedProjectIds: selectedProjectId
+        ? [selectedProjectId]
+        : Array.isArray(data.interestedProjects)
+          ? data.interestedProjects
+          : [],
+      // Old leads may contain every ranked suggestion because of the previous
+      // persistence bug. The selected entity in PresentationState is the stronger
+      // signal and lets the CRM self-heal without destructive SQL cleanup.
+      interestedUnitIds: selectedUnitId
+        ? [selectedUnitId]
+        : Array.isArray(data.explicitInterestedUnits) && data.explicitInterestedUnits.length
+          ? data.explicitInterestedUnits
+          : Array.isArray(data.interestedUnits)
+            ? data.interestedUnits
+            : [],
+      conversationSummary: structuredConversationSummary,
     };
   }
 
   private async where(query: LeadListQueryDto): Promise<Prisma.LeadWhereInput> {
     const AND: Prisma.LeadWhereInput[] = [];
     if (query.status) AND.push({ status: query.status });
+    if (query.trustStatus) AND.push({ trustStatus: query.trustStatus });
     if (query.projectId)
       AND.push({
         payload: {
@@ -214,6 +229,11 @@ export class LeadCrmService {
           status: lead.status,
           intent: lead.intent,
           intentScore: lead.intentScore,
+          trustStatus: lead.trustStatus,
+          trustScore: lead.trustScore,
+          trustReasons: lead.trustReasons,
+          preferredContactChannel: lead.preferredContactChannel,
+          preferredConfirmationChannel: lead.preferredConfirmationChannel,
           budget: summary.budget,
           preferredAreas: summary.preferredAreas,
           interestedProject: firstProject ?? null,
@@ -263,6 +283,7 @@ export class LeadCrmService {
           orderBy: { createdAt: "desc" },
           include: { adminUser: { select: { id: true, name: true } } },
         },
+        trustAlerts: { orderBy: { createdAt: "desc" }, take: 20 },
         events: {
           orderBy: { createdAt: "desc" },
           include: { adminUser: { select: { id: true, name: true } } },
@@ -281,8 +302,11 @@ export class LeadCrmService {
           currency: true,
           unitType: true,
           bedrooms: true,
+          bathrooms: true,
+          builtUpArea: true,
+          phaseRef: { select: { id: true, name: true, nameAr: true, nameEn: true } },
           status: true,
-          project: { select: { id: true, name: true } },
+          project: { select: { id: true, name: true, nameAr: true, nameEn: true, formattedAddress: true, location: { select: { name: true, nameAr: true, nameEn: true, formattedAddress: true } }, developer: { select: { name: true, nameAr: true, nameEn: true, brandName: true } } } },
         },
       }),
       this.prisma.project.findMany({
@@ -298,6 +322,15 @@ export class LeadCrmService {
       intent: lead.intent,
       intentScore: lead.intentScore,
       source: lead.source,
+      trustStatus: lead.trustStatus,
+      trustScore: lead.trustScore,
+      trustReasons: lead.trustReasons,
+      preferredContactChannel: lead.preferredContactChannel,
+      preferredConfirmationChannel: lead.preferredConfirmationChannel,
+      preferredVisitDayPart: lead.preferredVisitDayPart,
+      preferredVisitTiming: lead.preferredVisitTiming,
+      contactValidatedAt: lead.contactValidatedAt,
+      trustAlerts: lead.trustAlerts,
       createdAt: lead.createdAt,
       updatedAt: lead.updatedAt,
       followUpAt: lead.followUpAt,
@@ -443,6 +476,43 @@ export class LeadCrmService {
       },
     });
   }
+  async trustAlerts(limit = 20) {
+    return this.prisma.customerTrustAlert.findMany({
+      where: { status: "OPEN" },
+      orderBy: [{ riskLevel: "desc" }, { createdAt: "desc" }],
+      take: Math.min(100, Math.max(1, limit)),
+      select: {
+        id: true, riskLevel: true, score: true, reasons: true, candidateName: true,
+        candidatePhone: true, messagePreview: true, createdAt: true, conversationId: true,
+        leadId: true,
+      },
+    });
+  }
+
+  async reviewTrustAlert(id: string, body: TrustAlertFeedbackDto, adminUserId: string) {
+    const alert = await this.prisma.customerTrustAlert.findUnique({ where: { id } });
+    if (!alert) throw new NotFoundException("Trust alert not found");
+    const status = body.disposition;
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const item = await tx.customerTrustAlert.update({
+        where: { id },
+        data: { status, resolvedAt: new Date(), resolvedByAdminId: adminUserId, payload: { ...(this.json(alert.payload ?? {})), adminNote: body.note ?? null } },
+      });
+      if (alert.leadId) {
+        const trustData = status === "ADMIN_CONFIRMED_REAL"
+          ? { trustStatus: status, trustScore: 100, trustReasons: [] as string[] }
+          : status === "ADMIN_CONFIRMED_FAKE"
+            ? { trustStatus: status, trustScore: 0, trustReasons: [...new Set([...alert.reasons, "admin_confirmed_fake"])] }
+            : { trustStatus: "NEEDS_VERIFICATION", trustScore: alert.score, trustReasons: alert.reasons };
+        await tx.lead.update({ where: { id: alert.leadId }, data: trustData });
+        await tx.leadEvent.create({ data: { leadId: alert.leadId, adminUserId, type: "TRUST_REVIEWED", payload: { alertId: id, disposition: status, note: body.note ?? null } } });
+      }
+      return item;
+    });
+    await this.audit.record(adminUserId, "CUSTOMER_TRUST_REVIEWED", "CustomerTrustAlert", id, { disposition: status, leadId: alert.leadId, conversationId: alert.conversationId });
+    return updated;
+  }
+
   admins() {
     return this.prisma.adminUser.findMany({
       where: { active: true },
@@ -461,7 +531,7 @@ export class LeadCrmService {
     const now = new Date();
     const week = new Date(now);
     week.setDate(week.getDate() - 7);
-    const [newLeads, highIntent, followUpsDue, thisWeek] =
+    const [newLeads, highIntent, followUpsDue, thisWeek, trustAlertsOpen] =
       await this.prisma.$transaction([
         this.prisma.lead.count({ where: { status: LeadStatus.NEW } }),
         this.prisma.lead.count({
@@ -477,8 +547,9 @@ export class LeadCrmService {
           },
         }),
         this.prisma.lead.count({ where: { createdAt: { gte: week } } }),
+        this.prisma.customerTrustAlert.count({ where: { status: "OPEN" } }),
       ]);
-    return { newLeads, highIntent, followUpsDue, thisWeek };
+    return { newLeads, highIntent, followUpsDue, thisWeek, trustAlertsOpen };
   }
 
   async conversations(query: AdminConversationListQueryDto) {

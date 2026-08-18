@@ -5,6 +5,7 @@ import { IsArray, IsBoolean, IsDateString, IsEmail, IsIn, IsInt, IsNumber, IsOpt
 import { AuditService } from "../audit.service";
 import { AdminAuthGuard } from "../auth/admin-auth.guard";
 import { PrismaService } from "../database/prisma.service";
+import { ApplicationCache } from "../cache/application-cache";
 import { locateUnitOnMasterPlan } from "../providers/master-plan-vision";
 import { calibrateMasterPlan } from "../master-plan-calibration";
 
@@ -211,7 +212,7 @@ class GateMasterPlanLocationDto {
   @Type(() => Number) @IsNumber() @Min(0) @Max(1) y!: number;
 }
 class MasterPlanCalibrationDto {
-  @IsArray() anchors!: Array<{ x: number; y: number; latitude: number; longitude: number }>;
+  @IsArray() anchors!: Array<{ x:number; y:number; latitude:number; longitude:number }>;
 }
 class BuildingMasterPlanLocationDto {
   @Type(() => Number) @IsNumber() @Min(0) @Max(1) x!: number;
@@ -227,7 +228,7 @@ class BulkMasterPlanAssignmentDto {
 @UseGuards(AdminAuthGuard)
 @Controller("admin/real-estate")
 export class RealEstateController {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) { }
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, private readonly cache: ApplicationCache) {}
 
   private async geoFromMasterPlan(projectId: string, x: number, y: number) {
     const project = await this.prisma.project.findUniqueOrThrow({ where: { id: projectId }, select: { masterPlanCalibration: true } });
@@ -235,7 +236,7 @@ export class RealEstateController {
     const anchors = Array.isArray(raw?.anchors) ? raw.anchors : [];
     if (anchors.length < 3) return null;
     try {
-      return calibrateMasterPlan(anchors.map((anchor: any) => ({ x: Number(anchor.x), y: Number(anchor.y), latitude: Number(anchor.latitude), longitude: Number(anchor.longitude) })))({ x, y });
+      return calibrateMasterPlan(anchors.map((anchor:any) => ({ x:Number(anchor.x), y:Number(anchor.y), latitude:Number(anchor.latitude), longitude:Number(anchor.longitude) })))({ x, y });
     } catch { return null; }
   }
   private async readinessFor(projectId: string, pending: Record<string, unknown> = {}) {
@@ -247,14 +248,7 @@ export class RealEstateController {
       this.prisma.marketProfile.count({ where: { projectId } }),
       this.prisma.unit.count({ where: { projectId, archivedAt: null, phaseId: null } }),
     ]);
-    const definedPending = Object.fromEntries(
-      Object.entries(pending).filter(([, value]) => value !== undefined),
-    );
-
-    const value = {
-      ...project,
-      ...definedPending,
-    } as Record<string, any>;
+    const value = { ...project, ...pending } as Record<string, any>;
     const missing: string[] = [];
     if (!value.canonicalName && !value.nameAr && !value.nameEn) missing.push("canonical identity");
     if (!value.locationId) missing.push("location");
@@ -334,22 +328,26 @@ export class RealEstateController {
   @Patch("developers/:id") async updateDeveloper(@Param("id") id: string, @Body() body: DeveloperDetailsDto, @Req() req: any) {
     const item = await this.prisma.developer.update({ where: { id }, data: body });
     await this.audit.record(req.admin.id, "DEVELOPER_DETAILS_UPDATED", "Developer", id, { fields: Object.keys(body) });
+    this.cache.invalidateCustomerData();
     return item;
   }
 
   @Post("developers/:id/portfolio") async createPortfolio(@Param("id") developerId: string, @Body() body: PortfolioDto, @Req() req: any) {
     const item = await this.prisma.developerProjectPortfolio.create({ data: { ...body, developerId, verifiedAt: new Date(), verifiedByAdminId: req.admin.id } });
     await this.audit.record(req.admin.id, "DEVELOPER_PORTFOLIO_CREATED", "DeveloperProjectPortfolio", item.id);
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Patch("portfolio/:id") async updatePortfolio(@Param("id") id: string, @Body() body: PortfolioDto, @Req() req: any) {
     const item = await this.prisma.developerProjectPortfolio.update({ where: { id }, data: { ...body, verifiedAt: new Date(), verifiedByAdminId: req.admin.id } });
     await this.audit.record(req.admin.id, "DEVELOPER_PORTFOLIO_UPDATED", "DeveloperProjectPortfolio", id);
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Delete("portfolio/:id") async deletePortfolio(@Param("id") id: string, @Req() req: any) {
     await this.prisma.developerProjectPortfolio.delete({ where: { id } });
     await this.audit.record(req.admin.id, "DEVELOPER_PORTFOLIO_DELETED", "DeveloperProjectPortfolio", id);
+    this.cache.invalidateCustomerData();
     return { deleted: true };
   }
 
@@ -365,12 +363,14 @@ export class RealEstateController {
     const { launchDate, deliveryDate, ...rest } = body;
     const item = await this.prisma.project.update({ where: { id }, data: { ...rest, launchDate: launchDate ? new Date(launchDate) : undefined, deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined } });
     await this.audit.record(req.admin.id, "PROJECT_DETAILS_UPDATED", "Project", id, { fields: Object.keys(body) });
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Patch("projects/:id/investment") async investment(@Param("id") projectId: string, @Body() body: InvestmentDto, @Req() req: any) {
     const data = { ...body, verifiedAt: new Date(), verifiedByAdminId: req.admin.id };
     const item = await this.prisma.projectInvestmentProfile.upsert({ where: { projectId }, create: { projectId, ...data }, update: data });
     await this.audit.record(req.admin.id, "PROJECT_INVESTMENT_UPDATED", "ProjectInvestmentProfile", item.id, { fields: Object.keys(body) });
+    this.cache.invalidateCustomerData();
     return item;
   }
 
@@ -378,23 +378,32 @@ export class RealEstateController {
   @Post("amenities") async createAmenity(@Body() body: AmenityDto, @Req() req: any) {
     const item = await this.prisma.amenity.upsert({ where: { canonicalName: body.canonicalName }, create: body, update: body });
     await this.audit.record(req.admin.id, "AMENITY_SAVED", "Amenity", item.id);
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Patch("projects/:id/amenities") async setAmenities(@Param("id") projectId: string, @Body() body: ProjectAmenityDto, @Req() req: any) {
     await this.prisma.$transaction(async tx => { await tx.projectAmenity.deleteMany({ where: { projectId } }); if (body.amenityIds.length) await tx.projectAmenity.createMany({ data: body.amenityIds.map(amenityId => ({ projectId, amenityId, verified: true, source: "ADMIN" })) }); });
     await this.audit.record(req.admin.id, "PROJECT_AMENITIES_SET", "Project", projectId, { count: body.amenityIds.length });
+    this.cache.invalidateCustomerData();
     return { saved: true };
   }
   @Post("projects/:id/landmarks") async createLandmark(@Param("id") projectId: string, @Body() body: LandmarkDto, @Req() req: any) {
     const item = await this.prisma.projectLandmark.create({ data: { ...body, projectId, verifiedAt: body.distanceType === "ADMIN_VERIFIED" || !body.distanceType ? new Date() : undefined } });
     await this.audit.record(req.admin.id, "PROJECT_LANDMARK_CREATED", "ProjectLandmark", item.id);
+    this.cache.invalidateCustomerData();
     return item;
   }
-  @Delete("landmarks/:id") async deleteLandmark(@Param("id") id: string, @Req() req: any) { await this.prisma.projectLandmark.delete({ where: { id } }); await this.audit.record(req.admin.id, "PROJECT_LANDMARK_DELETED", "ProjectLandmark", id); return { deleted: true }; }
+  @Delete("landmarks/:id") async deleteLandmark(@Param("id") id: string, @Req() req: any) {
+    await this.prisma.projectLandmark.delete({ where: { id } });
+    await this.audit.record(req.admin.id, "PROJECT_LANDMARK_DELETED", "ProjectLandmark", id);
+    this.cache.invalidateCustomerData();
+    return { deleted: true };
+  }
   @Patch("projects/:id/competitors") async competitors(@Param("id") projectId: string, @Body() body: CompetitorsDto, @Req() req: any) {
     const ids = body.projectIds.filter(id => id !== projectId);
     await this.prisma.$transaction(async tx => { await tx.projectCompetitor.deleteMany({ where: { projectId } }); if (ids.length) await tx.projectCompetitor.createMany({ data: ids.map(competitorProjectId => ({ projectId, competitorProjectId, verified: true, source: "ADMIN" })) }); });
     await this.audit.record(req.admin.id, "PROJECT_COMPETITORS_SET", "Project", projectId, { count: ids.length });
+    this.cache.invalidateCustomerData();
     return { saved: true };
   }
 
@@ -407,6 +416,7 @@ export class RealEstateController {
     const hasPlan = body.masterPlanX != null && body.masterPlanY != null;
     const item = await this.prisma.projectGate.create({ data: { ...body, projectId, locationSource: hasGps ? "GPS_MANUAL" : hasPlan ? "MASTER_PLAN_MANUAL" : undefined, confirmedAt: hasGps || hasPlan ? new Date() : undefined, confirmedByAdminId: hasGps || hasPlan ? req.admin.id : undefined } });
     await this.audit.record(req.admin.id, "PROJECT_GATE_CREATED", "ProjectGate", item.id, { projectId });
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Patch("gates/:id") async updateGate(@Param("id") id: string, @Body() body: ProjectGateDto, @Req() req: any) {
@@ -414,11 +424,13 @@ export class RealEstateController {
     if (body.isMain) await this.prisma.projectGate.updateMany({ where: { projectId: current.projectId, id: { not: id } }, data: { isMain: false } });
     const item = await this.prisma.projectGate.update({ where: { id }, data: body });
     await this.audit.record(req.admin.id, "PROJECT_GATE_UPDATED", "ProjectGate", id);
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Delete("gates/:id") async deleteGate(@Param("id") id: string, @Req() req: any) {
     await this.prisma.projectGate.delete({ where: { id } });
     await this.audit.record(req.admin.id, "PROJECT_GATE_DELETED", "ProjectGate", id);
+    this.cache.invalidateCustomerData();
     return { deleted: true };
   }
 
@@ -438,6 +450,7 @@ export class RealEstateController {
       },
     });
     await this.audit.record(req.admin.id, "PROJECT_GATE_LOCATION_SET", "ProjectGate", id, { source: body.source, confirmed: body.confirmed !== false });
+    this.cache.invalidateCustomerData();
     return item;
   }
 
@@ -462,12 +475,14 @@ export class RealEstateController {
     const longitude = points.reduce((sum, point) => sum + point.lng, 0) / points.length;
     const item = await this.prisma.project.update({ where: { id: projectId }, data: { boundaryGeoJson: geoJson, boundarySource: body.source, boundaryConfirmedAt: new Date(), boundaryConfirmedByAdminId: req.admin.id, latitude, longitude } });
     await this.audit.record(req.admin.id, "PROJECT_BOUNDARY_CONFIRMED", "Project", projectId, { pointCount: points.length, source: body.source });
+    this.cache.invalidateCustomerData();
     return { id: item.id, boundaryGeoJson: item.boundaryGeoJson, boundarySource: item.boundarySource, boundaryConfirmedAt: item.boundaryConfirmedAt };
   }
 
   @Delete("projects/:id/boundary") async clearBoundary(@Param("id") projectId: string, @Req() req: any) {
     await this.prisma.project.update({ where: { id: projectId }, data: { boundaryGeoJson: Prisma.JsonNull, boundarySource: null, boundaryConfirmedAt: null, boundaryConfirmedByAdminId: null, latitude: null, longitude: null } });
     await this.audit.record(req.admin.id, "PROJECT_BOUNDARY_CLEARED", "Project", projectId);
+    this.cache.invalidateCustomerData();
     return { cleared: true };
   }
 
@@ -477,28 +492,32 @@ export class RealEstateController {
   }
 
   @Patch("projects/:id/master-plan/calibration") async setMasterPlanCalibration(@Param("id") projectId: string, @Body() body: MasterPlanCalibrationDto, @Req() req: any) {
-    const anchors = (body.anchors ?? []).map((anchor: any) => ({ x: Number(anchor.x), y: Number(anchor.y), latitude: Number(anchor.latitude), longitude: Number(anchor.longitude) }));
-    if (anchors.length < 3 || anchors.some((a: any) => !Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(a.latitude) || !Number.isFinite(a.longitude) || a.x < 0 || a.x > 1 || a.y < 0 || a.y > 1 || a.latitude < -90 || a.latitude > 90 || a.longitude < -180 || a.longitude > 180)) throw new BadRequestException("المعايرة تحتاج 3 نقاط صحيحة على الأقل.");
+    const anchors = (body.anchors ?? []).map((anchor:any) => ({ x:Number(anchor.x), y:Number(anchor.y), latitude:Number(anchor.latitude), longitude:Number(anchor.longitude) }));
+    if (anchors.length < 3 || anchors.some((a:any) => !Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(a.latitude) || !Number.isFinite(a.longitude) || a.x < 0 || a.x > 1 || a.y < 0 || a.y > 1 || a.latitude < -90 || a.latitude > 90 || a.longitude < -180 || a.longitude > 180)) throw new BadRequestException("المعايرة تحتاج 3 نقاط صحيحة على الأقل.");
     try { calibrateMasterPlan(anchors); } catch { throw new BadRequestException("نقاط المعايرة غير صالحة أو على خط واحد."); }
     const value = { anchors, confirmedAt: new Date().toISOString(), confirmedByAdminId: req.admin.id };
     await this.prisma.project.update({ where: { id: projectId }, data: { masterPlanCalibration: value } });
     await this.audit.record(req.admin.id, "PROJECT_MASTER_PLAN_CALIBRATED", "Project", projectId, { anchorCount: anchors.length });
+    this.cache.invalidateCustomerData();
     return value;
   }
 
   @Post("projects/:id/zones") async createZone(@Param("id") projectId: string, @Body() body: ProjectZoneDto, @Req() req: any) {
     const item = await this.prisma.projectZone.create({ data: { ...body, projectId } });
     await this.audit.record(req.admin.id, "PROJECT_ZONE_CREATED", "ProjectZone", item.id, { projectId });
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Patch("zones/:id") async updateZone(@Param("id") id: string, @Body() body: ProjectZoneDto, @Req() req: any) {
     const item = await this.prisma.projectZone.update({ where: { id }, data: body });
     await this.audit.record(req.admin.id, "PROJECT_ZONE_UPDATED", "ProjectZone", id);
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Delete("zones/:id") async deleteZone(@Param("id") id: string, @Req() req: any) {
     await this.prisma.projectZone.delete({ where: { id } });
     await this.audit.record(req.admin.id, "PROJECT_ZONE_DELETED", "ProjectZone", id);
+    this.cache.invalidateCustomerData();
     return { deleted: true };
   }
 
@@ -509,6 +528,7 @@ export class RealEstateController {
     }
     const item = await this.prisma.projectBuilding.create({ data: { ...body, projectId } });
     await this.audit.record(req.admin.id, "PROJECT_BUILDING_CREATED", "ProjectBuilding", item.id, { projectId });
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Patch("buildings/:id") async updateBuilding(@Param("id") id: string, @Body() body: ProjectBuildingDto, @Req() req: any) {
@@ -519,11 +539,13 @@ export class RealEstateController {
     }
     const item = await this.prisma.projectBuilding.update({ where: { id }, data: body });
     await this.audit.record(req.admin.id, "PROJECT_BUILDING_UPDATED", "ProjectBuilding", id);
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Delete("buildings/:id") async deleteBuilding(@Param("id") id: string, @Req() req: any) {
     await this.prisma.projectBuilding.delete({ where: { id } });
     await this.audit.record(req.admin.id, "PROJECT_BUILDING_DELETED", "ProjectBuilding", id);
+    this.cache.invalidateCustomerData();
     return { deleted: true };
   }
 
@@ -532,6 +554,7 @@ export class RealEstateController {
     const geo = await this.geoFromMasterPlan(building.projectId, body.x, body.y);
     const item = await this.prisma.projectBuilding.update({ where: { id }, data: { masterPlanX: body.x, masterPlanY: body.y, latitude: geo?.latitude, longitude: geo?.longitude, masterPlanLocationSource: geo ? "MASTER_PLAN_CALIBRATED" : "MASTER_PLAN_MANUAL", masterPlanConfirmedAt: new Date(), masterPlanConfirmedByAdminId: req.admin.id } });
     await this.audit.record(req.admin.id, "BUILDING_MASTER_PLAN_LOCATION_UPDATED", "ProjectBuilding", id, { x: body.x, y: body.y, gpsDerived: Boolean(geo) });
+    this.cache.invalidateCustomerData();
     return item;
   }
 
@@ -547,6 +570,7 @@ export class RealEstateController {
     const geo = await this.geoFromMasterPlan(projectId, body.x, body.y);
     const result = await this.prisma.unit.updateMany({ where: { id: { in: ids }, projectId }, data: { projectBuildingId: body.buildingId ?? undefined, masterPlanX: body.x, masterPlanY: body.y, latitude: geo?.latitude, longitude: geo?.longitude, masterPlanLocationStatus: "CONFIRMED", masterPlanLocationSource: geo ? "MASTER_PLAN_CALIBRATED" : "ADMIN_MANUAL", masterPlanConfidence: 1, masterPlanConfirmedAt: new Date(), masterPlanConfirmedByAdminId: req.admin.id } });
     await this.audit.record(req.admin.id, "UNITS_MASTER_PLAN_BULK_ASSIGNED", "Project", projectId, { count: result.count, buildingId: body.buildingId ?? null, x: body.x, y: body.y, gpsDerived: Boolean(geo) });
+    this.cache.invalidateCustomerData();
     return { updated: result.count, latitude: geo?.latitude ?? null, longitude: geo?.longitude ?? null };
   }
 
@@ -562,6 +586,7 @@ export class RealEstateController {
     }
     const item = await this.prisma.unit.update({ where: { id }, data: body });
     await this.audit.record(req.admin.id, "UNIT_INTERNAL_LOCATION_UPDATED", "Unit", id);
+    this.cache.invalidateCustomerData();
     return item;
   }
 
@@ -578,6 +603,7 @@ export class RealEstateController {
       data: { masterPlanX: suggestion.x, masterPlanY: suggestion.y, masterPlanLocationStatus: "SUGGESTED", masterPlanLocationSource: "AI_VISION", masterPlanConfidence: suggestion.confidence ?? null, masterPlanConfirmedAt: null, masterPlanConfirmedByAdminId: null },
     });
     await this.audit.record(req.admin.id, "UNIT_MASTER_PLAN_SUGGESTED", "Unit", unit.id, { projectId, confidence: suggestion.confidence ?? null, matchedLabel: suggestion.matchedLabel ?? null });
+    this.cache.invalidateCustomerData();
     return { found: true, x: Number(updated.masterPlanX), y: Number(updated.masterPlanY), confidence: suggestion.confidence ?? null, matchedLabel: suggestion.matchedLabel ?? null };
   }
 
@@ -597,6 +623,7 @@ export class RealEstateController {
     }
     const item = await this.prisma.unit.update({ where: { id }, data });
     await this.audit.record(req.admin.id, `UNIT_MASTER_PLAN_${body.action}`, "Unit", id, { x: body.x, y: body.y, source: body.source });
+    this.cache.invalidateCustomerData();
     return item;
   }
 
@@ -605,6 +632,7 @@ export class RealEstateController {
     const geo = await this.geoFromMasterPlan(gate.projectId, body.x, body.y);
     const item = await this.prisma.projectGate.update({ where: { id }, data: { masterPlanX: body.x, masterPlanY: body.y, latitude: geo?.latitude, longitude: geo?.longitude, locationSource: geo ? "MASTER_PLAN_CALIBRATED" : "MASTER_PLAN_MANUAL", confirmedAt: new Date(), confirmedByAdminId: req.admin.id } });
     await this.audit.record(req.admin.id, "GATE_MASTER_PLAN_LOCATION_UPDATED", "ProjectGate", id, body);
+    this.cache.invalidateCustomerData();
     return item;
   }
 
@@ -620,11 +648,13 @@ export class RealEstateController {
     if (body.landmarkId && !(await this.prisma.projectLandmark.findFirst({ where: { id: body.landmarkId, projectId: unit.projectId } }))) throw new BadRequestException("المعلم لا يتبع مشروع الوحدة.");
     const item = await this.prisma.unitProximity.create({ data: { ...body, unitId } });
     await this.audit.record(req.admin.id, "UNIT_PROXIMITY_CREATED", "UnitProximity", item.id, { unitId });
+    this.cache.invalidateCustomerData();
     return item;
   }
   @Delete("proximities/:id") async deleteProximity(@Param("id") id: string, @Req() req: any) {
     await this.prisma.unitProximity.delete({ where: { id } });
     await this.audit.record(req.admin.id, "UNIT_PROXIMITY_DELETED", "UnitProximity", id);
+    this.cache.invalidateCustomerData();
     return { deleted: true };
   }
 }

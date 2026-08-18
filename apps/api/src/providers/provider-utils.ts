@@ -80,12 +80,17 @@ export function sanitizeIntent(raw:Record<string,unknown>,previous:StructuredInt
     purchaseIntent:Math.max(0,Math.min(100,number("purchaseIntent")??previous.purchaseIntent??0)),
     contactName:text("contactName")??previous.contactName,
     contactPhone:text("contactPhone")??previous.contactPhone,
+    preferredContactChannel:oneOf("preferredContactChannel",["CALL","WHATSAPP","SMS","EMAIL"] as const)??previous.preferredContactChannel,
+    preferredConfirmationChannel:oneOf("preferredConfirmationChannel",["CALL","WHATSAPP","SMS","EMAIL"] as const)??previous.preferredConfirmationChannel,
+    preferredVisitDayPart:oneOf("preferredVisitDayPart",["MORNING","AFTERNOON","EVENING"] as const)??previous.preferredVisitDayPart,
+    preferredVisitTiming:oneOf("preferredVisitTiming",["MIDWEEK","WEEKEND","WEEKDAY"] as const)??previous.preferredVisitTiming,
     rejectedProjects:texts("rejectedProjects")??previous.rejectedProjects,
     preferredDevelopers:texts("preferredDevelopers")??previous.preferredDevelopers,
     preferredProjects:texts("preferredProjects")??previous.preferredProjects,
     familyRequirements:texts("familyRequirements")??previous.familyRequirements,
     investmentRequirements:texts("investmentRequirements")??previous.investmentRequirements,
     customerConcerns:texts("customerConcerns")??previous.customerConcerns,
+    externalUnitId:text("externalUnitId")??previous.externalUnitId,
     extractionDegraded:false
   };
 }

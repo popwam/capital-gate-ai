@@ -36,6 +36,7 @@ import { SystemController } from "./admin/system.controller";
 import { RealEstateController } from "./admin/real-estate.controller";
 import { ProjectStructureController } from "./admin/project-structure.controller";
 import { ApplicationCache } from "./cache/application-cache";
+import { CustomerTrustService } from "./customer-trust.service";
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { ApplicationCache } from "./cache/application-cache";
     DevicesService,
     PropertySearchService,
     ApplicationCache,
+    CustomerTrustService,
     ImporterService,
     KnowledgeService,
     StorageService,

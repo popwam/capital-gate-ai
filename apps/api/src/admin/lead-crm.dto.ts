@@ -19,6 +19,7 @@ export class LeadListQueryDto {
   @IsString() @MaxLength(120) @IsOptional() search?: string;
   @IsString() @IsOptional() projectId?: string;
   @IsString() @IsOptional() assignedTo?: string;
+  @IsIn(["CONTACT_VALID", "NEEDS_VERIFICATION", "SUSPICIOUS", "ADMIN_CONFIRMED_REAL", "ADMIN_CONFIRMED_FAKE"]) @IsOptional() trustStatus?: string;
   @IsIn(["high", "medium", "low"]) @IsOptional() intentLevel?:
     "high" | "medium" | "low";
   @IsIn(["due", "upcoming", "none"]) @IsOptional() followUp?:
@@ -58,4 +59,9 @@ export class AdminConversationListQueryDto {
   @Type(() => Number) @IsInt() @Min(1) @Max(100) @IsOptional() limit = 20;
   @IsString() @MaxLength(120) @IsOptional() search?: string;
   @IsEnum(LeadIntent) @IsOptional() intent?: LeadIntent;
+}
+
+export class TrustAlertFeedbackDto {
+  @IsIn(["ADMIN_CONFIRMED_REAL", "ADMIN_CONFIRMED_FAKE", "RESOLVED"]) disposition!: "ADMIN_CONFIRMED_REAL" | "ADMIN_CONFIRMED_FAKE" | "RESOLVED";
+  @IsString() @MaxLength(1_000) @IsOptional() note?: string;
 }

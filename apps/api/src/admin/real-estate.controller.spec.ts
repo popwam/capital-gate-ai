@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { GUARDS_METADATA } from "@nestjs/common/constants";
 import { AdminAuthGuard } from "../auth/admin-auth.guard";
 import { RealEstateController } from "./real-estate.controller";
+import { ApplicationCache } from "../cache/application-cache";
 
 function fixture() {
   const calls: any[] = [];
@@ -17,7 +18,12 @@ function fixture() {
     $transaction: async (items: Promise<unknown>[]) => Promise.all(items),
   };
   const audit: any = { record: async (...args: any[]) => calls.push(["audit", args]) };
-  return { controller: new RealEstateController(prisma, audit), calls };
+  const cache = {} as ApplicationCache;
+
+  return {
+    controller: new RealEstateController(prisma, audit, cache),
+    calls,
+  };
 }
 
 test("canonical real-estate routes are protected by AdminAuthGuard", () => {

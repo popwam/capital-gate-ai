@@ -2,6 +2,14 @@ import { AIContextKind, AIMessage, AnswerInput, StructuredIntent } from "./ai-pr
 
 const SYSTEM_PROMPT = `You are Cg Ai, a high-quality Egyptian real-estate advisor. "Cg" is the primary brand and "Ai" is the intelligence layer.
 
+ADVISOR PERSONA
+- Speak with the calm, measured communication style of a thoughtful Egyptian professional in his early thirties. This is a communication style only: never claim to be human, claim an age, or invent personal experience.
+- Sound grounded, patient, observant, and protective of the customer's interests. Think before recommending.
+- Your goal is not to close a sale at any cost. If an option is a weak fit, say so and explain the trade-off.
+- Never use hype such as "فرصة لا تتعوض", fake urgency, or emotional pressure.
+- When the evidence is incomplete, slow the decision down rather than filling gaps with sales language.
+- Prefer warm Egyptian phrasing over robotic CRM wording. A handoff should sound like: "تمام يا ممدوح، كده أنا سجلتلك الطلب، وحد من قسم المبيعات هيكلمك وينسق معاك" only when the application confirms the request was actually saved.
+
 CONVERSATION QUALITY
 - Understand Egyptian Arabic, MSA, English, mixed Arabic/English, and common Arabizi.
 - Mirror the customer's language naturally. Egyptian Arabic is welcome when the customer uses it.
@@ -17,6 +25,8 @@ REAL-ESTATE GROUNDING
 - Never invent prices, availability, scarcity, ROI, rental yield, resale demand, delivery dates, amenities, distances, developer history, or payment terms.
 - You may calculate or compare values explicitly present in verified facts. Clearly describe derived values as calculations when useful.
 - If a requested fact is unavailable, say exactly what is missing without pretending it exists.
+- A non-null value in VERIFIED_FACTS is authoritative. Never say project name, developer, location, price, availability, or payment data is missing when that field is present in VERIFIED_FACTS.
+- Matching/ranking scores are internal implementation details, not customer facts. Never mention percentages or confidence scores unless the customer explicitly supplied that percentage as a requirement.
 - For recommendations, explain WHY each option fits the customer's stated budget, location, unit type, payment preference, or goal using verified facts.
 - For comparison/investment/resale questions, identify meaningful trade-offs and uncertainty. Do not manufacture a winner when the data is insufficient.
 - Do not use outside web knowledge in a customer answer unless it is explicitly supplied as approved knowledge by the application.
@@ -25,6 +35,10 @@ SALES BEHAVIOR
 - Be helpful and calm; never use fake urgency, fake scarcity, pressure tactics, or unsupported superlatives.
 - Do not request contact information unless the customer shows clear intent to proceed, book a viewing, reserve, or asks to be contacted.
 - When contact is appropriate, request only the minimum needed information.
+- Never accept obviously invalid contact data as a confirmed customer identity. If the application asks for corrected contact details, be respectful and never accuse the customer of fraud.
+- A confusing or nonsense message is not proof of fraud. Ask for clarification first. Trust/fake decisions are administrative review signals; never tell a customer they are "fake", "fraud", or "scam".
+- After a viewing/contact request is saved, ask for the preferred contact channel and the preferred confirmation channel if they are not already known.
+- Do not promise that sales has called, booked, reserved, or confirmed a time. Say the request is saved and the sales team will coordinate/confirm it.
 
 STYLE
 - Prefer natural sentences over form-like prompts.
@@ -51,6 +65,7 @@ function compactIntent(intent: StructuredIntent) {
     "preferredPaymentDurationMonths","maxMonthlyInstallment","preferredDownPaymentPercent","proximityPreferences","hardRequirements",
     "softPreferences","rejectedLocations","rejectedProjects","preferredDevelopers","preferredProjects",
     "requestedProject","requestedMedia","purchaseIntent","turnIntent","aggregationDimension","externalUnitId",
+    "preferredContactChannel","preferredConfirmationChannel","preferredVisitDayPart","preferredVisitTiming",
     "familyRequirements","investmentRequirements","customerConcerns","presentation",
   ];
   return Object.fromEntries(keys.flatMap((key) => intent[key] == null ? [] : [[key, intent[key]]]));
@@ -81,15 +96,18 @@ function propertyFact(value:any,intent:StructuredIntent){
   return {
     unitCode:value.externalUnitId??null,
     projectName:value.project?.nameAr??value.project?.nameEn??value.project?.name??null,
-    developerName:value.developer?.nameAr??value.developer?.nameEn??value.developer?.brandName??value.developer?.name??value.project?.developer?.nameAr??value.project?.developer?.nameEn??value.project?.developer?.name??null,
+    developerName:value.developer?.nameAr??value.developer?.nameEn??value.developer?.brandName??value.developer?.name??value.project?.developer?.nameAr??value.project?.developer?.nameEn??value.project?.developer?.brandName??value.project?.developer?.name??null,
     location:value.project?.location?.nameAr??value.project?.location?.nameEn??value.project?.location?.name??null,
+    formattedAddress:value.project?.formattedAddress??value.project?.location?.formattedAddress??null,
+    projectLatitude:numeric(value.project?.latitude??value.project?.location?.latitude),
+    projectLongitude:numeric(value.project?.longitude??value.project?.location?.longitude),
     unitType:value.unitType??null, bedrooms:value.bedrooms??null, bathrooms:value.bathrooms??null,
     builtUpArea:numeric(value.builtUpArea), price:numeric(value.price), currency:value.currency??null,
     availability:value.status??null, deliveryDate:value.deliveryDate??null, finishingType:value.finishingType??null,
     paymentPlan:value.bestPaymentPlan ?? paymentHighlight(value.paymentPlans,intent),
     internalLocation:{ floor:value.floor??null, phase:value.phaseRef?.nameAr??value.phaseRef?.nameEn??value.phaseRef?.name??value.phase??null, zone:value.projectZone?.nameAr??value.projectZone?.nameEn??value.projectZone?.name??value.cluster??null, building:value.projectBuilding?.nameAr??value.projectBuilding?.nameEn??value.projectBuilding?.name??value.building??null, buildingLatitude:numeric(value.projectBuilding?.latitude), buildingLongitude:numeric(value.projectBuilding?.longitude), unitLatitude:numeric(value.latitude), unitLongitude:numeric(value.longitude), closestGate:value.closestGate??null },
     offer:Array.isArray(value.offers)&&value.offers[0]?{title:text(value.offers[0].title,100),discountAmount:numeric(value.offers[0].discountAmount),endsAt:value.offers[0].endsAt??null}:null,
-    matchScore:value.matchScore??null, matchReasons:Array.isArray(value.matchReasons)?value.matchReasons.slice(0,4):[],
+    // Ranking metadata stays server-side. It is not a verified property attribute.
   };
 }
 
@@ -98,12 +116,12 @@ function projectCore(value:any){
     projectName:value.nameAr??value.nameEn??value.name??null,
     developerName:value.developer?.nameAr??value.developer?.nameEn??value.developer?.brandName??value.developer?.name??null,
     location:value.location?.nameAr??value.location?.nameEn??value.location?.name??null,
-    formattedAddress:value.formattedAddress??null, projectTypes:(value.projectTypes?.length?value.projectTypes:[value.projectType].filter(Boolean)).slice(0,8), projectStatus:value.projectStatus??null,
+    formattedAddress:value.formattedAddress??value.location?.formattedAddress??null, projectTypes:(value.projectTypes?.length?value.projectTypes:[value.projectType].filter(Boolean)).slice(0,8), projectStatus:value.projectStatus??null,
     deliveryStatuses:(value.deliveryStatuses?.length?value.deliveryStatuses:[value.deliveryStatus].filter(Boolean)).slice(0,8), deliveryDate:value.deliveryDate??null, deliveryInformation:text(value.deliveryInformation,350),
     finishingOptions:value.finishingOptions?.slice?.(0,8)??[], unitTypes:value.unitTypes?.slice?.(0,10)??[],
     minArea:numeric(value.minArea), maxArea:numeric(value.maxArea), minBedrooms:value.minBedrooms??null, maxBedrooms:value.maxBedrooms??null,
     priceSummary:text(value.priceSummary,300), paymentSummary:text(value.paymentSummary,300),
-    shortDescription:text(value.shortDescriptionAr??value.shortDescriptionEn??value.shortDescription,500),
+    shortDescription:text(value.shortDescriptionAr??value.shortDescriptionEn??value.shortDescription,500), projectLatitude:numeric(value.latitude??value.location?.latitude), projectLongitude:numeric(value.longitude??value.location?.longitude),
     phases:Array.isArray(value.phases)?value.phases.slice(0,12).map((phase:any)=>({name:phase.nameAr??phase.nameEn??phase.name,launchYear:phase.launchYear??null,deliveryYear:phase.deliveryYear??null,status:phase.status??null,deliveryStatuses:phase.deliveryStatuses?.slice?.(0,6)??[],projectTypes:phase.projectTypes?.slice?.(0,6)??[],constructionPercentage:numeric(phase.constructionPercentage),unitTypes:phase.unitTypes?.slice?.(0,8)??[],finishingOptions:phase.finishingOptions?.slice?.(0,8)??[],customerFit:phase.customerFit?.slice?.(0,8)??[],minBedrooms:phase.minBedrooms??null,maxBedrooms:phase.maxBedrooms??null,minArea:numeric(phase.minArea),maxArea:numeric(phase.maxArea)})):[],
     competitors:Array.isArray(value.competitorsFrom)?value.competitorsFrom.slice(0,12).map((row:any)=>({projectName:row.competitorProject?.nameAr??row.competitorProject?.nameEn??row.competitorProject?.name??null,developerName:row.competitorProject?.developer?.nameAr??row.competitorProject?.developer?.nameEn??row.competitorProject?.developer?.name??null,location:row.competitorProject?.location?.nameAr??row.competitorProject?.location?.nameEn??row.competitorProject?.location?.name??null})).filter((row:any)=>row.projectName):[],
   };
