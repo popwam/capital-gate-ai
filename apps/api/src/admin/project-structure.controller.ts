@@ -82,9 +82,12 @@ class MarketProfileDto {
   @IsOptional() @IsString() source?: string;
 }
 
-class ReviewAssignmentsDto {
-  @IsArray() assignments!: Array<{ buildingId: string; unitIds: string[] }>;
+class UnitBuildingAssignmentDto {
+  @IsString() buildingId!: string;
+  @IsString() unitId!: string;
+  @IsIn(["ASSIGN", "REMOVE"]) action!: "ASSIGN" | "REMOVE";
 }
+
 
 function normalize(value: unknown) {
   return String(value ?? "")
@@ -97,20 +100,6 @@ function normalize(value: unknown) {
     .trim();
 }
 
-function tokenScore(needle: string, values: Array<string | null | undefined>) {
-  const n = normalize(needle);
-  if (!n) return 0;
-  const candidates = values.map(normalize).filter(Boolean);
-  let score = 0;
-  for (const candidate of candidates) {
-    if (candidate === n) score = Math.max(score, 1);
-    else if (candidate.includes(n) || n.includes(candidate)) score = Math.max(score, 0.9);
-    const tokens = n.split(" ").filter((token) => token.length >= 2);
-    const hits = tokens.filter((token) => candidate.includes(token)).length;
-    if (tokens.length) score = Math.max(score, hits / tokens.length * 0.8);
-  }
-  return score;
-}
 
 @UseGuards(AdminAuthGuard)
 @Controller("admin/real-estate")
@@ -130,7 +119,7 @@ export class ProjectStructureController {
         _count: { select: { units: true, buildings: true, gates: true, media: true, documents: true } },
         buildings: { orderBy: [{ name: "asc" }] },
         gates: { where: { isActive: true }, orderBy: [{ isMain: "desc" }, { gateNumber: "asc" }] },
-        media: { where: { type: "IMAGE" }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
+        media: { where: { type: "IMAGE", purpose: "GALLERY" }, orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] },
         documents: { where: { type: "BROCHURE" }, orderBy: { createdAt: "desc" } },
         paymentPlans: { where: { isActive: true }, orderBy: [{ planType: "asc" }, { durationMonths: "asc" }] },
         marketProfiles: { orderBy: [{ segment: "asc" }, { propertyUse: "asc" }] },
@@ -259,64 +248,94 @@ export class ProjectStructureController {
     return { deleted: true };
   }
 
-  @Get("projects/:id/master-plan/suggestions")
-  async masterPlanSuggestions(@Param("id") projectId: string) {
-    const [buildings, units] = await Promise.all([
-      this.prisma.projectBuilding.findMany({ where: { projectId }, include: { phase: true }, orderBy: { name: "asc" } }),
-      this.prisma.unit.findMany({
-        where: { projectId, archivedAt: null },
-        select: { id: true, externalUnitId: true, building: true, phase: true, phaseId: true, projectBuildingId: true },
-        orderBy: { externalUnitId: "asc" },
-      }),
-    ]);
-    return buildings.map((building) => {
-      const candidates = units
-        .map((unit) => {
-          if (unit.projectBuildingId === building.id) return { ...unit, confidence: 1, reason: "already_assigned" };
-          const score = Math.max(
-            tokenScore(building.code ?? "", [unit.building, unit.externalUnitId]),
-            tokenScore(building.name, [unit.building, unit.externalUnitId]),
-            tokenScore(building.nameAr ?? "", [unit.building, unit.externalUnitId]),
-            tokenScore(building.nameEn ?? "", [unit.building, unit.externalUnitId]),
-          );
-          const phaseBoost = building.phaseId && (unit.phaseId === building.phaseId || tokenScore(building.phase?.name ?? "", [unit.phase]) > 0.7) ? 0.08 : 0;
-          return { ...unit, confidence: Math.min(0.99, score + phaseBoost), reason: score > 0 ? "name_match" : "no_match" };
-        })
-        .filter((unit) => unit.confidence >= 0.58)
-        .sort((a, b) => b.confidence - a.confidence)
-        .slice(0, 250);
+
+  @Get("projects/:id/master-plan/units")
+  async masterPlanUnits(
+    @Param("id") projectId: string,
+    @Query("q") q?: string,
+    @Query("phaseId") phaseId?: string,
+    @Query("assignedBuildingId") assignedBuildingId?: string,
+  ) {
+    const term = q?.trim();
+    const rows = await this.prisma.unit.findMany({
+      where: {
+        projectId,
+        archivedAt: null,
+        ...(phaseId ? { phaseId } : {}),
+        ...(assignedBuildingId ? { projectBuildingId: assignedBuildingId } : {}),
+        ...(term ? { OR: [
+          { externalUnitId: { contains: term, mode: "insensitive" } },
+          { building: { contains: term, mode: "insensitive" } },
+          { cluster: { contains: term, mode: "insensitive" } },
+          { floor: { contains: term, mode: "insensitive" } },
+          { phase: { contains: term, mode: "insensitive" } },
+        ] } : {}),
+      },
+      select: {
+        id: true, externalUnitId: true, phase: true, phaseId: true, building: true, cluster: true, floor: true,
+        unitType: true, bedrooms: true, bathrooms: true, builtUpArea: true, projectBuildingId: true, sourceMetadata: true,
+        phaseRef: { select: { id: true, name: true, nameAr: true, nameEn: true, code: true } },
+        projectBuilding: { select: { id: true, name: true, nameAr: true, nameEn: true, code: true } },
+        sourceImport: { select: { id: true, fileName: true } },
+      },
+      orderBy: [{ externalUnitId: "asc" }],
+      take: assignedBuildingId ? 500 : 60,
+    });
+    return rows.map((row) => {
+      const metadata = row.sourceMetadata && typeof row.sourceMetadata === "object" && !Array.isArray(row.sourceMetadata) ? row.sourceMetadata as Record<string, any> : {};
+      const provenance = metadata._provenance && typeof metadata._provenance === "object" ? metadata._provenance as Record<string, any> : {};
       return {
-        building: { id: building.id, name: building.name, nameAr: building.nameAr, code: building.code, phaseId: building.phaseId },
-        candidates,
-        highConfidenceCount: candidates.filter((unit) => unit.confidence >= 0.82).length,
+        ...row,
+        source: {
+          fileName: row.sourceImport?.fileName ?? metadata.filename ?? provenance.filename ?? null,
+          sheet: metadata.sheet ?? provenance.sheet ?? null,
+          row: metadata.row ?? provenance.row ?? null,
+        },
       };
     });
   }
 
-  @Patch("projects/:id/master-plan/review")
-  async reviewAssignments(@Param("id") projectId: string, @Body() body: ReviewAssignmentsDto, @Req() req: any) {
-    let assigned = 0;
-    await this.prisma.$transaction(async (tx) => {
-      for (const assignment of body.assignments) {
-        const building = await tx.projectBuilding.findUniqueOrThrow({ where: { id: assignment.buildingId }, select: { projectId: true, phaseId: true, name: true } });
-        if (building.projectId !== projectId) throw new BadRequestException("Building does not belong to project");
-        const result = await tx.unit.updateMany({
-          where: { id: { in: assignment.unitIds }, projectId },
+  @Patch("projects/:id/master-plan/assignment")
+  async setMasterPlanBuildingAssignment(@Param("id") projectId: string, @Body() body: UnitBuildingAssignmentDto, @Req() req: any) {
+    const [building, unit] = await Promise.all([
+      this.prisma.projectBuilding.findFirst({ where: { id: body.buildingId, projectId }, select: { id: true, phaseId: true, name: true } }),
+      this.prisma.unit.findFirst({ where: { id: body.unitId, projectId }, select: { id: true, phaseId: true, projectBuildingId: true, masterPlanLocationSource: true, masterPlanLocationStatus: true } }),
+    ]);
+    if (!building) throw new BadRequestException("المبنى لا يتبع هذا المشروع.");
+    if (!unit) throw new BadRequestException("الوحدة لا تتبع هذا المشروع.");
+    if (body.action === "ASSIGN" && building.phaseId && unit.phaseId && building.phaseId !== unit.phaseId)
+      throw new BadRequestException("الوحدة والمبنى تابعان لمرحلتين مختلفتين.");
+
+    const item = body.action === "ASSIGN"
+      ? await this.prisma.unit.update({
+          where: { id: unit.id },
           data: {
-            projectBuildingId: assignment.buildingId,
-            building: building.name,
-            ...(building.phaseId ? { phaseId: building.phaseId } : {}),
+            projectBuildingId: building.id,
+            ...(building.phaseId && !unit.phaseId ? { phaseId: building.phaseId } : {}),
             masterPlanLocationStatus: "BUILDING_CONFIRMED",
-            masterPlanLocationSource: "AI_NAME_MATCH_REVIEWED",
+            masterPlanLocationSource: "ADMIN_MANUAL_BUILDING",
+            masterPlanConfidence: null,
             masterPlanConfirmedAt: new Date(),
             masterPlanConfirmedByAdminId: req.admin.id,
           },
+        })
+      : await this.prisma.unit.update({
+          where: { id: unit.id },
+          data: {
+            projectBuildingId: unit.projectBuildingId === building.id ? null : unit.projectBuildingId,
+            ...(unit.projectBuildingId === building.id && unit.masterPlanLocationSource === "ADMIN_MANUAL_BUILDING" ? {
+              masterPlanLocationStatus: "UNLOCATED",
+              masterPlanLocationSource: null,
+              masterPlanConfidence: null,
+              masterPlanConfirmedAt: null,
+              masterPlanConfirmedByAdminId: null,
+            } : {}),
+          },
         });
-        assigned += result.count;
-      }
-    });
-    await this.audit.record(req.admin.id, "MASTER_PLAN_AI_ASSIGNMENTS_REVIEWED", "Project", projectId, { assigned, groups: body.assignments.length });
+    await this.audit.record(req.admin.id, body.action === "ASSIGN" ? "UNIT_BUILDING_ASSIGNED" : "UNIT_BUILDING_UNASSIGNED", "Unit", unit.id, { projectId, buildingId: building.id });
     this.cache.invalidateCustomerData();
-    return { assigned };
+    return item;
   }
+
+
 }

@@ -65,7 +65,7 @@ export function PaymentPlanDesigner({
       setError(`إجمالي المقدم والدفعات لازم يساوي 100%. المتبقي ${customRemaining.toFixed(2)}%.`);
       return;
     }
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget; const form = new FormData(formElement);
     const payload = {
       name: String(form.get("name") || "").trim() || (planType === "CASH" ? "كاش" : `${durationValue} ${unitLabel[durationUnit]}`),
       planType,
@@ -93,7 +93,7 @@ export function PaymentPlanDesigner({
       setBusy(true);
       setError("");
       await adminApi.post(endpoint, payload);
-      event.currentTarget.reset();
+      formElement.reset();
       setDistributionMode("EQUAL");
       setSchedule([]);
       await onChanged();

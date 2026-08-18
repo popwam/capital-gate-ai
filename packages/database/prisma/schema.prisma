@@ -256,6 +256,7 @@ model Project {
   knowledge           ProjectKnowledge[]
   knowledgeItems      ProjectKnowledgeItem[]
   media               Media[]
+  mediaRules          UnitMediaRule[]
   documents           Document[]
   imports             DataImport[]
   importSheets        ImportSheet[]
@@ -344,6 +345,7 @@ model ProjectPhase {
   zones                  ProjectZone[]
   buildings              ProjectBuilding[]
   media                  Media[]
+  mediaRules             UnitMediaRule[]
   documents              Document[]
   paymentPlans           PaymentPlan[]
   marketProfiles         MarketProfile[]
@@ -680,7 +682,36 @@ model Media {
   unitId      String?
   unit        Unit?      @relation(fields: [unitId], references: [id])
   sortOrder   Int        @default(0)
+  purpose     String     @default("GALLERY")
+  assignmentRules UnitMediaRule[]
   createdAt   DateTime   @default(now())
+}
+
+
+model UnitMediaRule {
+  id             String        @id @default(cuid())
+  projectId      String
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId        String?
+  phase          ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  mediaId        String
+  media          Media         @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  unitType       String?
+  unitSubType    String?
+  bedrooms       Int?
+  bathrooms      Int?
+  minBuiltUpArea Decimal?      @db.Decimal(10, 2)
+  maxBuiltUpArea Decimal?      @db.Decimal(10, 2)
+  priority       Int           @default(0)
+  isActive       Boolean       @default(true)
+  label          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([projectId, phaseId, isActive])
+  @@index([bedrooms, bathrooms])
+  @@index([minBuiltUpArea, maxBuiltUpArea])
+  @@index([mediaId])
 }
 
 model Document {

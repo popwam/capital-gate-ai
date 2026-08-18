@@ -353,7 +353,7 @@ export class RealEstateController {
   @Patch("projects/:id") async updateProject(@Param("id") id: string, @Body() body: ProjectDetailsDto, @Req() req: any) {
     if (body.adminStatus === "READY_FOR_CUSTOMER") {
       const readiness = await this.readinessFor(id, body as Record<string, unknown>);
-      if (!readiness.ready) throw new BadRequestException({ code: "PROJECT_NOT_CUSTOMER_READY", message: "Complete the verified project profile before publishing it to customers.", missing: readiness.missing });
+      if (!readiness.ready) throw new BadRequestException({ code: "PROJECT_NOT_CUSTOMER_READY", message: "المشروع غير جاهز للنشر. راجع المتطلبات الناقصة الظاهرة في الرسالة.", missing: readiness.missing });
     }
     const { launchDate, deliveryDate, ...rest } = body;
     const item = await this.prisma.project.update({ where: { id }, data: { ...rest, launchDate: launchDate ? new Date(launchDate) : undefined, deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined } });

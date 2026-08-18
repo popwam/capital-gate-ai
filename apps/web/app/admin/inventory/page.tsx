@@ -95,13 +95,13 @@ export default function InventoryPage() {
 
   async function uploadUnitMedia(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!editing) return;
-    const form = new FormData(event.currentTarget); form.append("unitId", editing.id);
-    try { setBusy(true); await adminApi.upload("/catalog/media", form); setEditingDetails(await adminApi.get<Unit>(`/catalog/units/${editing.id}`)); event.currentTarget.reset(); } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
+    const formElement = event.currentTarget; const form = new FormData(formElement); form.append("unitId", editing.id);
+    try { setBusy(true); await adminApi.upload("/catalog/media", form); setEditingDetails(await adminApi.get<Unit>(`/catalog/units/${editing.id}`)); formElement.reset(); } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
   }
 
   async function saveUnit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!editing) return;
-    const form = new FormData(event.currentTarget); setBusy(true);
+    const formElement = event.currentTarget; const form = new FormData(formElement); setBusy(true);
     try {
       const payload = Object.fromEntries([...form.entries()].filter(([, value]) => value !== "")) as Record<string, unknown>;
       if (payload.isResale != null) payload.isResale = payload.isResale === "true";
@@ -110,23 +110,23 @@ export default function InventoryPage() {
   }
 
   async function createDeveloper(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); const form = new FormData(event.currentTarget); const name = String(form.get("name") ?? "").trim(); if (!name) return;
+    event.preventDefault(); const formElement = event.currentTarget; const form = new FormData(formElement); const name = String(form.get("name") ?? "").trim(); if (!name) return;
     try { setBusy(true); const created = await adminApi.post<Developer>("/catalog/developers", { name, slug: slugify(name) }); await loadReferences(); setSelectedDeveloperId(created.id); setSelectedProjectId(""); setInlineDeveloper(false); } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
   }
 
   async function createProject(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!selectedDeveloperId) return setError("اختر المطور أو أنشئه أولًا."); const form = new FormData(event.currentTarget); const name = String(form.get("name") ?? "").trim(); if (!name) return;
+    event.preventDefault(); if (!selectedDeveloperId) return setError("اختر المطور أو أنشئه أولًا."); const formElement = event.currentTarget; const form = new FormData(formElement); const name = String(form.get("name") ?? "").trim(); if (!name) return;
     try { setBusy(true); const created = await adminApi.post<ProjectRef>("/catalog/projects", { developerId: selectedDeveloperId, name, slug: slugify(`${name}-${selectedDeveloperId.slice(-5)}`) }); await loadReferences(); setSelectedProjectId(created.id); setInlineProject(false); await loadStructure(created.id); } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
   }
 
   async function createPhase(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!selectedProjectId) return; const form = new FormData(event.currentTarget); const name = String(form.get("name") ?? "").trim(); if (!name) return;
+    event.preventDefault(); if (!selectedProjectId) return; const formElement = event.currentTarget; const form = new FormData(formElement); const name = String(form.get("name") ?? "").trim(); if (!name) return;
     try { setBusy(true); const created = await adminApi.post<Phase>(`/real-estate/projects/${selectedProjectId}/phases`, { name }); await loadStructure(selectedProjectId); setSelectedPhaseId(created.id); setInlinePhase(false); } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
   }
 
   async function createUnit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!selectedDeveloperId || !selectedProjectId || !selectedPhaseId) return setError("الوحدة لازم ترتبط بمطور ومشروع ومرحلة.");
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget; const form = new FormData(formElement);
     const number = (name: string) => String(form.get(name) ?? "").trim() ? Number(form.get(name)) : undefined;
     try {
       setBusy(true); setError("");
@@ -138,7 +138,7 @@ export default function InventoryPage() {
         floor: String(form.get("floor") ?? "") || undefined, finishingType: String(form.get("finishingType") ?? "") || undefined,
         deliveryDate: String(form.get("deliveryDate") ?? "") || undefined,
       });
-      event.currentTarget.reset(); setCreating(false); load(1);
+      formElement.reset(); setCreating(false); load(1);
     } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
   }
 

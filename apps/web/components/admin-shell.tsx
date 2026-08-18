@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { LogOut, Menu, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, Loader2, LogOut, Menu, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { AdminSectionNav } from "./admin-section-nav";
 import { LogoMark } from "./logo";
-import { adminApi } from "@/lib/api";
+import { adminApi, type AdminMutationDetail } from "@/lib/api";
 
 const routeTitles: Array<[string, string, string]> = [
   ["/admin/data/import", "استيراد المخزون", "مراجعة الملف وربط البيانات قبل الحفظ"],
@@ -27,6 +27,37 @@ function titleFor(pathname: string) {
 export function AdminShell({ children, privateEntry = false }: { children: React.ReactNode; privateEntry?: boolean }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [mutation, setMutation] = useState<AdminMutationDetail | null>(null);
+  const [activeMutationCount, setActiveMutationCount] = useState(0);
+  const activeMutationsRef = useRef(new Set<string>());
+  useEffect(() => {
+    let clearTimer: number | undefined;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<AdminMutationDetail>).detail;
+      if (clearTimer) window.clearTimeout(clearTimer);
+      if (detail.state === "saving") {
+        activeMutationsRef.current.add(detail.id);
+        setActiveMutationCount(activeMutationsRef.current.size);
+        setMutation(detail);
+        return;
+      }
+      activeMutationsRef.current.delete(detail.id);
+      setActiveMutationCount(activeMutationsRef.current.size);
+      if (detail.state === "error") {
+        setMutation(detail);
+        clearTimer = window.setTimeout(() => { if (!activeMutationsRef.current.size) setMutation(null); }, 9000);
+        return;
+      }
+      if (activeMutationsRef.current.size) {
+        setMutation({ ...detail, state: "saving" });
+      } else {
+        setMutation(detail);
+        clearTimer = window.setTimeout(() => setMutation((current) => current?.state === "saved" ? null : current), 3000);
+      }
+    };
+    window.addEventListener("cg-admin-mutation", handler);
+    return () => { window.removeEventListener("cg-admin-mutation", handler); if (clearTimer) window.clearTimeout(clearTimer); activeMutationsRef.current.clear(); };
+  }, []);
   if (privateEntry || pathname === "/admin/login") return children;
 
   const [, title, subtitle] = titleFor(pathname);
@@ -74,7 +105,13 @@ export function AdminShell({ children, privateEntry = false }: { children: React
                 <p className="hidden truncate text-[12px] text-[#718079] sm:block">{subtitle}</p>
               </div>
             </div>
-<div className="h-10" aria-hidden="true" />
+<div className="flex min-w-[132px] justify-end">
+              {mutation ? <div className={`inline-flex max-w-[360px] items-center gap-2 rounded-full border px-3 py-2 text-xs font-black shadow-sm ${mutation.state === "saving" ? "border-[#d7ded9] bg-white text-[#55645e]" : mutation.state === "saved" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>
+                {mutation.state === "saving" ? <Loader2 size={14} className="animate-spin" /> : mutation.state === "saved" ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+                <span className="truncate">{mutation.state === "saving" ? `جاري الحفظ${activeMutationCount > 1 ? ` · ${activeMutationCount} عمليات` : ""}…` : mutation.state === "saved" ? "تم حفظ كل التغييرات" : "فشل الحفظ"}</span>
+                {mutation.state === "error" && mutation.requestId ? <span dir="ltr" className="hidden font-mono text-[9px] opacity-60 sm:inline">{mutation.requestId.slice(0, 8)}</span> : null}
+              </div> : <div className="h-10" aria-hidden="true" />}
+            </div>
           </div>
         </header>
         <div className="min-w-0">{children}</div>

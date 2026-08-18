@@ -110,6 +110,52 @@ export class PropertySearchService {
     });
   }
 
+  private async attachEffectiveMedia<T extends {
+    id: string; projectId: string; phaseId?: string | null; unitType?: string | null; unitSubType?: string | null;
+    bedrooms?: number | null; bathrooms?: number | null; builtUpArea?: unknown; media?: any[];
+  }>(units: T[]): Promise<Array<T & { media: any[] }>> {
+    if (!units.length) return [];
+    const projectIds = [...new Set(units.map((unit) => unit.projectId))];
+    const rules = await this.prisma.unitMediaRule.findMany({
+      where: { projectId: { in: projectIds }, isActive: true, media: { purpose: "UNIT_MATCH" } },
+      include: { media: true },
+      orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+    });
+    const sameText = (a?: string | null, b?: string | null) => !a || (b != null && this.normalize(a) === this.normalize(b));
+    return units.map((unit) => {
+      const area = unit.builtUpArea == null ? null : Number(unit.builtUpArea);
+      const matched = rules
+        .filter((rule) => {
+          if (rule.projectId !== unit.projectId) return false;
+          if (rule.phaseId && rule.phaseId !== unit.phaseId) return false;
+          if (!sameText(rule.unitType, unit.unitType)) return false;
+          if (!sameText(rule.unitSubType, unit.unitSubType)) return false;
+          if (rule.bedrooms != null && rule.bedrooms !== unit.bedrooms) return false;
+          if (rule.bathrooms != null && rule.bathrooms !== unit.bathrooms) return false;
+          if (rule.minBuiltUpArea != null && (area == null || area < Number(rule.minBuiltUpArea))) return false;
+          if (rule.maxBuiltUpArea != null && (area == null || area > Number(rule.maxBuiltUpArea))) return false;
+          return true;
+        })
+        .map((rule) => ({
+          rule,
+          specificity: [rule.phaseId, rule.unitType, rule.unitSubType, rule.bedrooms, rule.bathrooms, rule.minBuiltUpArea, rule.maxBuiltUpArea].filter((value) => value != null && value !== "").length,
+        }))
+        .sort((a, b) => b.rule.priority - a.rule.priority || b.specificity - a.specificity || a.rule.createdAt.getTime() - b.rule.createdAt.getTime());
+      const directMedia = Array.isArray(unit.media) ? unit.media : [];
+      const directTypes = new Set(directMedia.map((item: any) => item?.type).filter(Boolean));
+      const media = new Map<string, any>();
+      for (const item of directMedia) media.set(item.id, item);
+      // A unit-specific asset overrides inherited rule assets of the same media type.
+      // Example: a unique FLOOR_PLAN for one unit suppresses the phase/area FLOOR_PLAN,
+      // while generic unit photos can still be inherited if the unit has no direct IMAGE.
+      for (const match of matched) {
+        if (directTypes.has(match.rule.media.type)) continue;
+        if (!media.has(match.rule.media.id)) media.set(match.rule.media.id, { ...match.rule.media, matchedByRuleId: match.rule.id });
+      }
+      return { ...unit, media: [...media.values()] };
+    });
+  }
+
   private async normalizedWhere(intent: StructuredIntent): Promise<Prisma.UnitWhereInput | null> {
     if (intent.extractionDegraded && !intent.locations?.length && intent.budgetMin == null && intent.budgetMax == null && intent.bedrooms == null && !intent.propertyTypes?.length && intent.builtUpAreaMin == null && intent.minimumArea == null && !intent.aggregationDimension && !intent.inventoryMarket) return null;
     const locationIds = await this.resolveLocations(intent.locations);
@@ -293,7 +339,8 @@ export class PropertySearchService {
     }; 
     const loader = () => this.prisma.unit.findMany({ where, take: Math.max(limit * 4, 20), orderBy: [{ availabilityUpdatedAt: "desc" }, { price: "asc" }], include });
     const raw = await (this.cache?.getOrLoad("property-search-v3", cacheKey, 60_000, loader) ?? loader());
-    const units = await this.attachEffectivePaymentPlans(raw as any[], intent);
+    const withPlans = await this.attachEffectivePaymentPlans(raw as any[], intent);
+    const units = await this.attachEffectiveMedia(withPlans);
     return units.map(unit => {
       let score = 40;
       const reasons: string[] = ["currently available"];
@@ -313,8 +360,8 @@ export class PropertySearchService {
     }).sort((a, b) => b.matchScore - a.matchScore || Number(a.price ?? Number.MAX_SAFE_INTEGER) - Number(b.price ?? Number.MAX_SAFE_INTEGER)).slice(0, limit);
   }
 
-  async getProperty(id: string) { const unit = await this.prisma.unit.findUnique({ where: { id }, include: { developer: true, project: { include: { location: true, gates: { where: { isActive: true } } } }, phaseRef: true, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } }, paymentPlans: { where: { isActive: true } }, offers: true, media: true, priceHistory: { orderBy: { effectiveAt: "desc" } } } }); if (!unit) throw new NotFoundException("Property not found"); return (await this.attachEffectivePaymentPlans([unit]))[0]; }
-  async findUnitByExternalId(externalUnitId: string) { const unit = await this.prisma.unit.findFirst({ where: { externalUnitId: { equals: externalUnitId, mode: "insensitive" }, status: UnitStatus.AVAILABLE, archivedAt: null }, include: { developer: { select: { id: true, name: true, nameAr: true, nameEn: true } }, project: { include: { location: true, gates: { where: { isActive: true } } } }, phaseRef: true, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } }, paymentPlans: { where: { isActive: true } }, offers: { where: { isActive: true } }, media: { orderBy: { sortOrder: "asc" } } } }); return unit ? (await this.attachEffectivePaymentPlans([unit]))[0] : null; }
+  async getProperty(id: string) { const unit = await this.prisma.unit.findUnique({ where: { id }, include: { developer: true, project: { include: { location: true, gates: { where: { isActive: true } } } }, phaseRef: true, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } }, paymentPlans: { where: { isActive: true } }, offers: true, media: true, priceHistory: { orderBy: { effectiveAt: "desc" } } } }); if (!unit) throw new NotFoundException("Property not found"); const withPlans = await this.attachEffectivePaymentPlans([unit]); return (await this.attachEffectiveMedia(withPlans))[0]; }
+  async findUnitByExternalId(externalUnitId: string) { const unit = await this.prisma.unit.findFirst({ where: { externalUnitId: { equals: externalUnitId, mode: "insensitive" }, status: UnitStatus.AVAILABLE, archivedAt: null }, include: { developer: { select: { id: true, name: true, nameAr: true, nameEn: true } }, project: { include: { location: true, gates: { where: { isActive: true } } } }, phaseRef: true, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } }, paymentPlans: { where: { isActive: true } }, offers: { where: { isActive: true } }, media: { orderBy: { sortOrder: "asc" } } } }); if (!unit) return null; const withPlans = await this.attachEffectivePaymentPlans([unit]); return (await this.attachEffectiveMedia(withPlans))[0]; }
   async findProjectByName(name: string) { return this.prisma.project.findFirst({ where: { OR: [{ name: { contains: name, mode: "insensitive" } }, { canonicalName: { contains: name, mode: "insensitive" } }, { nameAr: { contains: name, mode: "insensitive" } }, { nameEn: { contains: name, mode: "insensitive" } }] }, select: { id: true } }); }
   async getProject(id: string): Promise<PublicProject> {
     const loader = async (): Promise<PublicProject> => {
@@ -343,12 +390,13 @@ export class PropertySearchService {
         media: { take: 1, orderBy: { sortOrder: "asc" } },
       },
     });
-    return this.attachEffectivePaymentPlans(units as any[]);
+    const withPlans = await this.attachEffectivePaymentPlans(units as any[]);
+    return this.attachEffectiveMedia(withPlans);
   }
 
   async getPaymentPlans(unitId: string) { const unit = await this.prisma.unit.findUnique({ where: { id: unitId }, select: { id: true, projectId: true, phaseId: true, price: true, currency: true, paymentPlans: { where: { isActive: true } } } }); if (!unit) throw new NotFoundException("Property not found"); return (await this.attachEffectivePaymentPlans([unit]))[0].paymentPlans; }
   async compareProperties(ids: string[]) { return this.prisma.unit.findMany({ where: { id: { in: ids }, status: UnitStatus.AVAILABLE }, include: { project: true, paymentPlans: { where: { isActive: true } }, offers: { where: { isActive: true } } } }); }
-  async getProjectMedia(projectId: string) { return this.cache?.getOrLoad("project-media", projectId, 15 * 60_000, () => this.prisma.media.findMany({ where: { projectId, phaseId: null, type: "IMAGE" }, orderBy: { sortOrder: "asc" } })) ?? this.prisma.media.findMany({ where: { projectId, phaseId: null, type: "IMAGE" }, orderBy: { sortOrder: "asc" } }); }
+  async getProjectMedia(projectId: string) { return this.cache?.getOrLoad("project-media", projectId, 15 * 60_000, () => this.prisma.media.findMany({ where: { projectId, phaseId: null, type: "IMAGE", purpose: "GALLERY" }, orderBy: { sortOrder: "asc" } })) ?? this.prisma.media.findMany({ where: { projectId, phaseId: null, type: "IMAGE", purpose: "GALLERY" }, orderBy: { sortOrder: "asc" } }); }
   async getProjectDocuments(projectId: string, type?: DocumentType) { const key = `${projectId}:${type ?? "ALL"}`; return this.cache?.getOrLoad("project-documents", key, 15 * 60_000, () => this.prisma.document.findMany({ where: { projectId, phaseId: null, ...(type ? { type } : {}) }, orderBy: { createdAt: "desc" } })) ?? this.prisma.document.findMany({ where: { projectId, phaseId: null, ...(type ? { type } : {}) }, orderBy: { createdAt: "desc" } }); }
   async findNearbyLocations(locationIds: string[], maxMinutes?: number) { return this.prisma.locationDistance.findMany({ where: { fromLocationId: { in: locationIds }, ...(maxMinutes ? { estimatedMinutes: { lte: maxMinutes } } : {}) }, include: { from: true, to: true }, orderBy: { estimatedMinutes: "asc" } }); }
 }

@@ -92,7 +92,7 @@ export function ManualUnitEntry({ open, onClose, onCreated }: { open: boolean; o
   async function createUnit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!developerId || !projectId || !phaseId) return setError("اختر المطور والمشروع والمرحلة قبل حفظ الوحدة.");
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget; const form = new FormData(formElement);
     const number = (name: string) => String(form.get(name) ?? "").trim() ? Number(form.get(name)) : undefined;
     try {
       setBusy(true); setError("");
@@ -105,7 +105,7 @@ export function ManualUnitEntry({ open, onClose, onCreated }: { open: boolean; o
         floor: String(form.get("floor") ?? "") || undefined, finishingType: String(form.get("finishingType") ?? "") || undefined,
         deliveryDate: String(form.get("deliveryDate") ?? "") || undefined,
       });
-      event.currentTarget.reset(); onCreated?.(); onClose();
+      formElement.reset(); onCreated?.(); onClose();
     } catch (err) { setError(adminErrorMessage(err)); } finally { setBusy(false); }
   }
 

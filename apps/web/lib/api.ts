@@ -3,6 +3,14 @@ export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:400
 export type ApiConversation = { id: string; title: string | null; detectedLanguage?: string | null; createdAt: string; updatedAt: string; _count?: { messages: number } };
 export type ApiMessage = { id: string; role: "USER" | "ASSISTANT"; content: string; toolPayload?: Record<string, unknown> | null; createdAt: string };
 
+export type AdminMutationState = "saving" | "saved" | "error";
+export type AdminMutationDetail = { id: string; state: AdminMutationState; method: string; path: string; message?: string; requestId?: string };
+
+function emitAdminMutation(detail: AdminMutationDetail) {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent<AdminMutationDetail>("cg-admin-mutation", { detail }));
+}
+
+
 export class ApiRequestError extends Error {
   readonly status: number;
   readonly code?: string;
@@ -59,11 +67,32 @@ export function getDeviceToken() {
 }
 
 async function request<T>(path: string, init: RequestInit = {}, device = true): Promise<T> {
-  const headers = new Headers(init.headers); if (!(init.body instanceof FormData)) headers.set("content-type", "application/json");
+  const headers = new Headers(init.headers);
+  if (!(init.body instanceof FormData)) headers.set("content-type", "application/json");
   if (device) headers.set("x-device-token", getDeviceToken());
-  const response = await fetch(`${API_URL}/v1${path}`, { ...init, headers, credentials: "include" });
-  if (!response.ok) { const body = await response.json().catch(() => ({})); const message = Array.isArray(body.message) ? body.message[0] : body.message || `Request failed (${response.status})`; throw new ApiRequestError(message, response.status, body.code, body.requestId || response.headers.get("x-request-id") || undefined); }
-  return response.json();
+  const method = String(init.method ?? "GET").toUpperCase();
+  const isAdminMutation = path.startsWith("/admin") && !["GET", "HEAD", "OPTIONS"].includes(method);
+  const mutationId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+  if (isAdminMutation) emitAdminMutation({ id: mutationId, state: "saving", method, path });
+  try {
+    const response = await fetch(`${API_URL}/v1${path}`, { ...init, headers, credentials: "include" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      const baseMessage = Array.isArray(body.message) ? body.message[0] : body.message || `Request failed (${response.status})`;
+      const missing = Array.isArray(body.missing) ? body.missing.filter((item: unknown) => typeof item === "string") : [];
+      const message = missing.length ? `${baseMessage} — ${missing.join(" · ")}` : baseMessage;
+      const requestId = body.requestId || response.headers.get("x-request-id") || undefined;
+      if (isAdminMutation) emitAdminMutation({ id: mutationId, state: "error", method, path, message, requestId });
+      throw new ApiRequestError(message, response.status, body.code, requestId);
+    }
+    const result = await response.json().catch(() => undefined) as T;
+    if (isAdminMutation) emitAdminMutation({ id: mutationId, state: "saved", method, path, requestId: response.headers.get("x-request-id") || undefined });
+    return result;
+  } catch (error) {
+    if (isAdminMutation && !(error instanceof ApiRequestError))
+      emitAdminMutation({ id: mutationId, state: "error", method, path, message: error instanceof Error ? error.message : "Network error" });
+    throw error;
+  }
 }
 
 export const conversationsApi = {

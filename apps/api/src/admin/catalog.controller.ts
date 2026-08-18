@@ -184,7 +184,23 @@ class MediaDto {
   @IsOptional() @IsString() altTextAr?: string;
   @IsOptional() @IsString() altTextEn?: string;
   @IsOptional() @IsString() caption?: string;
+  @IsOptional() @IsIn(["GALLERY", "UNIT_MATCH"]) purpose?: string;
 }
+class UnitMediaRuleUploadDto {
+  @IsString() projectId!: string;
+  @IsString() phaseId!: string;
+  @IsIn(["IMAGE", "FLOOR_PLAN"]) type!: "IMAGE" | "FLOOR_PLAN";
+  @IsOptional() @IsString() unitType?: string;
+  @IsOptional() @IsString() unitSubType?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(20) bedrooms?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(20) bathrooms?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) minBuiltUpArea?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) maxBuiltUpArea?: number;
+  @IsOptional() @Type(() => Number) @IsInt() priority?: number;
+  @IsOptional() @IsString() label?: string;
+  @IsOptional() @IsString() altTextAr?: string;
+}
+
 class DocumentDto {
   @IsEnum(DocumentType) type!: DocumentType;
   @IsOptional() @IsString() phaseId?: string;
@@ -701,6 +717,7 @@ export class CatalogController {
         altTextAr: body.altTextAr,
         altTextEn: body.altTextEn,
         caption: body.caption,
+        purpose: body.purpose ?? "GALLERY",
         developerId: body.developerId,
         projectId: body.projectId,
         phaseId: body.phaseId,
@@ -713,6 +730,84 @@ export class CatalogController {
     this.cache.invalidateCustomerData();
     return item;
   }
+
+  @Get("media-rules")
+  mediaRules(@Query("projectId") projectId: string, @Query("phaseId") phaseId?: string) {
+    if (!projectId) throw new BadRequestException("projectId is required");
+    return this.prisma.unitMediaRule.findMany({
+      where: { projectId, ...(phaseId ? { phaseId } : {}), isActive: true },
+      include: { media: true, phase: { select: { id: true, name: true, nameAr: true, nameEn: true } } },
+      orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+    });
+  }
+
+  @Post("media-rules/upload")
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 20 * 1024 * 1024 } }))
+  async uploadMediaRule(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: UnitMediaRuleUploadDto,
+    @Req() req: any,
+  ) {
+    if (!file || !file.mimetype.startsWith("image/")) throw new BadRequestException("A valid image is required");
+    if (body.minBuiltUpArea != null && body.maxBuiltUpArea != null && body.minBuiltUpArea > body.maxBuiltUpArea)
+      throw new BadRequestException("أقل مساحة لا يمكن أن تكون أكبر من أعلى مساحة.");
+    const phase = await this.prisma.projectPhase.findUniqueOrThrow({ where: { id: body.phaseId }, select: { projectId: true } });
+    if (phase.projectId !== body.projectId) throw new BadRequestException("Phase does not belong to project");
+    const stored = await this.storage.put(file.buffer, file.originalname, file.mimetype, "unit-media-rules");
+    const result = await this.prisma.$transaction(async (tx) => {
+      const media = await tx.media.create({
+        data: {
+          projectId: body.projectId,
+          phaseId: body.phaseId,
+          type: body.type as MediaType,
+          purpose: "UNIT_MATCH",
+          url: stored.url,
+          storageKey: stored.key,
+          altTextAr: body.altTextAr,
+          sortOrder: 0,
+          isCover: false,
+        },
+      });
+      const rule = await tx.unitMediaRule.create({
+        data: {
+          projectId: body.projectId,
+          phaseId: body.phaseId,
+          mediaId: media.id,
+          unitType: body.unitType?.trim() || null,
+          unitSubType: body.unitSubType?.trim() || null,
+          bedrooms: body.bedrooms,
+          bathrooms: body.bathrooms,
+          minBuiltUpArea: body.minBuiltUpArea,
+          maxBuiltUpArea: body.maxBuiltUpArea,
+          priority: body.priority ?? 0,
+          label: body.label?.trim() || null,
+        },
+        include: { media: true, phase: { select: { id: true, name: true, nameAr: true, nameEn: true } } },
+      });
+      return rule;
+    }).catch(async (error) => {
+      await this.storage.delete(stored.key).catch(() => undefined);
+      throw error;
+    });
+    await this.audit.record(req.admin.id, "UNIT_MEDIA_RULE_CREATED", "UnitMediaRule", result.id, { projectId: body.projectId, phaseId: body.phaseId });
+    this.cache.invalidateCustomerData();
+    return result;
+  }
+
+  @Delete("media-rules/:id")
+  async deleteMediaRule(@Param("id") id: string, @Req() req: any) {
+    const rule = await this.prisma.unitMediaRule.findUniqueOrThrow({ where: { id }, include: { media: true } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.unitMediaRule.delete({ where: { id } });
+      const otherRules = await tx.unitMediaRule.count({ where: { mediaId: rule.mediaId } });
+      if (!otherRules && rule.media.purpose === "UNIT_MATCH") await tx.media.delete({ where: { id: rule.mediaId } });
+    });
+    if (rule.media.storageKey) await this.storage.delete(rule.media.storageKey).catch(() => undefined);
+    await this.audit.record(req.admin.id, "UNIT_MEDIA_RULE_DELETED", "UnitMediaRule", id, { projectId: rule.projectId, phaseId: rule.phaseId });
+    this.cache.invalidateCustomerData();
+    return { deleted: true };
+  }
+
   @Post("documents")
   @UseInterceptors(
     FileInterceptor("file", { limits: { fileSize: 20 * 1024 * 1024 } }),
@@ -771,19 +866,19 @@ export class CatalogController {
   }
   @Patch("projects/:id/media/order") async reorderProjectMedia(@Param("id") projectId: string, @Body() body: ReorderMediaDto, @Req() req: any) {
     const ids = body.items.map((item) => item.id);
-    const rows = await this.prisma.media.findMany({ where: { id: { in: ids }, projectId, type: "IMAGE" }, select: { id: true, phaseId: true } });
+    const rows = await this.prisma.media.findMany({ where: { id: { in: ids }, projectId, type: "IMAGE", purpose: "GALLERY" }, select: { id: true, phaseId: true } });
     if (rows.length !== ids.length) throw new BadRequestException("One or more media items do not belong to the project image gallery");
     await this.prisma.$transaction(async (tx) => {
       for (const item of body.items) await tx.media.update({ where: { id: item.id }, data: { sortOrder: item.sortOrder, isCover: item.id === body.coverId } });
       if (body.coverId) {
         const cover = rows.find((row) => row.id === body.coverId);
-        await tx.media.updateMany({ where: { projectId, phaseId: cover?.phaseId ?? null, type: "IMAGE", id: { not: body.coverId } }, data: { isCover: false } });
+        await tx.media.updateMany({ where: { projectId, phaseId: cover?.phaseId ?? null, type: "IMAGE", purpose: "GALLERY", id: { not: body.coverId } }, data: { isCover: false } });
         await tx.media.update({ where: { id: body.coverId }, data: { sortOrder: 0, isCover: true } });
       }
     });
     await this.audit.record(req.admin.id, "PROJECT_MEDIA_REORDERED", "Project", projectId, { count: body.items.length, coverId: body.coverId });
     this.cache.invalidateCustomerData();
-    return this.prisma.media.findMany({ where: { projectId, type: "IMAGE" }, orderBy: [{ phaseId: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }] });
+    return this.prisma.media.findMany({ where: { projectId, type: "IMAGE", purpose: "GALLERY" }, orderBy: [{ phaseId: "asc" }, { sortOrder: "asc" }, { createdAt: "asc" }] });
   }
 
   @Patch("media/:id") async updateMedia(@Param("id") id: string, @Body() body: UpdateMediaDto, @Req() req: any) {
