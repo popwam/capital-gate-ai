@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { StructuredIntent } from "../providers/ai-provider";
+import { AIContextKind, StructuredIntent } from "../providers/ai-provider";
 import { UIAction } from "../customer-turn-planner";
 import { ConversationFormatterService } from "./conversation-formatter.service";
 import { PropertyPresenterService } from "./property-presenter.service";
@@ -66,7 +66,7 @@ export class DeterministicAnswerService {
     return undefined;
   }
 
-  directToolAnswer(state: StructuredIntent, payload: MessagePayload, facts: unknown[], content?: string): string | undefined {
+  directToolAnswer(state: StructuredIntent, payload: MessagePayload, facts: unknown[], content?: string, contextKind: AIContextKind = "PROPERTY_SEARCH", propertyResultCount = facts.length): string | undefined {
     const ar = state.language?.startsWith("ar");
     const intent = state.turnIntent;
     const first = facts[0] as any;
@@ -109,13 +109,16 @@ export class DeterministicAnswerService {
       return ar ? `المسافة ${distance != null ? `حوالي ${Number(distance).toFixed(1)} كم` : "متاحة في نتيجة المسار"}${duration != null ? `، والوقت التقريبي ${duration} دقيقة` : ""}. المصدر: ${route.source === "ADMIN_VERIFIED" ? "بيانات إدارية موثقة" : "Google Routes"}.` : `The route is ${distance != null ? `about ${Number(distance).toFixed(1)} km` : "available"}${duration != null ? ` and approximately ${duration} minutes` : ""}. Source: ${route.source === "ADMIN_VERIFIED" ? "admin-verified data" : "Google Routes"}.`;
     }
 
-    if (["INVENTORY_COUNT", "AREA_AGGREGATION", "PRICE_AGGREGATION"].includes(intent ?? "")) {
+    if (["INVENTORY_COUNT", "INVENTORY_AGGREGATION", "UNIT_TYPE_AGGREGATION", "AREA_AGGREGATION", "PRICE_AGGREGATION"].includes(intent ?? "")) {
       if (intent === "INVENTORY_COUNT") return ar ? `عندي ${first?.count ?? 0} وحدة متاحة في نطاق البحث الحالي.` : `${first?.count ?? 0} units are available in the current search scope.`;
       const values = Array.isArray(first?.values) ? first.values : [];
       if (!values.length) return ar ? "مفيش بيانات مطابقة في نطاق البحث الحالي." : "No matching data is available in the current search scope.";
       if (intent === "AREA_AGGREGATION") return ar ? `المساحات المتاحة حاليًا من ${Math.min(...values.map(Number))} إلى ${Math.max(...values.map(Number))} م².` : `Available areas currently range from ${Math.min(...values.map(Number))} to ${Math.max(...values.map(Number))} m².`;
       const prices = values.map((item: any) => Number(item.price)).filter(Number.isFinite);
-      return ar ? `الأسعار المتاحة حاليًا من ${Math.min(...prices).toLocaleString("en")} إلى ${Math.max(...prices).toLocaleString("en")} EGP.` : `Available prices currently range from EGP ${Math.min(...prices).toLocaleString("en")} to ${Math.max(...prices).toLocaleString("en")}.`;
+      if (intent === "PRICE_AGGREGATION" || state.aggregationDimension === "PRICE")
+        return ar ? `الأسعار المتاحة حاليًا من ${Math.min(...prices).toLocaleString("en")} إلى ${Math.max(...prices).toLocaleString("en")} EGP.` : `Available prices currently range from EGP ${Math.min(...prices).toLocaleString("en")} to ${Math.max(...prices).toLocaleString("en")}.`;
+      const labels = values.map((value: any) => typeof value === "object" ? value.nameAr ?? value.nameEn ?? value.name ?? value.projectName ?? value.durationMonths : value).filter((value: unknown) => value != null).slice(0, 20);
+      return ar ? `القيم الموثقة المتاحة في نطاق البحث الحالي: ${labels.join("، ")}.` : `Verified values available in the current search scope: ${labels.join(", ")}.`;
     }
 
     if (intent === "VIEWING_REQUEST" && state.externalUnitId) {
@@ -126,22 +129,35 @@ export class DeterministicAnswerService {
       return unit ? (ar ? `تمام، ${this.formatter.humanUnitLabel(unit, true)} متاحة. هرتب معاك طريقة الدفع الأول، وبعدها بيانات التواصل.` : `${this.formatter.humanUnitLabel(unit, false)} is available. I'll confirm the payment route first, then the contact details.`) : (ar ? "ملقيتش الوحدة المطلوبة ضمن الوحدات المتاحة حاليًا." : "I could not find that unit in the currently available inventory.");
     }
 
-    if (["PROPERTY_SEARCH", "PROPERTY_REFINEMENT", "PROPERTY_OPTIONS_REQUEST", "AVAILABILITY_CHECK", "INVESTMENT", "RESALE", "RENTAL"].includes(intent ?? "") && !facts.length) {
+    if (contextKind === "PROPERTY_SEARCH" && ["PROPERTY_SEARCH", "PROPERTY_REFINEMENT", "PROPERTY_OPTIONS_REQUEST", "AVAILABILITY_CHECK", "INVESTMENT", "RESALE", "RENTAL"].includes(intent ?? "") && propertyResultCount === 0) {
       const type = state.propertyTypes?.[0];
       const budgetMin = state.budgetMin ?? state.priceMin;
       const budgetMax = state.budgetMax ?? state.priceMax;
       const location = state.locations?.[0];
+      const areaMin = state.builtUpAreaMin ?? state.minimumArea;
+      const areaMax = state.builtUpAreaMax ?? state.maximumArea;
       const budget = budgetMin != null && budgetMax != null
         ? (ar ? `من ${this.formatter.money(budgetMin, state.currency ?? "EGP")} إلى ${this.formatter.money(budgetMax, state.currency ?? "EGP")}` : `from ${this.formatter.money(budgetMin, state.currency ?? "EGP")} to ${this.formatter.money(budgetMax, state.currency ?? "EGP")}`)
         : budgetMax != null ? (ar ? `حتى ${this.formatter.money(budgetMax, state.currency ?? "EGP")}` : `up to ${this.formatter.money(budgetMax, state.currency ?? "EGP")}`) : null;
       const constraints = [
         type ? (ar ? `نوع ${type}` : `type ${type}`) : null,
         location ? (ar ? `في ${location}` : `in ${location}`) : null,
+        state.bedrooms != null ? (ar ? `${state.bedrooms} غرف` : `${state.bedrooms} bedrooms`) : null,
+        state.bathrooms != null ? (ar ? `${state.bathrooms} حمام` : `${state.bathrooms} bathrooms`) : null,
+        state.purpose ? (ar ? `الغرض ${state.purpose === "LIVING" ? "سكن" : "استثمار"}` : `purpose ${state.purpose.toLowerCase()}`) : null,
+        areaMin != null || areaMax != null ? (ar ? `مساحة ${areaMin != null ? `من ${areaMin}` : ""}${areaMax != null ? ` حتى ${areaMax}` : ""} م²` : `area ${areaMin != null ? `from ${areaMin}` : ""}${areaMax != null ? ` to ${areaMax}` : ""} m²`) : null,
+        state.requestedProject ? (ar ? `مشروع ${state.requestedProject}` : `project ${state.requestedProject}`) : null,
+        state.preferredPaymentDurationMonths != null ? (ar ? `سداد ${state.preferredPaymentDurationMonths} شهر` : `${state.preferredPaymentDurationMonths}-month payment`) : null,
       ].filter(Boolean).join(ar ? " · " : " · ");
       return ar
-        ? `${budget ? `في النطاق ${budget}` : "تحت الشروط الحالية"}${constraints ? ` (${constraints})` : ""}، مفيش وحدة موثقة مطابقة حاليًا. الميزانية ما اتغيرتش؛ لو حابب، اختار شرط تاني نراجعه.`
-        : `${budget ? `Within the ${budget} range` : "Under the current constraints"}${constraints ? ` (${constraints})` : ""}, there is no matching verified unit right now. The budget has not changed; you can choose another constraint to review.`;
+        ? `${budget ? `في النطاق ${budget}` : constraints ? "تحت الشروط الحالية" : "في المخزون الموثق الحالي"}${constraints ? ` (${constraints})` : ""}، مفيش وحدة موثقة مطابقة حاليًا. لو حابب، اختار شرط نوسّعه أو نغيّره.`
+        : `${budget ? `Within the ${budget} range` : constraints ? "Under the current constraints" : "In the current verified inventory"}${constraints ? ` (${constraints})` : ""}, there is no matching verified unit right now. You can choose a constraint to broaden or change.`;
     }
+
+    const factualIntents = ["PROPERTY_SEARCH", "PROPERTY_REFINEMENT", "PROPERTY_OPTIONS_REQUEST", "PROPERTY_DETAILS", "PROJECT_DETAILS", "DEVELOPER_DETAILS", "COMPARISON", "INVESTMENT", "RESALE", "RENTAL", "AVAILABILITY_CHECK", "FOLLOW_UP_CONFIRMATION"];
+    if (facts.length && factualIntents.includes(intent ?? "")) return this.propertyPresenter.verifiedFactsAnswer(state, facts, contextKind);
+    if (!facts.length && ["PROJECT_DETAILS", "DEVELOPER_DETAILS", "COMPARISON"].includes(intent ?? ""))
+      return ar ? "المعلومة المطلوبة مش متاحة في البيانات الموثقة عندي حاليًا." : "The requested information is not available in the verified data right now.";
 
     return undefined;
   }

@@ -52,6 +52,19 @@ test("explicit media requests are preserved when structured extraction omits the
   assert.equal(intent.requestedMedia, "IMAGES");
 });
 
+test("successful LLM extraction is supplemented by high-confidence explicit constraints", async () => {
+  const workers = { fastModel: "fast", extractIntent: async () => ({ language: "ar-EG" }) };
+  const provider = new HybridAIProvider(workers as any, {} as any, {} as any);
+  const intent = await provider.extractIntent(
+    [{ role: "user", content: "عاوز شقة 3 غرف في حدود 3-5 م" }],
+    { language: "ar-EG" },
+  );
+  assert.deepEqual(intent.propertyTypes, ["Apartment"]);
+  assert.equal(intent.bedrooms, 3);
+  assert.equal(intent.budgetMin, 3_000_000);
+  assert.equal(intent.budgetMax, 5_000_000);
+});
+
 test("media intent is per-message and does not leak into the next turn", async () => {
   const workers = {
     fastModel: "fast",

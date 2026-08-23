@@ -4,6 +4,7 @@ import { normalizeRealEstateSemantics } from "./real-estate-semantics";
 import { deterministicIntent } from "./deterministic-intent";
 import { applyDeterministicTurnSemantics, planCustomerTurn } from "../customer-turn-planner";
 import { StructuredIntent } from "./ai-provider";
+import { applyConstraintOperations, inferConstraintOperations } from "./constraint-lifecycle";
 
 function turn(previous: StructuredIntent, source: string) {
   const plan = planCustomerTurn(source, previous);
@@ -137,4 +138,92 @@ test("reported keep-budget then remove-type and broaden-location flow mutates di
   assert.equal(state.budgetMin, 3_000_000);
   assert.equal(state.budgetMax, 5_000_000);
   assert.equal(state.priceMax, undefined, "no separate price ceiling is invented during broadening");
+});
+
+test("single-dimension RESET clears only its mapped constraint group", () => {
+  const previous: StructuredIntent = {
+    language: "ar-EG", budgetMin: 3_000_000, budgetMax: 5_000_000, currency: "EGP",
+    locations: ["التجمع"], propertyTypes: ["Apartment"], bedrooms: 3, bathrooms: 2,
+    purpose: "INVESTMENT", preferredPaymentDurationMonths: 96,
+  };
+  const budget = { ...previous };
+  applyConstraintOperations(budget, [{ operation: "RESET", constraint: "BUDGET" }], previous);
+  assert.equal(budget.budgetMin, undefined);
+  assert.equal(budget.budgetMax, undefined);
+  assert.equal(budget.currency, undefined);
+  assert.deepEqual(budget.locations, ["التجمع"]);
+  const location = normalizeRealEstateSemantics("إعادة ضبط المنطقة", previous, previous);
+  assert.equal(location.locations, undefined);
+  assert.equal(location.budgetMax, 5_000_000);
+  const type = normalizeRealEstateSemantics("reset property type", previous, previous);
+  assert.equal(type.propertyTypes, undefined);
+  assert.equal(type.bedrooms, 3);
+});
+
+test("RESET is implemented for every declared constraint dimension", () => {
+  const cases: Array<[any, keyof StructuredIntent, unknown]> = [
+    ["BUDGET", "budgetMax", 5_000_000], ["PURPOSE", "purpose", "INVESTMENT"],
+    ["PROPERTY_TYPE", "propertyTypes", ["Apartment"]], ["LOCATION", "locations", ["التجمع"]],
+    ["BEDROOMS", "bedrooms", 3], ["AREA", "builtUpAreaMin", 120],
+    ["PROJECT", "preferredProjects", ["مشروع"]], ["DEVELOPER", "preferredDevelopers", ["مطور"]],
+    ["PAYMENT", "preferredPaymentDurationMonths", 96], ["DELIVERY", "deliveryMaxYears", 3],
+    ["PROXIMITY", "preferredGate", "Gate 2"],
+  ];
+  for (const [constraint, key, value] of cases) {
+    const state: StructuredIntent = { language: "ar-EG", budgetMin: 1_000_000, [key]: value };
+    applyConstraintOperations(state, [{ operation: "RESET", constraint }], { ...state });
+    assert.equal(state[key], undefined, constraint);
+    if (constraint !== "BUDGET") assert.equal(state.budgetMin, 1_000_000, `${constraint} must not reset budget`);
+  }
+});
+
+test("unit-type questions preserve filters while explicit preferences remove them", () => {
+  const previous: StructuredIntent = { language: "ar-EG", propertyTypes: ["Apartment"], budgetMax: 5_000_000 };
+  const question = normalizeRealEstateSemantics("نوعها اي؟", { ...previous, propertyTypes: ["Villa"], constraintOperations: [{ operation: "REMOVE", constraint: "PROPERTY_TYPE" }] }, previous);
+  assert.deepEqual(question.propertyTypes, ["Apartment"]);
+  assert.equal(inferConstraintOperations("نوعها اي؟").some((item) => item.operation === "REMOVE"), false);
+  assert.equal(planCustomerTurn("نوعها اي؟", previous).intent, "PROPERTY_DETAILS");
+  for (const source of ["مش فارق النوع", "أي نوع", "شيل النوع"]) {
+    assert.equal(turn(previous, source).propertyTypes, undefined, source);
+  }
+  const cheapestQuestion = turn(previous, "ارخص وحدة عندك نوعها اي");
+  assert.equal(cheapestQuestion.queryObjective, "CHEAPEST");
+  assert.deepEqual(cheapestQuestion.propertyTypes, ["Apartment"]);
+  assert.equal(turn(previous, "شيل نوع الشقة").propertyTypes, undefined, "final deterministic parsing must not re-add a removed type");
+});
+
+test("final deterministic parsing cannot re-add a constraint removed this turn", () => {
+  const previous: StructuredIntent = { language: "ar-EG", budgetMax: 5_000_000, currency: "EGP", propertyTypes: ["Apartment"] };
+  const budget = turn(previous, "شيل ميزانية 5 مليون");
+  assert.equal(budget.budgetMax, undefined);
+  assert.equal(budget.currency, undefined);
+});
+
+test("query objectives reset for new constraints and persist only through contextual follow-ups", () => {
+  const previous: StructuredIntent = { language: "ar-EG", queryObjective: "CHEAPEST", propertyTypes: ["Apartment"], presentation: { searchCandidateIds: ["u1"] } };
+  assert.equal(turn(previous, "نوعها اي؟").queryObjective, "CHEAPEST");
+  assert.equal(normalizeRealEstateSemantics("نوعها اي؟", { ...previous, propertyTypes: ["Villa"] }, previous).queryObjective, "CHEAPEST");
+  assert.equal(turn(previous, "عاوز فيلا").queryObjective, "BEST_MATCH");
+  assert.equal(turn(previous, "عاوز وحدة مناسبة").queryObjective, "BEST_MATCH");
+  assert.equal(turn(previous, "وسع المنطقة").queryObjective, "BEST_MATCH");
+  assert.equal(turn(previous, "أغلى وحدة").queryObjective, "MOST_EXPENSIVE");
+});
+
+test("ranking objectives preserve every active search constraint", () => {
+  const previous: StructuredIntent = { language: "ar-EG", budgetMin: 3_000_000, budgetMax: 5_000_000, currency: "EGP", locations: ["التجمع"], propertyTypes: ["Apartment"] };
+  const cheapest = turn(previous, "ارخص وحدة");
+  assert.equal(cheapest.queryObjective, "CHEAPEST");
+  assert.equal(cheapest.budgetMin, 3_000_000);
+  assert.equal(cheapest.budgetMax, 5_000_000);
+  assert.deepEqual(cheapest.locations, ["التجمع"]);
+  assert.deepEqual(cheapest.propertyTypes, ["Apartment"]);
+});
+
+test("high-confidence explicit constraints supplement a successful but incomplete LLM patch", () => {
+  const previous: StructuredIntent = { language: "ar-EG", locations: ["القاهرة"] };
+  const effective = normalizeRealEstateSemantics("عاوز شقة 3 غرف في حدود 3-5 م", { language: "ar-EG", locations: ["القاهرة"] }, previous);
+  assert.deepEqual(effective.propertyTypes, ["Apartment"]);
+  assert.equal(effective.bedrooms, 3);
+  assert.equal(effective.budgetMin, 3_000_000);
+  assert.equal(effective.budgetMax, 5_000_000);
 });

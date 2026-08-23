@@ -18,7 +18,7 @@ import { PropertySearchService } from "./property-search.service";
 import { MapsService } from "./maps.service";
 import { deterministicIntent } from "./providers/deterministic-intent";
 import { normalizeRealEstateSemantics } from "./providers/real-estate-semantics";
-import { applyDeterministicTurnSemantics, nextPresentation, planCustomerTurn, UIAction, unpresentedUnitIds } from "./customer-turn-planner";
+import { applyDeterministicTurnSemantics, nextPresentation, planCustomerTurn, presentationAfterPropertySearch, suggestedUnitIdsAfterTurn, UIAction, unpresentedUnitIds } from "./customer-turn-planner";
 import { ApplicationCache } from "./cache/application-cache";
 import { CustomerTrustService } from "./customer-trust.service";
 import {
@@ -429,6 +429,7 @@ export class ChatService {
     } else {
       const searchState = plan.widenSearch ? { ...state, requestedProject: undefined, preferredProjects: undefined } : state;
       properties = await this.search.searchProperties(searchState);
+      trace.propertySearchExecuted = true;
       verifiedFacts = this.serialize(properties);
       const originIds = await this.search.resolveLocations(state.locations);
       if (originIds.length) {
@@ -441,7 +442,7 @@ export class ChatService {
       const candidateIds = properties.map((property) => property.id);
       const candidateProjectIds = [...new Set(properties.map((property) => property.projectId).filter(Boolean))];
       const contextualProjectId = projectId ?? (candidateProjectIds.length === 1 ? candidateProjectIds[0] : undefined);
-      state.presentation = nextPresentation(priorPresentation, { searchCandidateIds: candidateIds, selectedProjectId: contextualProjectId, lastOfferedAction: properties.length && !plan.emitCards ? "PROPERTY_CARDS" : !properties.length ? "SEARCH_WIDEN" : priorPresentation.lastOfferedAction, awaitingConfirmation: Boolean((properties.length && !plan.emitCards) || !properties.length) });
+      state.presentation = presentationAfterPropertySearch(priorPresentation, candidateIds, contextualProjectId, plan.emitCards);
       if (plan.emitCards) {
         const unseenIds = new Set(unpresentedUnitIds(properties.map((property) => property.id), priorPresentation.presentedUnitIds));
         const unseen = properties.filter((property) => unseenIds.has(property.id));
@@ -603,7 +604,7 @@ export class ChatService {
         },
         update: {
           searchContext: this.serialize(state),
-          suggestedUnitIds: unitIds.length ? unitIds : undefined,
+          suggestedUnitIds: suggestedUnitIdsAfterTurn(unitIds, trace.propertySearchExecuted === true),
           intentScore: state.purchaseIntent ?? 0,
         },
       }),
@@ -622,7 +623,12 @@ export class ChatService {
       promptVariant,
     });
     const contextMetrics = answerContextMetrics(answerInput);
-    const directAnswer = deterministicResponse ?? (state.turnIntent === "SMALL_TALK" ? this.formatter.smallTalkAnswer(state) : this.deterministicAnswers.directToolAnswer(state, payload, verifiedFacts));
+    let directAnswer = deterministicResponse ?? (state.turnIntent === "SMALL_TALK" ? this.formatter.smallTalkAnswer(state) : this.deterministicAnswers.directToolAnswer(state, payload, verifiedFacts, undefined, contextKind, properties.length));
+    if (!directAnswer && trace.requiresDatabase) {
+      directAnswer = this.propertyPresenter.verifiedFactsAnswer(state, verifiedFacts, contextKind)
+        ?? (state.language?.startsWith("ar") ? "المعلومة المطلوبة مش متاحة في البيانات الموثقة عندي حاليًا." : "The requested information is not available in the verified data right now.");
+      trace.groundingMode = "DETERMINISTIC_VERIFIED_FACTS";
+    }
     trace.requiresGroq = !directAnswer;
     this.logger.log(`AIContextTrace ${JSON.stringify({requestId:answerInput.requestId,conversationId,intent:contextKind,candidatesBeforeRanking:properties.length||verifiedFacts.length,candidatesSent:contextMetrics.resultCount,historyMessagesSent:contextMetrics.recentHistoryCount,contextBytes:contextMetrics.contextBytes,estimatedTokens:contextMetrics.estimatedInputTokens})}`);
     return {

@@ -30,7 +30,7 @@ const projectPublicInclude = {
   },
   zones: { include: { phase: true, buildings: { include: { phase: true } } } },
   amenities: { where: { verified: true }, include: { amenity: true } },
-  investmentProfile: true,
+  investmentProfile: { where: { verifiedAt: { not: null } } },
   marketProfiles: true,
   landmarks: {
     where: { verifiedAt: { not: null } },
@@ -166,7 +166,7 @@ export class PropertySearchService {
   }
 
   private async normalizedWhere(intent: StructuredIntent): Promise<Prisma.UnitWhereInput | null> {
-    if (intent.extractionDegraded && !intent.searchRelaxationAuthorized && !intent.locations?.length && intent.budgetMin == null && intent.budgetMax == null && intent.bedrooms == null && !intent.propertyTypes?.length && intent.builtUpAreaMin == null && intent.minimumArea == null && !intent.aggregationDimension && !intent.inventoryMarket) return null;
+    if (intent.extractionDegraded && !intent.searchRelaxationAuthorized && !intent.locations?.length && intent.budgetMin == null && intent.budgetMax == null && intent.bedrooms == null && !intent.propertyTypes?.length && intent.builtUpAreaMin == null && intent.minimumArea == null && !intent.aggregationDimension && !intent.inventoryMarket && !intent.purpose) return null;
     const locationIds = await this.resolveLocations(intent.locations);
     if (intent.locations?.length && !locationIds.length) return null;
     const rejectedLocationIds = await this.resolveLocations(intent.rejectedLocations);
@@ -229,6 +229,12 @@ export class PropertySearchService {
     if (rejectedLocationIds.length) projectWhere.NOT = { locationId: { in: rejectedLocationIds } };
     if (intent.rejectedProjects?.length) projectWhere.name = { notIn: intent.rejectedProjects, mode: "insensitive" };
     if (intent.preferredProjects?.length) projectWhere.OR = intent.preferredProjects.map(name => ({ name: { contains: name, mode: "insensitive" } }));
+    if (intent.purpose) projectWhere.investmentProfile = {
+      is: {
+        verifiedAt: { not: null },
+        ...(intent.purpose === "LIVING" ? { suitableForLiving: true } : { suitableForInvestment: true }),
+      },
+    };
     if (Object.keys(projectWhere).length) where.project = projectWhere;
     if (intent.preferredDevelopers?.length) where.developer = { OR: intent.preferredDevelopers.map(name => ({ name: { contains: name, mode: "insensitive" } })) };
     return where;
@@ -238,6 +244,7 @@ export class PropertySearchService {
     const locationIds = await this.resolveLocations(intent.locations);
     return {
       unitType: intent.propertyTypes ?? [],
+      purpose: intent.purpose ?? null,
       inventoryMarket: intent.inventoryMarket ?? null,
       builtUpAreaMin: intent.builtUpAreaMin ?? intent.minimumArea ?? null,
       builtUpAreaMax: intent.builtUpAreaMax ?? intent.maximumArea ?? null,
@@ -348,7 +355,17 @@ export class PropertySearchService {
         orderBy: { sortOrder: "asc" },
       },
     }; 
-    const loader = () => this.prisma.unit.findMany({ where, take: Math.max(limit * 4, 20), orderBy: [{ availabilityUpdatedAt: "desc" }, { price: "asc" }], include });
+    const priceOrder: Prisma.UnitOrderByWithRelationInput[] | undefined = intent.queryObjective === "CHEAPEST"
+      ? [{ price: { sort: "asc", nulls: "last" } }, { availabilityUpdatedAt: "desc" }]
+      : intent.queryObjective === "MOST_EXPENSIVE"
+        ? [{ price: { sort: "desc", nulls: "last" } }, { availabilityUpdatedAt: "desc" }]
+        : undefined;
+    const loader = () => this.prisma.unit.findMany({
+      where,
+      take: Math.max(limit * 4, 20),
+      orderBy: priceOrder ?? [{ availabilityUpdatedAt: "desc" }, { price: "asc" }],
+      include,
+    });
     const raw = await (this.cache?.getOrLoad("property-search-v3", cacheKey, 20_000, loader) ?? loader());
     const withPlans = await this.attachEffectivePaymentPlans(raw as any[], intent);
     const units = await this.attachEffectiveMedia(withPlans);
@@ -377,7 +394,7 @@ export class PropertySearchService {
     return ranked.slice(0, limit);
   }
 
-  async getProperty(id: string) { const unit = await this.prisma.unit.findUnique({ where: { id }, include: { developer: true, project: { include: { location: true, developer: true, gates: { where: { isActive: true } } } }, phaseRef: true, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } }, paymentPlans: { where: { isActive: true } }, offers: true, media: true, priceHistory: { orderBy: { effectiveAt: "desc" } } } }); if (!unit) throw new NotFoundException("Property not found"); const withPlans = await this.attachEffectivePaymentPlans([unit]); return (await this.attachEffectiveMedia(withPlans))[0]; }
+  async getProperty(id: string) { const unit = await this.prisma.unit.findFirst({ where: { id, status: UnitStatus.AVAILABLE, archivedAt: null }, include: { developer: true, project: { include: { location: true, developer: true, gates: { where: { isActive: true } } } }, phaseRef: true, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } }, paymentPlans: { where: { isActive: true } }, offers: true, media: true, priceHistory: { orderBy: { effectiveAt: "desc" } } } }); if (!unit) throw new NotFoundException("Property not found"); const withPlans = await this.attachEffectivePaymentPlans([unit]); return (await this.attachEffectiveMedia(withPlans))[0]; }
   async findUnitByExternalId(externalUnitId: string) {
     const normalized = this.normalizeUnitCode(externalUnitId);
     const variants = [...new Set([
@@ -448,7 +465,7 @@ export class PropertySearchService {
   async getUnitsByIds(ids: string[]) {
     if (!ids.length) return [];
     const units = await this.prisma.unit.findMany({
-      where: { id: { in: ids }, archivedAt: null },
+      where: { id: { in: ids }, status: UnitStatus.AVAILABLE, archivedAt: null },
       include: {
         developer: { select: { id: true, name: true, nameAr: true, nameEn: true, brandName: true } },
         project: { include: { location: true, developer: true, gates: { where: { isActive: true } } } },

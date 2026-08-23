@@ -1,17 +1,24 @@
 import { StructuredIntent } from "./ai-provider";
 import { applyConstraintOperations, inferConstraintOperations, queryObjective } from "./constraint-lifecycle";
+import { highConfidenceIntentPatch } from "./deterministic-intent";
 
 const arabicDigits: Record<string, string> = { "٠":"0", "١":"1", "٢":"2", "٣":"3", "٤":"4", "٥":"5", "٦":"6", "٧":"7", "٨":"8", "٩":"9" };
 const numberText = (value: string) => value.replace(/[٠-٩]/g, (digit) => arabicDigits[digit]);
 
 export function normalizeRealEstateSemantics(source: string, extracted: StructuredIntent, previous: StructuredIntent): StructuredIntent {
   const text = numberText(source.toLowerCase()).replace(/م²|م٢/g, "متر");
-  const next: StructuredIntent = { ...previous, ...extracted, requestedMedia: extracted.requestedMedia, exactRouteRequested: extracted.exactRouteRequested, routeOrigin: extracted.routeOrigin, routeDestination: extracted.routeDestination, temporaryIntent: undefined, aggregationDimension: undefined };
+  const highConfidence = highConfidenceIntentPatch(source);
+  const next: StructuredIntent = { ...previous, ...extracted, ...highConfidence, requestedMedia: extracted.requestedMedia, exactRouteRequested: extracted.exactRouteRequested, routeOrigin: extracted.routeOrigin, routeDestination: extracted.routeDestination, temporaryIntent: undefined, aggregationDimension: undefined };
   const operations = [...(extracted.constraintOperations ?? []), ...inferConstraintOperations(source)];
   applyConstraintOperations(next, operations, previous);
   delete next.constraintOperations;
-  next.searchRelaxationAuthorized = operations.some(item => item.operation !== "PRESERVE") ? true : undefined;
-  next.queryObjective = queryObjective(source) ?? next.queryObjective;
+  const explicitObjective = queryObjective(source);
+  next.searchRelaxationAuthorized = operations.some(item => item.operation !== "PRESERVE") || Boolean(explicitObjective) ? true : undefined;
+  const searchKeys: Array<keyof StructuredIntent> = ["purpose","inventoryMarket","locations","propertyTypes","bedrooms","bathrooms","budgetMin","budgetMax","priceMin","priceMax","currency","deliveryMaxYears","maxDownPayment","maxTravelMinutes","builtUpAreaMin","builtUpAreaMax","targetBuiltUpArea","preferredFloor","preferredPhase","preferredProjectZone","preferredBuilding","preferredGate","preferredPaymentDurationMonths","maxMonthlyInstallment","preferredDownPaymentPercent","preferredDevelopers","preferredProjects","requestedProject"];
+  const changedSearchConstraint = searchKeys.some((key) => JSON.stringify(next[key]) !== JSON.stringify(previous[key]) || Object.prototype.hasOwnProperty.call(highConfidence, key));
+  const mutatedSearch = operations.some((item) => item.operation !== "PRESERVE");
+  const startsNewSearch = /(?:عاوز|عايز|محتاج|دور|ابحث|find|search\s+for).{0,50}(?:وحد(?:ه|ة)?|عقار|بيت|شقه|شقة|فيلا|unit|property|home)/iu.test(text);
+  next.queryObjective = explicitObjective ?? (changedSearchConstraint || mutatedSearch || startsNewSearch ? "BEST_MATCH" : previous.queryObjective);
 
   const explicitResale = /(?:ريسيل|ري\s*سيل|إعادة\s*بيع|اعادة\s*بيع|resale|secondary\s*market)/iu.test(text);
   const explicitPrimary = /(?:primary|من\s+المطور|بيع\s+أول|بيع\s+اول|أول\s+بيع|اول\s+بيع|new\s+from\s+(?:the\s+)?developer)/iu.test(text);

@@ -4,14 +4,20 @@ const normalize = (value: string) => value.toLowerCase().normalize("NFKC")
   .replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
   .replace(/\s+/g, " ").trim();
 
-const removalVerb = /(?:الغي|الغ|شيل|احذف|انس|انسي|فكك\s+من|سيب|من\s+غير|مش\s+(?:مهم(?:ه)?|لازم)|doesn'?t\s+matter|not\s+required|remove|drop|forget|ignore|without)/iu;
+const removalVerb = /(?:الغي|الغ|شيل|احذف|انس|انسي|فكك\s+من|سيب|من\s+غير|مش\s+(?:مهم(?:ه)?|لازم|فارق(?:ه)?)|doesn'?t\s+matter|not\s+required|remove|drop|forget|ignore|without)/iu;
+const resetVerb = /(?:اعاد(?:ه|ة)\s+ضبط|ابد[اأ]\s+من\s+جديد|صف[رّ]|reset)/iu;
 const preserveVerb = /(?:(?:مش|موش)\s+(?:حابب|عايز|عاوز|محتاج)\s+(?:ا?غير|نغير|تغير)|(?:خلي|ثبت|سيب).{0,20}(?:زي\s+ما|نفس)|don'?t\s+change|do\s+not\s+change|keep|preserve|same)/iu;
+
+export function isPropertyTypeQuestion(source: string): boolean {
+  const text = normalize(source);
+  return /(?:نوعها|نوعه|نوع\s+(?:الوحده|الوحدة))\s*(?:اي|ايه|إيه|ما\s+هو)|what\s+(?:is\s+)?(?:its|the\s+unit'?s?)\s+type/iu.test(text);
+}
 
 function targets(text: string): SearchConstraint[] {
   const values: SearchConstraint[] = [];
   if (/(?:ميزاني|بادج(?:ت|يت)|السعر|سعر|budget|price)/iu.test(text)) values.push("BUDGET");
   if (/(?:استثمار|الغرض|purpose|investment|residential|سكن)/iu.test(text)) values.push("PURPOSE");
-  if (/(?:نوع\s*(?:الوحده)?|نوعها|الوحدات|property\s*type|unit\s*type)/iu.test(text)) values.push("PROPERTY_TYPE");
+  if (/(?:نوع\s*(?:الوحده)?|نوعها|الوحدات|property\s*type|unit\s*type|شقه|شقة|apartment|flat|عياده|عيادة|clinic|فيلا|villa|تاون\s*هاوس|town\s*house|توين\s*هاوس|twin\s*house|دوبلكس|duplex|محل|retail|shop|مكتب|office)/iu.test(text)) values.push("PROPERTY_TYPE");
   if (/(?:منطق|مكان|لوكيشن|location|area)/iu.test(text)) values.push("LOCATION");
   if (/(?:غرف|bedrooms?)/iu.test(text)) values.push("BEDROOMS");
   if (/(?:مساح|متر|built.?up)/iu.test(text)) values.push("AREA");
@@ -27,12 +33,17 @@ export function inferConstraintOperations(source: string): ConstraintOperation[]
   const text = normalize(source);
   const result: ConstraintOperation[] = [];
   const explicitTargets = targets(text);
+  if (isPropertyTypeQuestion(source)) result.push({ operation: "PRESERVE", constraint: "PROPERTY_TYPE" });
   const preservedTargets = preserveVerb.test(text) ? explicitTargets : [];
   for (const constraint of preservedTargets) result.push({ operation: "PRESERVE", constraint });
+  if (resetVerb.test(text)) {
+    const resetTargets = explicitTargets.length ? explicitTargets : ["SEARCH" as const];
+    for (const constraint of resetTargets) result.push({ operation: "RESET", constraint });
+  }
   if (removalVerb.test(text) && /(?:شرط|condition).*?\d+(?:[.,]\d+)?\s*(?:م|m|mn|مليون)/iu.test(text) && !explicitTargets.includes("BUDGET"))
     explicitTargets.push("BUDGET");
   const anyConstraint = /(?:اي\s+سعر|السعر\s+ايا\s+كان|any\s+price)/iu.test(text)
-    || /(?:اي\s+نوع|نوعها\s+اي|نوع\s+الوحده\s+ايا\s+كان|any\s+(?:unit\s+)?type)/iu.test(text)
+    || /(?:اي\s+نوع|نوع\s+الوحده\s+ايا\s+كان|any\s+(?:unit\s+)?type)/iu.test(text)
     || /(?:اي\s+منطق(?:ه)?|المكان\s+ايا\s+كان|any\s+location)/iu.test(text);
   const remove = removalVerb.test(text) || anyConstraint;
   if (remove) for (const constraint of explicitTargets.filter(constraint => !preservedTargets.includes(constraint))) result.push({ operation: "REMOVE", constraint });
@@ -44,12 +55,6 @@ export function inferConstraintOperations(source: string): ConstraintOperation[]
     if (/(?:البحث|search|النطاق)/iu.test(broaden[0]) || !scopedTargets.length) result.push({ operation: "BROADEN", constraint: "SEARCH" });
     else for (const constraint of scopedTargets) result.push({ operation: "BROADEN", constraint });
   }
-
-  // An absolute cheapest/most-expensive request is a ranking objective, not a
-  // new price ceiling. Existing location/bedroom constraints remain; stale
-  // budget bounds do not, unless this turn supplies a new explicit bound.
-  if (/(?:ارخص|اقل\s+سعر|cheapest|lowest\s+price|اغلي|أغلى|most\s+expensive|highest\s+price)/iu.test(text))
-    result.push({ operation: "REMOVE", constraint: "BUDGET" });
 
   return result.filter((item, index, all) =>
     all.findIndex((candidate) => candidate.operation === item.operation && candidate.constraint === item.constraint) === index);
@@ -69,7 +74,7 @@ const clear = (state: StructuredIntent, keys: Array<keyof StructuredIntent>) => 
 
 const constraintKeys = (constraint: SearchConstraint): Array<keyof StructuredIntent> => {
   switch (constraint) {
-    case "BUDGET": return ["budgetMin","budgetMax","budgetFlexible","budgetFlexibility","priceTarget","priceMin","priceMax","explicitRejectedPriceMin","explicitRejectedPriceMax"];
+    case "BUDGET": return ["budgetMin","budgetMax","budgetFlexible","budgetFlexibility","priceTarget","priceMin","priceMax","explicitRejectedPriceMin","explicitRejectedPriceMax","currency"];
     case "PURPOSE": return ["purpose","investmentRequirements"];
     case "PROPERTY_TYPE": return ["propertyTypes"];
     case "LOCATION": return ["locations","rejectedLocations","maxTravelMinutes"];
@@ -107,6 +112,6 @@ export function applyConstraintOperations(state: StructuredIntent, operations: C
     if (item.constraint === "SEARCH") continue;
     const keys = constraintKeys(item.constraint);
     if (item.operation === "PRESERVE") restore(state, previous, keys);
-    else if (item.operation === "REMOVE" || item.operation === "BROADEN") clear(state, keys);
+    else if (item.operation === "REMOVE" || item.operation === "RESET" || item.operation === "BROADEN") clear(state, keys);
   }
 }

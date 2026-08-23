@@ -1,5 +1,5 @@
 import { CustomerTurnIntent, PresentationState, StructuredIntent } from "./providers/ai-provider";
-import { applyConstraintOperations, inferConstraintOperations, queryObjective } from "./providers/constraint-lifecycle";
+import { applyConstraintOperations, inferConstraintOperations, isPropertyTypeQuestion, queryObjective } from "./providers/constraint-lifecycle";
 
 export type UIActionType = "PROPERTY_CARDS" | "PROJECT_PHOTOS" | "PROJECT_BROCHURE" | "PROJECT_LOCATION" | "DISTANCE_RESULT" | "VIEWING_REQUEST" | "CONTACT_REQUEST" | "PAYMENT_CHOICES" | "CONVERSATION_CLOSED";
 export type UIAction = { type: UIActionType; payload: Record<string, unknown> };
@@ -127,6 +127,9 @@ export function planCustomerTurn(source: string, previous: StructuredIntent): Tu
   if (/(?:نظام\s+السداد|خطه\s+السداد|خطة\s+السداد|تقسيط|قسط|مقدم|كاش|نقدي|cash|payment plan|installments?)/iu.test(text))
     return { intent: "PAYMENT_PLAN", requiresDatabase: true, requiresExtraction: false, emitCards: false, executeBrochure: false, exactUnitId: unitId };
 
+  if (isPropertyTypeQuestion(source) && !queryObjective(source))
+    return { intent: "PROPERTY_DETAILS", requiresDatabase: true, requiresExtraction: false, emitCards: false, executeBrochure: false, exactUnitId: unitId };
+
   if (inferConstraintOperations(source).length || queryObjective(source))
     return { intent: previous.presentation?.searchCandidateIds?.length ? "PROPERTY_REFINEMENT" : "PROPERTY_SEARCH", requiresDatabase: true, requiresExtraction: true, emitCards: false, executeBrochure: false };
 
@@ -170,6 +173,8 @@ function money(value: string) { const n = Number(value.replace(",", ".")); retur
 export function applyDeterministicTurnSemantics(source: string, extracted: StructuredIntent, previous: StructuredIntent, plan: TurnPlan): StructuredIntent {
   const text = normalize(source);
   const next: StructuredIntent = { ...extracted, turnIntent: plan.intent, presentation: previous.presentation ?? {} };
+  const currentOperations = inferConstraintOperations(source);
+  const clears = (constraint: "BUDGET" | "PROPERTY_TYPE") => currentOperations.some((item) => item.constraint === constraint && ["REMOVE", "RESET", "BROADEN"].includes(item.operation));
   if (plan.widenSearch) {
     applyConstraintOperations(next, [{ operation: "BROADEN", constraint: "SEARCH" }]);
     next.searchRelaxationAuthorized = true;
@@ -186,7 +191,7 @@ export function applyDeterministicTurnSemantics(source: string, extracted: Struc
   if (/(?:مكالمه|مكالمة|اتصال|call)/iu.test(text) && previous.presentation?.leadHandoffStage === "CONFIRMATION") { next.preferredConfirmationChannel = "CALL"; next.preferredContactChannel = "CALL"; }
 
   const explicitType = /(?:شقه|شقة|apartment|flat)/iu.test(text) ? "Apartment" : /(?:عياده|عيادة|clinic)/iu.test(text) ? "Clinics" : /(?:فيلا|villa)/iu.test(text) ? "Villa" : /(?:تاون\s*هاوس|town\s*house)/iu.test(text) ? "Townhouse" : /(?:توين\s*هاوس|twin\s*house)/iu.test(text) ? "Twin House" : /(?:دوبلكس|duplex)/iu.test(text) ? "Duplex" : /(?:محل|retail|shop)/iu.test(text) ? "Retail" : /(?:مكتب|office)/iu.test(text) ? "Office" : null;
-  if (explicitType) next.propertyTypes = [explicitType];
+  if (explicitType && !clears("PROPERTY_TYPE")) next.propertyTypes = [explicitType];
 
   if (plan.exactUnitId) {
     next.externalUnitId = plan.exactUnitId;
@@ -205,12 +210,12 @@ export function applyDeterministicTurnSemantics(source: string, extracted: Struc
 
 
   const explicitBudget = text.match(/(?:ب(?:سعر|ميزانيه|ميزانية)|ميزانيتي|معايا|معي|بمبلغ|budget(?:\s+of)?|for)\s*(?:حوالي\s*)?(\d+(?:[.,]\d+)?)\s*(?:مليون|m|mn|million)/iu);
-  if (explicitBudget && !around) {
+  if (explicitBudget && !around && !clears("BUDGET")) {
     const cap = money(explicitBudget[1]);
     next.priceMax = cap; next.budgetMax = cap; next.currency = "EGP"; next.budgetFlexibility = "NONE";
   }
 
-  if (around) {
+  if (around && !clears("BUDGET")) {
     const target = money(around[1]);
     next.priceTarget = target;
     next.priceMax = Math.round(target * 1.05);
@@ -218,7 +223,7 @@ export function applyDeterministicTurnSemantics(source: string, extracted: Struc
     next.budgetFlexibility = /(?:ازود|أزود|مرن|flex)/iu.test(text) ? "SOFT" : "LOW";
     next.currency = "EGP";
   }
-  if (strict && /(?:لا\s+عاوز|لا\s+عايز|عاوزها|عايزها)/iu.test(text)) {
+  if (strict && /(?:لا\s+عاوز|لا\s+عايز|عاوزها|عايزها)/iu.test(text) && !clears("BUDGET")) {
     const target = money(strict[1]);
     next.priceTarget = target;
     next.priceMax = target;
@@ -226,13 +231,13 @@ export function applyDeterministicTurnSemantics(source: string, extracted: Struc
     next.budgetFlexibility = "NONE";
     next.currency = "EGP";
   }
-  if (under) {
+  if (under && !clears("BUDGET")) {
     next.priceMax = money(under[1]);
     next.budgetMax = next.priceMax;
     next.budgetFlexibility = "NONE";
     next.currency = "EGP";
   }
-  if (rejected) {
+  if (rejected && !clears("BUDGET")) {
     const rejectedPrice = money(rejected[1]);
     next.explicitRejectedPriceMin = rejectedPrice * 0.975;
     next.explicitRejectedPriceMax = rejectedPrice * 1.025;
@@ -258,6 +263,23 @@ export function applyDeterministicTurnSemantics(source: string, extracted: Struc
 
 export function nextPresentation(previous: PresentationState | undefined, patch: Partial<PresentationState>): PresentationState {
   return { presentedUnitIds: [], ...previous, ...patch };
+}
+
+export function presentationAfterPropertySearch(previous: PresentationState | undefined, candidateIds: string[], selectedProjectId: string | undefined, emitCards: boolean): PresentationState {
+  const hasResults = candidateIds.length > 0;
+  const candidateSet = new Set(candidateIds);
+  return nextPresentation(previous, {
+    searchCandidateIds: candidateIds,
+    selectedUnitId: previous?.selectedUnitId && candidateSet.has(previous.selectedUnitId) ? previous.selectedUnitId : undefined,
+    lastPresentedUnitIds: hasResults ? (previous?.lastPresentedUnitIds ?? []).filter((id) => candidateSet.has(id)) : [],
+    selectedProjectId,
+    lastOfferedAction: hasResults && !emitCards ? "PROPERTY_CARDS" : !hasResults ? "SEARCH_WIDEN" : previous?.lastOfferedAction,
+    awaitingConfirmation: Boolean((hasResults && !emitCards) || !hasResults),
+  });
+}
+
+export function suggestedUnitIdsAfterTurn(unitIds: string[], propertySearchExecuted: boolean): string[] | undefined {
+  return unitIds.length || propertySearchExecuted ? unitIds : undefined;
 }
 
 export function unpresentedUnitIds(candidateIds: string[], presentedIds: string[] = []) {

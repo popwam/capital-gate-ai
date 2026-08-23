@@ -17,7 +17,7 @@ function compactIntent(intent: StructuredIntent) {
     "softPreferences","rejectedLocations","rejectedProjects","preferredDevelopers","preferredProjects",
     "requestedProject","requestedMedia","purchaseIntent","turnIntent","aggregationDimension","externalUnitId",
     "preferredContactChannel","preferredConfirmationChannel","preferredPaymentMode","preferredVisitDayPart","preferredVisitTiming",
-    "familyRequirements","investmentRequirements","customerConcerns","presentation",
+    "familyRequirements","investmentRequirements","customerConcerns","queryObjective","presentation",
   ];
   return Object.fromEntries(keys.flatMap((key) => intent[key] == null ? [] : [[key, intent[key]]]));
 }

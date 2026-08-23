@@ -62,17 +62,62 @@ test("exact external unit lookup takes the identifier as one atomic value", asyn
   assert.equal(captured.where.bathrooms, undefined);
 });
 
+test("contextual unit lookups cannot revive unavailable or archived candidates", async () => {
+  let one: any;
+  let many: any;
+  const prisma = {
+    unit: {
+      findFirst: async (query: any) => { one = query; return null; },
+      findMany: async (query: any) => { many = query; return []; },
+    },
+  };
+  const service = new PropertySearchService(prisma as any);
+  await assert.rejects(() => service.getProperty("u1"));
+  await service.getUnitsByIds(["u1"]);
+  assert.equal(one.where.status, "AVAILABLE");
+  assert.equal(one.where.archivedAt, null);
+  assert.equal(many.where.status, "AVAILABLE");
+  assert.equal(many.where.archivedAt, null);
+});
+
 test("cheapest is a ranking objective over the effective verified result set", async () => {
+  let query: any;
   const units = [12_000_000, 6_210_000, 9_000_000].map((price, index) => ({ id: `u${index}`, price, currency: "EGP", status: "AVAILABLE", projectId: "p1", project: { locationId: null, location: null }, developer: {}, paymentPlans: [], offers: [] }));
   const prisma = {
     location: { findMany: async () => [] },
-    unit: { findMany: async () => units },
+    unit: { findMany: async (value: any) => { query = value; return units; } },
     paymentPlan: { findMany: async () => [] },
     unitMediaRule: { findMany: async () => [] },
   };
   const service = new PropertySearchService(prisma as any);
   const result = await service.searchProperties({ language: "ar-EG", queryObjective: "CHEAPEST" });
   assert.deepEqual(result.map((unit) => Number(unit.price)), [6_210_000, 9_000_000, 12_000_000]);
+  assert.deepEqual(query.orderBy[0], { price: { sort: "asc", nulls: "last" } });
+});
+
+test("most expensive ordering is pushed into the database over all active filters", async () => {
+  let query: any;
+  const prisma = {
+    location: { findMany: async () => [] },
+    unit: { findMany: async (value: any) => { query = value; return []; } },
+    paymentPlan: { findMany: async () => [] }, unitMediaRule: { findMany: async () => [] },
+  };
+  await new PropertySearchService(prisma as any).searchProperties({ language: "ar-EG", queryObjective: "MOST_EXPENSIVE", propertyTypes: ["Villa"] });
+  assert.deepEqual(query.orderBy[0], { price: { sort: "desc", nulls: "last" } });
+  assert.deepEqual(query.where.unitType, { in: ["Villa"], mode: "insensitive" });
+  assert.equal(query.where.status, "AVAILABLE");
+  assert.equal(query.where.archivedAt, null);
+});
+
+test("purpose uses only admin-verified project suitability semantics", async () => {
+  let query: any;
+  const prisma = {
+    location: { findMany: async () => [] },
+    unit: { findMany: async (value: any) => { query = value; return []; } },
+    paymentPlan: { findMany: async () => [] }, unitMediaRule: { findMany: async () => [] },
+  };
+  await new PropertySearchService(prisma as any).searchProperties({ language: "ar-EG", purpose: "INVESTMENT" });
+  assert.deepEqual(query.where.project.investmentProfile, { is: { verifiedAt: { not: null }, suitableForInvestment: true } });
 });
 
 test("no-match then explicit budget removal reruns inventory without the stale price filter", async () => {

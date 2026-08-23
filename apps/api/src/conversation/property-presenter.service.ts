@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { StructuredIntent } from "../providers/ai-provider";
+import { AIContextKind, StructuredIntent } from "../providers/ai-provider";
 import { ConversationFormatterService } from "./conversation-formatter.service";
 
 /**
@@ -31,6 +31,76 @@ export class PropertyPresenterService {
       [unit.unitType, unit.bedrooms != null ? `${unit.bedrooms} غرف` : null, area, price, unit.status === "AVAILABLE" ? "متاحة حاليًا" : unit.status].filter(Boolean).join(" · "),
       [phase ? `المرحلة: ${phase}` : null, building ? `المبنى: ${building}` : null, location ? `الموقع: ${location}` : null].filter(Boolean).join(" · "),
     ].filter(Boolean).join("\n\n");
+  }
+
+  verifiedFactsAnswer(state: StructuredIntent, facts: unknown[], contextKind: AIContextKind): string | undefined {
+    const ar = state.language?.startsWith("ar") ?? true;
+    const values = (facts as any[]).filter(Boolean);
+    const units = values.filter((item) => item?.externalUnitId || item?.unitCode);
+
+    if (contextKind === "PROPERTY_SEARCH" || contextKind === "COMPARISON") {
+      if (!units.length) return undefined;
+      const first = units[0];
+      const objective = state.queryObjective;
+      if (objective === "CHEAPEST" || objective === "MOST_EXPENSIVE") {
+        const label = objective === "CHEAPEST" ? (ar ? "أرخص وحدة موثقة" : "The cheapest verified unit") : (ar ? "أغلى وحدة موثقة" : "The most expensive verified unit");
+        const type = first.unitType ? (ar ? `نوعها **${first.unitType}**` : `Its type is **${first.unitType}**`) : (ar ? "نوعها غير مسجل في البيانات الموثقة" : "Its type is not recorded in the verified data");
+        const price = this.formatter.money(first.price, first.currency ?? "EGP");
+        const project = this.formatter.displayProject(first);
+        const location = this.formatter.displayLocation(first);
+        const details = [type, price ? (ar ? `وسعرها ${price}` : `priced at ${price}`) : null, project ? (ar ? `في مشروع **${project}**` : `in **${project}**`) : null, location ? (ar ? `بمنطقة ${location}` : `in ${location}`) : null].filter(Boolean).join(ar ? "، " : ", ");
+        return `${label} ${ar ? "ضمن شروط البحث الحالية" : "under the current search constraints"}: ${details}.`;
+      }
+      if (units.length === 1) return this.propertyDetailAnswer(first, ar);
+      const lines = units.slice(0, 4).map((unit) => {
+        const code = unit.externalUnitId ?? unit.unitCode;
+        const price = this.formatter.money(unit.price, unit.currency ?? "EGP");
+        const project = this.formatter.displayProject(unit);
+        const location = this.formatter.displayLocation(unit);
+        return `- ${[code ? `**${code}**` : (ar ? "وحدة" : "Unit"), unit.unitType, price, project, location].filter(Boolean).join(" · ")}`;
+      });
+      return [ar ? `لقيت ${units.length} اختيارات موثقة مطابقة للشروط الحالية:` : `I found ${units.length} verified options matching the current constraints:`, ...lines].join("\n");
+    }
+
+    if (contextKind === "DEVELOPER_HISTORY") {
+      const developer = values[0];
+      if (!developer) return undefined;
+      const name = developer.nameAr ?? developer.nameEn ?? developer.brandName ?? developer.name;
+      const portfolio = Array.isArray(developer.portfolioProjects) ? developer.portfolioProjects.slice(0, 5) : [];
+      const projects = portfolio.map((project: any) => project.projectName).filter(Boolean);
+      return ar
+        ? [name ? `المطور: **${name}**.` : null, projects.length ? `ومن المشروعات الموثقة في سجلّه: ${projects.join("، ")}.` : "مفيش مشروعات سابقة موثقة ظاهرة في البيانات الحالية."].filter(Boolean).join("\n")
+        : [name ? `Developer: **${name}**.` : null, projects.length ? `Verified portfolio projects include: ${projects.join(", ")}.` : "No verified portfolio projects are present in the current data."].filter(Boolean).join("\n");
+    }
+
+    const projectValue = values[0];
+    const project = projectValue?.project ?? projectValue;
+    if (!project) return undefined;
+    const projectName = project.nameAr ?? project.nameEn ?? project.name ?? projectValue?.projectName;
+    const developer = project.developer?.nameAr ?? project.developer?.nameEn ?? project.developer?.brandName ?? project.developer?.name ?? projectValue?.developerName;
+    const location = project.location?.nameAr ?? project.location?.nameEn ?? project.location?.name ?? project.formattedAddress ?? projectValue?.location;
+
+    if (["INVESTMENT", "RESALE", "RENTAL"].includes(contextKind)) {
+      const profile = project.investmentProfile;
+      if (!profile?.verifiedAt) return ar ? "مفيش تقييم موثق للغرض المطلوب على المشروع ده حاليًا." : "There is no verified assessment for that purpose on this project yet.";
+      const suitable = contextKind === "INVESTMENT" ? profile.suitableForInvestment : contextKind === "RENTAL" ? profile.suitableForRental : null;
+      const title = [projectName ? `**${projectName}**` : null, developer ? (ar ? `من ${developer}` : `by ${developer}`) : null, location ? (ar ? `في ${location}` : `in ${location}`) : null].filter(Boolean).join(" ");
+      const suitability = suitable === true ? (ar ? "مصنف كمناسب وفق التقييم الموثق." : "is marked suitable in the verified assessment.") : suitable === false ? (ar ? "مصنف كغير مناسب وفق التقييم الموثق." : "is marked unsuitable in the verified assessment.") : (ar ? "درجة الملاءمة غير محددة في التقييم الموثق." : "Suitability is not specified in the verified assessment.");
+      const advantages = Array.isArray(profile.investmentAdvantages) ? profile.investmentAdvantages.slice(0, 3) : [];
+      return [title, suitability, advantages.length ? (ar ? `المزايا المسجلة: ${advantages.join("، ")}.` : `Recorded advantages: ${advantages.join(", ")}.`) : null].filter(Boolean).join("\n");
+    }
+
+    if (contextKind === "AMENITIES") {
+      const amenities = Array.isArray(project.amenities) ? project.amenities.map((item: any) => item.amenity?.nameAr ?? item.amenity?.nameEn ?? item.amenity?.canonicalName).filter(Boolean).slice(0, 12) : [];
+      return amenities.length
+        ? (ar ? `الخدمات الموثقة في **${projectName ?? "المشروع"}**: ${amenities.join("، ")}.` : `Verified amenities at **${projectName ?? "the project"}**: ${amenities.join(", ")}.`)
+        : (ar ? "مفيش خدمات موثقة مسجلة للمشروع حاليًا." : "No verified amenities are recorded for the project yet.");
+    }
+
+    const types = Array.isArray(project.projectTypes) && project.projectTypes.length ? project.projectTypes : Array.isArray(project.unitTypes) ? project.unitTypes : [];
+    return ar
+      ? [projectName ? `المشروع: **${projectName}**.` : null, developer ? `المطور: **${developer}**.` : null, location ? `الموقع: ${location}.` : null, types.length ? `الأنواع المسجلة: ${types.slice(0, 8).join("، ")}.` : null].filter(Boolean).join("\n") || "المعلومة المطلوبة مش متاحة في البيانات الموثقة عندي حاليًا."
+      : [projectName ? `Project: **${projectName}**.` : null, developer ? `Developer: **${developer}**.` : null, location ? `Location: ${location}.` : null, types.length ? `Recorded types: ${types.slice(0, 8).join(", ")}.` : null].filter(Boolean).join("\n") || "The requested information is not available in the verified data right now.";
   }
 
   groundedFallback(state: StructuredIntent, facts: unknown[]): string {

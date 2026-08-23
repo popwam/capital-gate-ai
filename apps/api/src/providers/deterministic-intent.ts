@@ -3,6 +3,49 @@ import { AIMessage, ProximityPreference, StructuredIntent } from "./ai-provider"
 const arabicDigits: Record<string, string> = { "٠":"0", "١":"1", "٢":"2", "٣":"3", "٤":"4", "٥":"5", "٦":"6", "٧":"7", "٨":"8", "٩":"9" };
 function normalizedNumbers(value: string) { return value.replace(/[٠-٩]/g, digit => arabicDigits[digit]); }
 
+function explicitPropertyTypes(text: string): string[] | undefined {
+  return /(?:شقه|شقة|apartment|flat)/iu.test(text) ? ["Apartment"]
+    : /(?:عياده|عيادة|clinic)/iu.test(text) ? ["Clinics"]
+    : /(?:فيلا|villa)/iu.test(text) ? ["Villa"]
+    : /(?:تاون\s*هاوس|town\s*house)/iu.test(text) ? ["Townhouse"]
+    : /(?:توين\s*هاوس|twin\s*house)/iu.test(text) ? ["Twin House"]
+    : /(?:دوبلكس|duplex)/iu.test(text) ? ["Duplex"]
+    : /(?:محل|retail|shop)/iu.test(text) ? ["Retail"]
+    : /(?:مكتب|office)/iu.test(text) ? ["Office"]
+    : undefined;
+}
+
+/**
+ * Small, high-confidence patch that supplements successful model extraction.
+ * It intentionally covers only explicit values with low ambiguity.
+ */
+export function highConfidenceIntentPatch(source: string): Partial<StructuredIntent> {
+  const text = normalizedNumbers(source.toLowerCase());
+  const patch: Partial<StructuredIntent> = {};
+  const explicitMillionRange = text.match(/(\d+(?:[.,]\d+)?)\s*(?:ل(?:حد|ـ)?|to|[-–])\s*(\d+(?:[.,]\d+)?)\s*(?:m|mn|million|مليون)/iu);
+  const shorthandMillionRange = text.match(/(?:ميزاني|سعر|فلوس|في\s+حدود|budget).*?(\d+(?:[.,]\d+)?)\s*(?:ل(?:حد|ـ)?|to|[-–])\s*(\d+(?:[.,]\d+)?)\s*م(?=\s|[؟?.,،]|$)/u);
+  const range = explicitMillionRange ?? shorthandMillionRange;
+  if (range) {
+    patch.budgetMin = Number(range[1].replace(",", ".")) * 1_000_000;
+    patch.budgetMax = Number(range[2].replace(",", ".")) * 1_000_000;
+    patch.currency = "EGP";
+  } else {
+    const cap = text.match(/(?:ميزاني(?:ه|ة|تي)?|بادج(?:ت|يت)|ب(?:سعر|مبلغ)|في\s+حدود|budget(?:\s+of)?|under|اقل\s+من|أقل\s+من|تحت)\s*(?:حوالي\s*)?(\d+(?:[.,]\d+)?)\s*(?:مليون|m|mn|million)/iu);
+    if (cap) {
+      patch.budgetMax = Number(cap[1].replace(",", ".")) * 1_000_000;
+      patch.currency = "EGP";
+    }
+  }
+  const bedroom = text.match(/(\d+)\s*(?:bed(?:room)?s?|غرف(?:ه|ة)?\s*(?:نوم)?)/iu);
+  if (bedroom) patch.bedrooms = Number(bedroom[1]);
+  const propertyTypes = explicitPropertyTypes(text);
+  if (propertyTypes) patch.propertyTypes = propertyTypes;
+  const locationMatch = text.match(/(?:عاوز|عايز|محتاج|ابحث|دور|show|find).*?(?:\sفي\s|\sin\s)([\p{L}][\p{L}\s-]{2,45})(?:[؟?.,،]|$)/iu);
+  const location = locationMatch?.[1]?.trim();
+  if (location && !/(?:حدود|مليون|سعر|ميزاني|غرف|متر|مشروع|وحد)/iu.test(location)) patch.locations = [location];
+  return patch;
+}
+
 export function detectRequestedMedia(value: string) {
   const text = value.toLowerCase();
   if (/(?:صور|photos?|images?)/i.test(text)) return "IMAGES" as const;
@@ -58,15 +101,7 @@ export function deterministicIntent(messages: AIMessage[], previous: StructuredI
   const resale = /(?:ريسيل|ري\s*سيل|إعادة\s*بيع|اعادة\s*بيع|resale|secondary\s*market)/iu.test(text);
   const primary = /(?:primary|من\s+المطور|بيع\s+أول|بيع\s+اول|أول\s+بيع|اول\s+بيع|new\s+from\s+(?:the\s+)?developer)/iu.test(text);
   const route = detectExplicitRouteRequest(source);
-  const propertyTypes = /(?:شقه|شقة|apartment|flat)/iu.test(text) ? ["Apartment"]
-    : /(?:عياده|عيادة|clinic)/iu.test(text) ? ["Clinics"]
-    : /(?:فيلا|villa)/iu.test(text) ? ["Villa"]
-    : /(?:تاون\s*هاوس|town\s*house)/iu.test(text) ? ["Townhouse"]
-    : /(?:توين\s*هاوس|twin\s*house)/iu.test(text) ? ["Twin House"]
-    : /(?:دوبلكس|duplex)/iu.test(text) ? ["Duplex"]
-    : /(?:محل|retail|shop)/iu.test(text) ? ["Retail"]
-    : /(?:مكتب|office)/iu.test(text) ? ["Office"]
-    : previous.propertyTypes;
+  const propertyTypes = explicitPropertyTypes(text) ?? previous.propertyTypes;
   const locationMatch = text.match(/(?:عاوز|عايز|محتاج|ابحث|دور|show|find).*?(?:\sفي\s|\sin\s)([\p{L}][\p{L}\s-]{2,45})(?:[؟?.,،]|$)/iu);
   const locationCandidate = locationMatch?.[1]?.trim();
   const locations = locationCandidate && !/(?:حدود|مليون|سعر|ميزاني|غرف|متر|مشروع|وحد)/iu.test(locationCandidate) ? [locationCandidate] : previous.locations;

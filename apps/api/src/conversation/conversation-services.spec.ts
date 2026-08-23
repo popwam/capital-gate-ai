@@ -61,8 +61,36 @@ test("empty verified inventory keeps the exact budget range and invents no locat
   ) ?? "";
   assert.match(empty, /3,000,000/u);
   assert.match(empty, /5,000,000/u);
-  assert.match(empty, /الميزانية ما اتغيرتش/u);
+  assert.doesNotMatch(empty, /الميزانية ما اتغيرتش/u);
   assert.doesNotMatch(empty, /المعادي|التجمع|المهندسين|الدقي/u);
+});
+
+test("zero property results remain a deterministic no-match when auxiliary facts exist", () => {
+  const answer = answers.directToolAnswer(
+    { language: "ar-EG", turnIntent: "PROPERTY_SEARCH", locations: ["التجمع"] },
+    { type: "text", uiActions: [] },
+    [{ from: "التجمع", to: "مدينة نصر", estimatedMinutes: 30 }],
+    undefined,
+    "PROPERTY_SEARCH",
+    0,
+  ) ?? "";
+  assert.match(answer, /مفيش وحدة موثقة مطابقة/u);
+  assert.doesNotMatch(answer, /الميزانية ما اتغيرتش/u);
+});
+
+test("verified property answers are rendered only from structured facts", () => {
+  const answer = answers.directToolAnswer(
+    { language: "ar-EG", turnIntent: "PROPERTY_SEARCH", queryObjective: "CHEAPEST" },
+    { type: "text", uiActions: [] },
+    [{ externalUnitId: "U-1", unitType: "Apartment", price: 6_000_000, currency: "EGP", status: "AVAILABLE", project: { nameAr: "مشروع موثق", location: { nameAr: "التجمع" } }, developer: { nameAr: "مطور موثق" } }],
+    undefined,
+    "PROPERTY_SEARCH",
+    1,
+  ) ?? "";
+  assert.match(answer, /Apartment/u);
+  assert.match(answer, /6,000,000 EGP/u);
+  assert.match(answer, /مشروع موثق/u);
+  assert.doesNotMatch(answer, /غير موثق|اختراع/u);
 });
 
 test("grounding contradiction detection blocks claims that verified facts are missing", () => {
