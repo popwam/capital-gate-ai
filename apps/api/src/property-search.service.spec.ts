@@ -97,3 +97,27 @@ test("no-match then explicit budget removal reruns inventory without the stale p
   assert.equal(seenWhere.at(-1).price, undefined);
   assert.equal(recovered[0]?.id, "u1");
 });
+
+test("removing type and broadening location preserves the verified 3-5M query", async () => {
+  let capturedWhere: any;
+  const prisma = {
+    location: { findMany: async () => [] },
+    unit: { findMany: async (query: any) => { capturedWhere = query.where; return []; } },
+    paymentPlan: { findMany: async () => [] },
+    unitMediaRule: { findMany: async () => [] },
+  };
+  const service = new PropertySearchService(prisma as any);
+  const previous = { language: "ar-EG", budgetMin: 3_000_000, budgetMax: 5_000_000, propertyTypes: ["Clinics"], locations: ["القاهرة"] };
+  const source = "شيل النوع ووسع المنطقة";
+  const plan = planCustomerTurn(source, previous);
+  const extracted = normalizeRealEstateSemantics(source, deterministicIntent([{ role: "user", content: source }], previous), previous);
+  const effective = applyDeterministicTurnSemantics(source, extracted, previous, plan);
+  await service.searchProperties(effective);
+
+  assert.equal(effective.budgetMin, 3_000_000);
+  assert.equal(effective.budgetMax, 5_000_000);
+  assert.equal(effective.propertyTypes, undefined);
+  assert.equal(effective.locations, undefined);
+  assert.deepEqual(capturedWhere.price, { gte: 3_000_000, lte: 5_000_000 });
+  assert.equal(capturedWhere.unitType, undefined);
+});

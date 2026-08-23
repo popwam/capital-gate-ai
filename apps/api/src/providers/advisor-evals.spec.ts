@@ -21,4 +21,6 @@ test("advisor guardrails require verified facts, one useful question and no fake
   assert.match(system, /only come from VERIFIED_FACTS/);
   assert.match(system, /ask at most one useful question/i);
   assert.match(system, /Never invent.*scarcity/);
+  assert.match(system, /Never name an area, project, developer, unit type, price, or available property unless/u);
+  assert.match(system, /Never promise future work/u);
 });

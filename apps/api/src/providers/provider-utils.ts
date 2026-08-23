@@ -38,7 +38,7 @@ export function sanitizeIntent(raw:Record<string,unknown>,previous:StructuredInt
   const operations = Array.isArray(raw.constraintOperations) ? raw.constraintOperations.flatMap((item): ConstraintOperation[] => {
     if (!item || typeof item !== "object") return [];
     const value = item as Record<string,unknown>;
-    const operation = oneOfValue(value.operation,["REMOVE","RESET","BROADEN"] as const);
+    const operation = oneOfValue(value.operation,["REMOVE","RESET","BROADEN","PRESERVE"] as const);
     const constraint = oneOfValue(value.constraint,["BUDGET","PURPOSE","PROPERTY_TYPE","LOCATION","BEDROOMS","AREA","PROJECT","DEVELOPER","PAYMENT","DELIVERY","PROXIMITY","SEARCH"] as const);
     return operation && constraint ? [{ operation, constraint }] : [];
   }).slice(0,20) : undefined;

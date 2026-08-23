@@ -130,10 +130,11 @@ describe("ai-schemas", () => {
     it("should validate explicit constraint lifecycle operations and ranking objectives", () => {
       const result = validateIntent({
         language: "ar-EG",
-        constraintOperations: [{ operation: "REMOVE", constraint: "BUDGET" }],
+        constraintOperations: [{ operation: "PRESERVE", constraint: "BUDGET" }],
         queryObjective: "CHEAPEST",
       });
       assert.equal(result.constraintOperations?.[0]?.constraint, "BUDGET");
+      assert.equal(result.constraintOperations?.[0]?.operation, "PRESERVE");
       assert.equal(result.queryObjective, "CHEAPEST");
     });
   });

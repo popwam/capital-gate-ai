@@ -172,7 +172,7 @@ export class GroqProvider implements AIProvider {
   async extractIntent(messages: AIMessage[], previous: StructuredIntent): Promise<StructuredIntent> {
     const model = configuredGroqModels().general;
     const prompt: AIMessage[] = [
-      { role: "system", content: "Extract only explicit PATCH-like updates to Egyptian real-estate state. Return strict JSON only. Never invent values." },
+      { role: "system", content: "Extract only explicit PATCH-like updates to Egyptian real-estate state. Return strict JSON only. Use independent REMOVE, RESET, BROADEN, or PRESERVE constraint operations; changing one dimension must not alter another. Never invent values." },
       { role: "user", content: JSON.stringify({ previous, messages: messages.slice(-8) }) },
     ];
     const response = await this.request(model, prompt, { temperature: 0, maxTokens: 700, responseFormat: "json_object" });

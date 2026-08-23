@@ -95,22 +95,46 @@ test("Egyptian removal variants are semantic operations and preserve unrelated c
 });
 
 test("explicit broadening relaxes search state while ordinary follow-ups never do", () => {
-  const previous: StructuredIntent = { language: "ar-EG", budgetMax: 5_000_000, priceMax: 5_000_000, purpose: "INVESTMENT", propertyTypes: ["Apartment"] };
+  const previous: StructuredIntent = { language: "ar-EG", budgetMax: 5_000_000, priceMax: 5_000_000, purpose: "INVESTMENT", locations: ["القاهرة"], propertyTypes: ["Apartment"] };
   const preserved = turn(previous, "طب وريني المتاح");
   assert.equal(preserved.budgetMax, 5_000_000);
   assert.equal(preserved.purpose, "INVESTMENT");
 
   const broadened = turn(previous, "وسع البحث");
-  assert.equal(broadened.budgetMax, undefined);
+  assert.equal(broadened.budgetMax, 5_000_000);
+  assert.equal(broadened.priceMax, 5_000_000);
   assert.equal(broadened.purpose, undefined);
-  assert.deepEqual(broadened.propertyTypes, ["Apartment"]);
+  assert.equal(broadened.propertyTypes, undefined);
+  assert.equal(broadened.locations, undefined);
 });
 
-test("no-match confirmation applies the offered widening to persisted effective state", () => {
+test("no-match confirmation widens non-financial scope without changing budget", () => {
   const previous: StructuredIntent = { language: "ar-EG", budgetMax: 5_000_000, priceMax: 5_000_000, presentation: { awaitingConfirmation: true, lastOfferedAction: "SEARCH_WIDEN" } };
   const plan = planCustomerTurn("أيوه", previous);
   const result = applyDeterministicTurnSemantics("أيوه", previous, previous, plan);
   assert.equal(plan.widenSearch, true);
-  assert.equal(result.budgetMax, undefined);
-  assert.equal(result.priceMax, undefined);
+  assert.equal(result.budgetMax, 5_000_000);
+  assert.equal(result.priceMax, 5_000_000);
+});
+
+test("reported keep-budget then remove-type and broaden-location flow mutates dimensions independently", () => {
+  let state: StructuredIntent = { language: "ar-EG", propertyTypes: ["Clinic"], locations: ["القاهرة"] };
+  state = turn(state, "عاوز وحدة في حدود 3-5 م");
+  assert.equal(state.budgetMin, 3_000_000);
+  assert.equal(state.budgetMax, 5_000_000);
+
+  state = normalizeRealEstateSemantics(
+    "مش حابب اغير البادجيت",
+    { language: "ar-EG", budgetMin: 3_000_000, budgetMax: 8_000_000 },
+    state,
+  );
+  assert.equal(state.budgetMin, 3_000_000);
+  assert.equal(state.budgetMax, 5_000_000, "explicit PRESERVE overrides a conflicting extracted patch");
+
+  state = turn(state, "شيل النوع ووسع المنطقة");
+  assert.equal(state.propertyTypes, undefined);
+  assert.equal(state.locations, undefined);
+  assert.equal(state.budgetMin, 3_000_000);
+  assert.equal(state.budgetMax, 5_000_000);
+  assert.equal(state.priceMax, undefined, "no separate price ceiling is invented during broadening");
 });

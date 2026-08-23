@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Bell, CheckCircle2, Loader2, LogOut, Menu, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { AdminSectionNav } from "./admin-section-nav";
-import { LogoMark } from "./logo";
 import { adminApi, type AdminMutationDetail } from "@/lib/api";
 
 const routeTitles: Array<[string, string, string]> = [
@@ -77,7 +76,7 @@ export function AdminShell({ children, privateEntry = false }: { children: React
   }, []);
   if (privateEntry || pathname === "/admin/login") return children;
 
-  const [, title, subtitle] = titleFor(pathname);
+  const [, title] = titleFor(pathname);
   async function logout() {
     await adminApi.logout();
     location.href = "/";
@@ -85,15 +84,15 @@ export function AdminShell({ children, privateEntry = false }: { children: React
 
   return (
     <div className="min-h-[100dvh] bg-[#f4f5f2] text-[#17211e]" dir="rtl">
-      <aside className="fixed inset-y-0 right-0 z-50 hidden w-[278px] flex-col bg-[#14211f] text-white lg:flex">
-        <div className="flex h-[86px] items-center border-b border-white/10 px-5">
-          <div><LogoMark inverse /><p className="mt-1 text-[11px] tracking-[.18em] text-white/45">REAL ESTATE INTELLIGENCE</p></div>
+      <aside className="fixed inset-y-0 right-0 z-50 hidden w-[236px] flex-col border-l border-[#e1e5e1] bg-white text-[#17211e] lg:flex">
+        <div className="flex h-[60px] items-center border-b border-[#e8ebe8] px-5">
+          <b className="text-lg tracking-[-.04em]">Cg</b>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto scrollbar-none">
           <AdminSectionNav />
         </div>
-        <div className="border-t border-white/10 p-4">
-          <button onClick={logout} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-white/7 text-sm font-bold text-white/75 hover:bg-white/12 hover:text-white">
+        <div className="border-t border-[#e8ebe8] p-3">
+          <button onClick={logout} className="flex h-10 w-full items-center justify-center gap-2 rounded-lg text-xs font-bold text-[#68756f] hover:bg-[#f3f5f2] hover:text-[#17211e]">
             <LogOut size={16} /> تسجيل الخروج
           </button>
         </div>
@@ -101,25 +100,24 @@ export function AdminShell({ children, privateEntry = false }: { children: React
 
       {open && (
         <div className="fixed inset-0 z-[70] lg:hidden">
-          <button aria-label="إغلاق القائمة" className="absolute inset-0 bg-black/35 backdrop-blur-[2px]" onClick={() => setOpen(false)} />
-          <aside className="absolute inset-y-0 right-0 flex w-[292px] max-w-[86vw] flex-col bg-[#14211f] text-white shadow-2xl">
-            <div className="flex h-[74px] items-center justify-between border-b border-white/10 px-4">
-              <div className="flex items-center gap-3"><LogoMark inverse /><b className="text-sm">Operations</b></div>
-              <button onClick={() => setOpen(false)} className="grid h-9 w-9 place-items-center rounded-xl bg-white/10"><X size={18} /></button>
+          <button aria-label="إغلاق القائمة" className="absolute inset-0 bg-black/20" onClick={() => setOpen(false)} />
+          <aside className="absolute inset-y-0 right-0 flex w-[276px] max-w-[86vw] flex-col bg-white text-[#17211e] shadow-xl">
+            <div className="flex h-[60px] items-center justify-between border-b border-[#e8ebe8] px-4">
+              <b className="text-lg tracking-[-.04em]">Cg</b>
+              <button onClick={() => setOpen(false)} className="grid h-11 w-11 place-items-center rounded-lg hover:bg-[#f3f5f2]"><X size={18} /></button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto"><AdminSectionNav onNavigate={() => setOpen(false)} /></div>
           </aside>
         </div>
       )}
 
-      <div className="lg:mr-[278px]">
-        <header className="sticky top-0 z-40 border-b border-[#dde2de] bg-white/92 backdrop-blur-xl">
-          <div className="flex min-h-[74px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+      <div className="lg:mr-[236px]">
+        <header className="sticky top-0 z-40 border-b border-[#e1e5e1] bg-white">
+          <div className="flex min-h-[60px] items-center justify-between gap-4 px-4 sm:px-6">
             <div className="flex min-w-0 items-center gap-3">
-              <button onClick={() => setOpen(true)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border bg-white lg:hidden" aria-label="فتح القائمة"><Menu size={19} /></button>
+              <button onClick={() => setOpen(true)} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg hover:bg-[#f3f5f2] lg:hidden" aria-label="فتح القائمة"><Menu size={19} /></button>
               <div className="min-w-0">
-                <h1 className="truncate text-[17px] font-bold sm:text-[19px]">{title}</h1>
-                <p className="hidden truncate text-[12px] text-[#718079] sm:block">{subtitle}</p>
+                <h1 className="truncate text-[16px] font-bold sm:text-[17px]">{title}</h1>
               </div>
             </div>
 <div className="flex min-w-[132px] items-center justify-end gap-2">

@@ -8,9 +8,9 @@ export function normalizeRealEstateSemantics(source: string, extracted: Structur
   const text = numberText(source.toLowerCase()).replace(/م²|م٢/g, "متر");
   const next: StructuredIntent = { ...previous, ...extracted, requestedMedia: extracted.requestedMedia, exactRouteRequested: extracted.exactRouteRequested, routeOrigin: extracted.routeOrigin, routeDestination: extracted.routeDestination, temporaryIntent: undefined, aggregationDimension: undefined };
   const operations = [...(extracted.constraintOperations ?? []), ...inferConstraintOperations(source)];
-  applyConstraintOperations(next, operations);
+  applyConstraintOperations(next, operations, previous);
   delete next.constraintOperations;
-  next.searchRelaxationAuthorized = operations.length ? true : undefined;
+  next.searchRelaxationAuthorized = operations.some(item => item.operation !== "PRESERVE") ? true : undefined;
   next.queryObjective = queryObjective(source) ?? next.queryObjective;
 
   const explicitResale = /(?:ريسيل|ري\s*سيل|إعادة\s*بيع|اعادة\s*بيع|resale|secondary\s*market)/iu.test(text);

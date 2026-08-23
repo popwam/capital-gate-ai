@@ -44,7 +44,9 @@ export function deterministicIntent(messages: AIMessage[], previous: StructuredI
   const hasArabic = /[\u0600-\u06ff]/.test(text);
   const hasLatin = /[a-z]/.test(text);
   const millions = [...text.matchAll(/(\d+(?:[.,]\d+)?)\s*(?:m|mn|million|مليون)/g)].map(match => Number(match[1].replace(",", ".")) * 1_000_000);
-  const range = text.match(/(\d+(?:[.,]\d+)?)\s*(?:ل(?:حد|ـ)?|to|[-–])\s*(\d+(?:[.,]\d+)?)\s*(?:m|mn|million|مليون)/);
+  const explicitMillionRange = text.match(/(\d+(?:[.,]\d+)?)\s*(?:ل(?:حد|ـ)?|to|[-–])\s*(\d+(?:[.,]\d+)?)\s*(?:m|mn|million|مليون)/);
+  const shorthandMillionRange = text.match(/(?:ميزاني|سعر|فلوس|في\s+حدود|budget).*?(\d+(?:[.,]\d+)?)\s*(?:ل(?:حد|ـ)?|to|[-–])\s*(\d+(?:[.,]\d+)?)\s*م(?=\s|[؟?.,،]|$)/u);
+  const range = explicitMillionRange ?? shorthandMillionRange;
   const bedroom = text.match(/(\d+)\s*(?:bed(?:room)?s?|غرف(?:ة|تين)?|نوم)/);
   const floor = text.match(/(?:الدور|طابق|floor)\s*(?:ال)?(\d+)/iu);
   const phase = text.match(/(?:phase|مرحله|مرحلة)\s*([a-z0-9\u0600-\u06ff-]+)/iu);

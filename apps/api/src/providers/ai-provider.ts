@@ -36,7 +36,7 @@ export type SearchConstraint =
   | "AREA" | "PROJECT" | "DEVELOPER" | "PAYMENT" | "DELIVERY" | "PROXIMITY";
 
 export type ConstraintOperation = {
-  operation: "REMOVE" | "RESET" | "BROADEN";
+  operation: "REMOVE" | "RESET" | "BROADEN" | "PRESERVE";
   constraint: SearchConstraint | "SEARCH";
 };
 

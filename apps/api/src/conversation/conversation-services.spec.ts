@@ -50,7 +50,19 @@ test("deterministic answers keep verified payment and empty-search turns out of 
     { type: "text", uiActions: [] },
     [],
   );
-  assert.match(empty ?? "", /no verified option matching/u);
+  assert.match(empty ?? "", /no matching verified unit/u);
+});
+
+test("empty verified inventory keeps the exact budget range and invents no locations", () => {
+  const empty = answers.directToolAnswer(
+    { language: "ar-EG", turnIntent: "PROPERTY_REFINEMENT", budgetMin: 3_000_000, budgetMax: 5_000_000 },
+    { type: "text", uiActions: [] },
+    [],
+  ) ?? "";
+  assert.match(empty, /3,000,000/u);
+  assert.match(empty, /5,000,000/u);
+  assert.match(empty, /الميزانية ما اتغيرتش/u);
+  assert.doesNotMatch(empty, /المعادي|التجمع|المهندسين|الدقي/u);
 });
 
 test("grounding contradiction detection blocks claims that verified facts are missing", () => {

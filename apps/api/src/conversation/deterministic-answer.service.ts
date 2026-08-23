@@ -128,16 +128,19 @@ export class DeterministicAnswerService {
 
     if (["PROPERTY_SEARCH", "PROPERTY_REFINEMENT", "PROPERTY_OPTIONS_REQUEST", "AVAILABILITY_CHECK", "INVESTMENT", "RESALE", "RENTAL"].includes(intent ?? "") && !facts.length) {
       const type = state.propertyTypes?.[0];
-      const budget = state.budgetMax ?? state.priceMax;
+      const budgetMin = state.budgetMin ?? state.priceMin;
+      const budgetMax = state.budgetMax ?? state.priceMax;
       const location = state.locations?.[0];
+      const budget = budgetMin != null && budgetMax != null
+        ? (ar ? `من ${this.formatter.money(budgetMin, state.currency ?? "EGP")} إلى ${this.formatter.money(budgetMax, state.currency ?? "EGP")}` : `from ${this.formatter.money(budgetMin, state.currency ?? "EGP")} to ${this.formatter.money(budgetMax, state.currency ?? "EGP")}`)
+        : budgetMax != null ? (ar ? `حتى ${this.formatter.money(budgetMax, state.currency ?? "EGP")}` : `up to ${this.formatter.money(budgetMax, state.currency ?? "EGP")}`) : null;
       const constraints = [
         type ? (ar ? `نوع ${type}` : `type ${type}`) : null,
-        budget ? (ar ? `حتى ${this.formatter.money(budget, state.currency ?? "EGP")}` : `up to ${this.formatter.money(budget, state.currency ?? "EGP")}`) : null,
         location ? (ar ? `في ${location}` : `in ${location}`) : null,
       ].filter(Boolean).join(ar ? " · " : " · ");
       return ar
-        ? `تحت الشروط الحالية${constraints ? ` (${constraints})` : ""} مش ظاهر عندي اختيار موثق. أقدر أوسع النطاق لو تحب، أو تشيل شرط محدد زي السعر أو النوع.`
-        : `There is no verified option matching the current constraints${constraints ? ` (${constraints})` : ""}. I can widen the scope if you want, or you can remove a specific condition such as price or type.`;
+        ? `${budget ? `في النطاق ${budget}` : "تحت الشروط الحالية"}${constraints ? ` (${constraints})` : ""}، مفيش وحدة موثقة مطابقة حاليًا. الميزانية ما اتغيرتش؛ لو حابب، اختار شرط تاني نراجعه.`
+        : `${budget ? `Within the ${budget} range` : "Under the current constraints"}${constraints ? ` (${constraints})` : ""}, there is no matching verified unit right now. The budget has not changed; you can choose another constraint to review.`;
     }
 
     return undefined;

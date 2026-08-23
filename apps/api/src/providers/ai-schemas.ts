@@ -180,7 +180,7 @@ export const StructuredIntentSchema = z.object({
   customerConcerns: z.array(z.string()).optional(),
   extractionDegraded: z.boolean().optional(),
   constraintOperations: z.array(z.object({
-    operation: z.enum(["REMOVE", "RESET", "BROADEN"]),
+    operation: z.enum(["REMOVE", "RESET", "BROADEN", "PRESERVE"]),
     constraint: z.enum(["BUDGET", "PURPOSE", "PROPERTY_TYPE", "LOCATION", "BEDROOMS", "AREA", "PROJECT", "DEVELOPER", "PAYMENT", "DELIVERY", "PROXIMITY", "SEARCH"]),
   })).optional(),
   queryObjective: z.enum(["CHEAPEST", "MOST_EXPENSIVE", "BEST_MATCH"]).optional(),

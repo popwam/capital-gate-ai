@@ -62,10 +62,10 @@ function isSelected(pathname: string, href: string) {
 export function AdminSectionNav({ onNavigate }: { active?: string; onNavigate?: () => void }) {
   const pathname = usePathname();
   return (
-    <nav className="space-y-5 px-3 py-4" aria-label="التنقل الإداري">
+    <nav className="space-y-4 px-2 py-3" aria-label="التنقل الإداري">
       {groups.map((group) => (
         <div key={group.label}>
-          <p className="mb-2 px-3 text-[11px] font-bold tracking-[.08em] text-white/40">
+          <p className="mb-1 px-3 text-[10px] font-bold text-[#8a9590]">
             {group.label}
           </p>
           <div className="space-y-1">
@@ -77,16 +77,14 @@ export function AdminSectionNav({ onNavigate }: { active?: string; onNavigate?: 
                   href={href}
                   onClick={onNavigate}
                   aria-current={selected ? "page" : undefined}
-                  className={`group flex min-h-11 items-center gap-3 rounded-xl px-3 text-[14px] font-bold transition-all ${
+                  className={`group flex min-h-10 items-center gap-2.5 rounded-lg px-3 text-[13px] font-bold transition-all ${
                     selected
-                      ? "bg-white text-[#143d34] shadow-sm"
-                      : "text-white/72 hover:bg-white/8 hover:text-white"
+                      ? "bg-[#edf3f0] text-[#245d50]"
+                      : "text-[#5f6d67] hover:bg-[#f4f6f3] hover:text-[#17211e]"
                   }`}
                 >
                   <span
-                    className={`grid h-8 w-8 place-items-center rounded-lg transition-colors ${
-                      selected ? "bg-[#e7f2ed]" : "bg-white/7 group-hover:bg-white/10"
-                    }`}
+                    className="grid h-7 w-7 place-items-center"
                   >
                     <Icon size={17} strokeWidth={2} />
                   </span>

@@ -159,11 +159,8 @@
   --duration-slower: 400ms;
 }
 
-/* ============================================
-   DARK MODE (Phase 5.2 — Ready but not activated yet)
-   ============================================ */
-@media (prefers-color-scheme: dark) {
-  :root {
+/* Optional dark theme. Light remains the product default regardless of OS. */
+:root[data-theme="dark"] {
     --surface-base: #0f1514;
     --surface-raised: #1a2220;
     --surface-overlay: #141d1b;
@@ -196,7 +193,6 @@
     --error-bg: #2a1916;
     --warning: #d4a965;
     --warning-bg: #2a2318;
-  }
 }
 
 /* ============================================
