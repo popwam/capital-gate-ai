@@ -39,6 +39,8 @@ function fixture(options: { aiFails?: boolean; storageFails?: boolean; remembere
   let storedBuffer: Buffer | undefined;
   const prisma: any = {
     project: { findUnique: async ({where}:any={where:{id:"project-1"}}) => ({ id: where.id, developerId: where.id==="project-2"?"developer-2":"developer-1", locationId: where.id==="project-2"?"location-2":"location-1", developer: { slug: where.id==="project-2"?"developer-two":"developer-one" } }) },
+    projectPhase: { findMany: async () => [{ id: "phase-1", code: "PHASE-1", name: "Phase 1", nameAr: "المرحلة الأولى", nameEn: "Phase 1" }] },
+    projectPhaseAlias: { findMany: async () => [] },
     developer: { findUnique: async ({where}:any={where:{id:"developer-1"}}) => ({ id: where.id, slug: where.id==="developer-2"?"developer-two":"developer-one" }) },
     location: { findUnique: async () => ({ id: "location-1" }) },
     importMapping: { findMany: async () => options.rememberedMappings ?? [], upsert: async () => ({}) },
@@ -107,7 +109,7 @@ function fixture(options: { aiFails?: boolean; storageFails?: boolean; remembere
       create: async ({ data }: any) => { const issue = { id: `issue-${issues.length}`, resolvedAt: null, ...data }; issues.push(issue); return issue; },
     },
     importSheet: {
-      create: async ({ data }: any) => { const value={id:`sheet-${importSheets.length+1}`,mappingVersion:1,previewMappingVersion:null,rowsCreated:0,rowsUpdated:0,...data};importSheets.push(value);return value; },
+      create: async ({ data }: any) => { const value={id:`sheet-${importSheets.length+1}`,phaseId:"phase-1",mappingVersion:1,previewMappingVersion:null,rowsCreated:0,rowsUpdated:0,...data};importSheets.push(value);return value; },
       findUniqueOrThrow: async ({where}:any) => { const value=importSheets.find(sheet=>sheet.id===where.id);if(!value)throw new Error("missing sheet");return value; },
       findFirst: async ({where}:any) => importSheets.find(sheet=>sheet.id===where.id&&sheet.importId===where.importId)??null,
       findMany: async ({where}:any) => importSheets.filter(sheet=>sheet.importId===where.importId&&sheet.action===where.action).map(sheet=>({id:sheet.id})),
@@ -549,7 +551,7 @@ test("canonical readiness cannot report NEEDS_INPUT without an explicit blocker"
     preview: null,
     analysis: {},
     issues: [],
-    sheets: [{ id: "sheet-active", sheetName: "Availability", action: "IMPORT", headerRow: 1, projectId: "project-1", developerId: "developer-1", locationId: "location-1", defaultCurrency: null, mappings: { Code: "externalUnitId", Currency: "currency" }, mappingVersion: 1, previewMappingVersion: null }],
+    sheets: [{ id: "sheet-active", sheetName: "Availability", action: "IMPORT", headerRow: 1, projectId: "project-1", developerId: "developer-1", locationId: "location-1", phaseId: "phase-1", defaultCurrency: null, mappings: { Code: "externalUnitId", Currency: "currency" }, mappingVersion: 1, previewMappingVersion: null }],
   });
   assert.equal(readiness.unresolvedBlockingCount, 0);
   assert.deepEqual(readiness.missingCriticalMappings, []);

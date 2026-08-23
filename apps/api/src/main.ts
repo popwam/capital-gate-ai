@@ -12,7 +12,26 @@ import { SafeHttpExceptionFilter } from "./security/http-exception.filter";
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   app.getHttpAdapter().getInstance().set("trust proxy", 1);
-  app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: "cross-origin" },
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", "data:", "https:", "blob:"],
+          fontSrc: ["'self'", "data:"],
+          connectSrc: ["'self'"],
+          frameSrc: ["'none'"],
+          objectSrc: ["'none'"],
+          baseUri: ["'self'"],
+          formAction: ["'self'"],
+          upgradeInsecureRequests: [],
+        },
+      },
+    }),
+  );
   app.use(cookieParser());
   app.use(json({ limit: "1mb" }), urlencoded({ extended: true, limit: "1mb" }));
   app.use((request: any, response: any, next: () => void) => { request.requestId = request.headers["x-request-id"] || randomUUID(); response.setHeader("x-request-id", request.requestId); next(); });

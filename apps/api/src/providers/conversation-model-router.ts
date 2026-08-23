@@ -1,6 +1,17 @@
 import { AnswerInput, CustomerTurnIntent } from "./ai-provider";
 
-export type GroqModelRole = "FAST" | "GENERAL" | "REASONING";
+/**
+ * Simplified two-tier routing: FAST for simple queries, STANDARD for everything else.
+ *
+ * Previously had three tiers (FAST/GENERAL/REASONING) but GENERAL and REASONING both
+ * defaulted to the same model (openai/gpt-oss-120b), creating an illusion of
+ * specialized routing without actual differentiation.
+ *
+ * Current policy:
+ * - FAST (openai/gpt-oss-20b): Small talk, confirmations, simple queries <90 chars
+ * - STANDARD (openai/gpt-oss-120b): All real estate conversations, comparisons, detailed queries
+ */
+export type GroqModelRole = "FAST" | "STANDARD";
 
 export type GroqRoute = {
   role: GroqModelRole;
@@ -43,21 +54,18 @@ function envModel(name: string, fallback: string) {
 
 const MODELS = {
   fast: envModel("GROQ_FAST_MODEL", envModel("GROQ_ARABIC_MODEL", "openai/gpt-oss-20b")),
-  general: envModel("GROQ_GENERAL_MODEL", "openai/gpt-oss-120b"),
-  reasoning: envModel("GROQ_REASONING_MODEL", "openai/gpt-oss-120b"),
+  // GROQ_GENERAL_MODEL and GROQ_REASONING_MODEL both map to 'standard' for backward compatibility
+  standard: envModel("GROQ_STANDARD_MODEL", envModel("GROQ_GENERAL_MODEL", envModel("GROQ_REASONING_MODEL", "openai/gpt-oss-120b"))),
   backup: envModel("GROQ_BACKUP_MODEL", "openai/gpt-oss-20b"),
   lastResort: envModel("GROQ_LAST_RESORT_MODEL", "openai/gpt-oss-20b"),
 } as const;
 
-const REASONING_INTENTS = new Set<CustomerTurnIntent>([
-  "COMPARISON",
-  "INVESTMENT",
-  "RESALE",
-  "PAYMENT_PLAN",
-  "PROJECT_DETAILS",
-  "DEVELOPER_DETAILS",
-]);
-
+/**
+ * Intents that trigger FAST model (small, cheap, quick):
+ * - Simple confirmations and greetings
+ * - Media/document requests (deterministic responses)
+ * - Basic availability checks
+ */
 const FAST_INTENTS = new Set<CustomerTurnIntent>([
   "SMALL_TALK",
   "FOLLOW_UP_CONFIRMATION",
@@ -72,65 +80,50 @@ function latestUserText(input: AnswerInput): string {
   return [...input.messages].reverse().find((message) => message.role === "user")?.content.trim() ?? "";
 }
 
-function hasArabic(text: string) { return /[\u0600-\u06ff]/u.test(text); }
-function hasLatin(text: string) { return /[a-z]/i.test(text); }
-function isMixed(text: string) { return hasArabic(text) && hasLatin(text); }
-
 function isShortConversational(text: string) {
   const normalized = text.trim();
   if (!normalized || normalized.length > 90) return false;
   return /^(?:اه|آه|أه|ايوه|أيوه|ايوة|أيوة|لا|لأ|تمام|ماشي|حلو|كويس|شكرا|شكرًا|تسلم|مساء|صباح|هاي|هلا|أهلا|اهلا|طيب|طب|اوكي|أوكي|موافق|ابعت|هات|وريني|كمل|اكمل|تمام كده|تمام كدا|yes|no|ok|okay|thanks?|thank you)\b/iu.test(normalized);
 }
 
-function needsReasoning(text: string) {
-  return /(?:أنهي|انهي|إيه الأفضل|ايه الأفضل|الأفضل|افضل|أفضل|ليه|لماذا|قارن|مقارنة|فرق السعر|يستاهل|استثمار|استثماري|عائد|ROI|إعادة بيع|اعادة بيع|ريسيل|resale|investment|compare|comparison|better|worth|trade.?off|مميزات|عيوب|اختار|أختار|محتار|تنصحني|ترشحلي|أقل مقدم|اقل مقدم|أقل قسط|اقل قسط|أطول فترة|اطول فترة|أنهي خطة|انهي خطة|أفضل خطة|افضل خطة|الكاش ولا|قسط ولا|payment plan|down payment|installment|cash vs)/iu.test(text);
-}
-
-function highPurchaseIntent(text: string) {
-  return /(?:عاوز أحجز|عاوز احجز|احجز|أحجز|حجز الوحدة|إجراءات الحجز|اجراءات الحجز|عاوز أعاين|عاوز اعاين|معاينة|حد يكلمني|حد يتواصل|كلمني|اتصل بيا|مهتم بالوحدة|عايز الوحدة|عاوز الوحدة|عايز أشتري|عاوز أشتري|جاهز أشتري|ready to buy|book it|reserve|reservation|viewing|contact me|call me)/iu.test(text);
-}
-
 function unique(models: string[]) { return [...new Set(models.filter(Boolean))]; }
 
-function reasoningFallbacks() { return unique([MODELS.backup, MODELS.general, MODELS.lastResort, MODELS.fast]); }
-function generalFallbacks() { return unique([MODELS.backup, MODELS.reasoning, MODELS.lastResort, MODELS.fast]); }
-function fastFallbacks() { return unique([MODELS.general, MODELS.backup, MODELS.reasoning, MODELS.lastResort]); }
+function standardFallbacks() { return unique([MODELS.backup, MODELS.lastResort]); }
+function fastFallbacks() { return unique([MODELS.standard, MODELS.backup, MODELS.lastResort]); }
 
+/**
+ * Route to appropriate model based on conversation complexity.
+ *
+ * FAST: Short conversational turns, simple queries, minimal database context
+ * STANDARD: All real estate conversations (search, comparison, investment, payment plans)
+ *
+ * Simplified from previous three-tier system where GENERAL and REASONING were
+ * functionally identical.
+ */
 export function routeCustomerModel(input: AnswerInput): GroqRoute {
   const text = latestUserText(input);
   const turnIntent = input.intent.turnIntent;
-  const purchaseIntent = typeof input.intent.purchaseIntent === "number" ? input.intent.purchaseIntent : 0;
-  const complexContext = REASONING_INTENTS.has(turnIntent ?? "UNKNOWN") || ["INVESTMENT", "RESALE", "RENTAL", "COMPARISON", "PROJECT_DETAILS"].includes(input.contextKind ?? "");
 
-  if (complexContext || purchaseIntent >= 80 || highPurchaseIntent(text) || isMixed(text) || needsReasoning(text)) {
-    return {
-      role: "REASONING",
-      model: MODELS.reasoning,
-      fallbacks: reasoningFallbacks(),
-      reason: purchaseIntent >= 80 || highPurchaseIntent(text)
-        ? "high-purchase-intent"
-        : complexContext
-          ? "complex-real-estate-context"
-          : isMixed(text)
-            ? "mixed-language"
-            : "semantic-reasoning",
-    };
-  }
-
-  if ((FAST_INTENTS.has(turnIntent ?? "UNKNOWN") || isShortConversational(text)) && (input.verifiedFacts?.length ?? 0) <= 1) {
+  // Use FAST model for simple conversational turns with minimal context
+  if (
+    (FAST_INTENTS.has(turnIntent ?? "UNKNOWN") || isShortConversational(text)) &&
+    (input.verifiedFacts?.length ?? 0) <= 1
+  ) {
     return {
       role: "FAST",
       model: MODELS.fast,
       fallbacks: fastFallbacks(),
-      reason: isShortConversational(text) ? "short-conversation" : "simple-deterministic-context",
+      reason: isShortConversational(text) ? "short-conversational" : "simple-intent",
     };
   }
 
+  // Use STANDARD model for all real estate conversations
+  // (search, comparison, investment, payment plans, detailed queries)
   return {
-    role: "GENERAL",
-    model: MODELS.general,
-    fallbacks: generalFallbacks(),
-    reason: "default-customer-conversation",
+    role: "STANDARD",
+    model: MODELS.standard,
+    fallbacks: standardFallbacks(),
+    reason: "real-estate-conversation",
   };
 }
 
@@ -139,8 +132,10 @@ export function configuredGroqModels() {
     // `arabic` is retained for compatibility with existing health/admin code.
     arabic: MODELS.fast,
     fast: MODELS.fast,
-    general: MODELS.general,
-    reasoning: MODELS.reasoning,
+    standard: MODELS.standard,
+    // Legacy aliases for backward compatibility
+    general: MODELS.standard,
+    reasoning: MODELS.standard,
     backup: MODELS.backup,
     lastResort: MODELS.lastResort,
   };

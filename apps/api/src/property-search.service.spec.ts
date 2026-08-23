@@ -35,6 +35,8 @@ test("normalized searches hit cache and inventory invalidation forces fresh resu
   const prisma = {
     location: { findMany: async () => [] },
     unit: { findMany: async () => { queries++; return [unit]; } },
+    paymentPlan: { findMany: async () => [] },
+    unitMediaRule: { findMany: async () => [] },
   };
   const cache = new ApplicationCache();
   const service = new PropertySearchService(prisma as any, cache);
@@ -52,7 +54,7 @@ test("exact external unit lookup takes the identifier as one atomic value", asyn
   const prisma = { unit: { findFirst: async (query: any) => { captured = query; return null; } } };
   const service = new PropertySearchService(prisma as any);
   await service.findUnitByExternalId("G60 4/2");
-  assert.equal(captured.where.externalUnitId.equals, "G60 4/2");
+  assert.ok(captured.where.OR.every((candidate: any) => candidate.externalUnitId.equals === "G60 4/2"));
   assert.equal(captured.where.bedrooms, undefined);
   assert.equal(captured.where.bathrooms, undefined);
 });

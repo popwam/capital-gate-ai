@@ -19,12 +19,13 @@ import {
 } from "./deterministic-intent";
 import { AIUsageService } from "./ai-usage.service";
 import { normalizeRealEstateSemantics } from "./real-estate-semantics";
-import { compactAnswerInput } from "./ai-context";
+import { compactAnswerInput, getCurrentPromptVersion } from "./ai-context";
 import {
   configuredGroqModels,
   GroqRoute,
   routeCustomerModel,
 } from "./conversation-model-router";
+import { validateIntent, validateKnowledge, validateColumnMappings } from "./ai-schemas";
 
 @Injectable()
 export class HybridAIProvider implements AIProvider {
@@ -49,7 +50,12 @@ export class HybridAIProvider implements AIProvider {
   ) {
     const started = Date.now();
     try {
-      const result = await this.workers.extractIntent(messages, previous);
+      const rawResult = await this.workers.extractIntent(messages, previous);
+
+      // Validate AI output shape before consuming. Falls back to a
+      // language-only intent if the model returned an unexpected shape.
+      const result = validateIntent(rawResult, this.logger, previous);
+
       const latest = messages.at(-1)?.content ?? "";
       const requestedMedia = detectRequestedMedia(latest);
       const sales = detectExplicitSalesSignals(latest);
@@ -118,7 +124,8 @@ export class HybridAIProvider implements AIProvider {
   async extractKnowledge(sourceText: string) {
     const started = Date.now();
     try {
-      const result = await this.workers.extractKnowledge(sourceText);
+      const raw = await this.workers.extractKnowledge(sourceText);
+      const result = validateKnowledge(raw, this.logger);
       await this.usage?.record({
         provider: "workers",
         model: this.workers.fastModel,
@@ -136,7 +143,8 @@ export class HybridAIProvider implements AIProvider {
   async mapColumns(headers: string[], sampleRows: unknown[][], canonicalFields: string[]) {
     const started = Date.now();
     try {
-      const result = await this.workers.mapColumns(headers, sampleRows, canonicalFields);
+      const raw = await this.workers.mapColumns(headers, sampleRows, canonicalFields);
+      const result = validateColumnMappings(raw, this.logger);
       await this.usage?.record({
         provider: "workers",
         model: this.workers.fastModel,
@@ -156,7 +164,7 @@ export class HybridAIProvider implements AIProvider {
     // Authentication / org permission errors are account-level and should not fan out
     // across every model. A missing/decommissioned model is model-level and should.
     if (error.status === 401 || error.status === 403) return false;
-    return error.code === "MODEL_UNAVAILABLE" || error.retryable || !error.status;
+    return this.is413(error) || error.code === "MODEL_UNAVAILABLE" || error.retryable || !error.status;
   }
 
   private openAIFallbackEnabled() {
@@ -213,6 +221,7 @@ export class HybridAIProvider implements AIProvider {
     started: number,
     success: boolean,
     fallbackUsed: boolean,
+    input: AnswerInput,
     error?: unknown,
   ) {
     await this.usage?.record({
@@ -222,6 +231,9 @@ export class HybridAIProvider implements AIProvider {
       latencyMs: Date.now() - started,
       success,
       fallbackUsed,
+      promptVersion: input.promptVersion ?? getCurrentPromptVersion(),
+      promptVariant: input.promptVariant ?? "control",
+      conversationId: input.conversationId,
       ...(success ? {} : { errorCode: error instanceof AIUpstreamError ? error.code : "UNKNOWN" }),
     });
   }
@@ -236,7 +248,7 @@ export class HybridAIProvider implements AIProvider {
       const started = Date.now();
       try {
         const answer = await this.groq.composeAnswerWithModel(candidateInput, model);
-        await this.recordGroq(model, "customer_answer", started, true, index > 0);
+        await this.recordGroq(model, "customer_answer", started, true, index > 0, input);
         this.logger.log(`AIProviderTrace ${JSON.stringify({
           requestId: input.requestId ?? "unknown",
           conversationId: input.conversationId ?? "unknown",
@@ -250,7 +262,7 @@ export class HybridAIProvider implements AIProvider {
         return answer;
       } catch (error) {
         lastError = error;
-        await this.recordGroq(model, "customer_answer", started, false, index > 0, error);
+        await this.recordGroq(model, "customer_answer", started, false, index > 0, input, error);
         this.traceFailure(candidateInput, "groq", model, index === 0 ? "GROQ_GENERATION" : "GROQ_MODEL_FALLBACK", error, index < models.length - 1, false);
         if (this.is413(error)) candidateInput = compactAnswerInput(input, "aggressive");
         if (!this.shouldFallback(error)) break;
@@ -298,6 +310,9 @@ export class HybridAIProvider implements AIProvider {
           latencyMs: Date.now() - started,
           success: true,
           fallbackUsed: true,
+          promptVersion: input.promptVersion ?? getCurrentPromptVersion(),
+          promptVariant: input.promptVariant ?? "control",
+          conversationId: input.conversationId,
         });
         return result;
       } catch (openaiError) {
@@ -332,11 +347,11 @@ export class HybridAIProvider implements AIProvider {
           yield chunk;
         }
         if (!emitted) throw new AIUpstreamError("groq", "EMPTY_STREAM_RESPONSE", 502, true);
-        await this.recordGroq(model, "customer_stream", started, true, index > 0);
+        await this.recordGroq(model, "customer_stream", started, true, index > 0, input);
         return;
       } catch (error) {
         lastError = error;
-        await this.recordGroq(model, "customer_stream", started, false, index > 0, error);
+        await this.recordGroq(model, "customer_stream", started, false, index > 0, input, error);
         this.traceFailure(candidateInput, "groq", model, index === 0 ? "GROQ_GENERATION" : "GROQ_MODEL_FALLBACK", error, !emitted && index < models.length - 1, false);
 
         if (emitted) unavailable("groq", error);
@@ -380,6 +395,9 @@ export class HybridAIProvider implements AIProvider {
         latencyMs: Date.now() - started,
         success: true,
         fallbackUsed: true,
+        promptVersion: input.promptVersion ?? getCurrentPromptVersion(),
+        promptVariant: input.promptVariant ?? "control",
+        conversationId: input.conversationId,
       });
       return;
     } catch (openaiError) {

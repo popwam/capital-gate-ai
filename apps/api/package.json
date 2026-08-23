@@ -6,7 +6,7 @@
     "start:dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/main",
-    "test:smoke": "node --test dist/customer-trust.service.spec.js dist/providers/demo.provider.spec.js dist/providers/hybrid.provider.spec.js dist/providers/ai-context.spec.js dist/providers/advisor-evals.spec.js dist/providers/real-estate-semantics.spec.js dist/customer-turn-planner.spec.js dist/cache/application-cache.spec.js dist/property-search.service.spec.js dist/admin/lead-crm.service.spec.js dist/admin/real-estate.controller.spec.js dist/admin/catalog-payment-plan.spec.js dist/imports/import-contract.spec.js dist/imports/workbook-reader.spec.js dist/imports/workbook-analysis.spec.js dist/imports/importer.service.spec.js dist/imports/imports.controller.spec.js dist/imports/rollback-safety.spec.js dist/security/http-exception.filter.spec.js dist/text/unicode.spec.js"
+    "test:smoke": "node --test dist/conversation/conversation-services.spec.js dist/customer-trust.service.spec.js dist/providers/demo.provider.spec.js dist/providers/hybrid.provider.spec.js dist/providers/ai-context.spec.js dist/providers/advisor-evals.spec.js dist/providers/real-estate-semantics.spec.js dist/providers/ai-schemas.spec.js dist/customer-turn-planner.spec.js dist/cache/application-cache.spec.js dist/property-search.service.spec.js dist/admin/lead-crm.service.spec.js dist/admin/real-estate.controller.spec.js dist/admin/catalog-payment-plan.spec.js dist/imports/import-contract.spec.js dist/imports/workbook-reader.spec.js dist/imports/workbook-analysis.spec.js dist/imports/importer.service.spec.js dist/imports/imports.controller.spec.js dist/imports/rollback-safety.spec.js dist/security/http-exception.filter.spec.js dist/text/unicode.spec.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.922.0",
@@ -20,13 +20,15 @@
     "class-transformer": "latest",
     "class-validator": "latest",
     "cookie-parser": "^1.4.7",
+    "handlebars": "^4.7.9",
     "helmet": "^8.1.0",
     "mammoth": "^1.11.0",
     "multer": "^2.0.2",
     "pdf-parse": "1.1.1",
     "reflect-metadata": "latest",
     "rxjs": "latest",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@nestjs/cli": "11.0.24",

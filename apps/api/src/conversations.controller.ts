@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Delete, Get, Headers, Logger, Param, Patch, Post, Req, Res } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import type { Response } from "express";
 import { ConversationsService } from "./conversations.service";
@@ -20,7 +21,9 @@ export class ConversationsController {
   @Get(":id/messages") messages(@Param("id") id: string, @Headers("x-device-token") token?: string) { return this.conversations.messages(id, this.token(token)); }
   @Patch(":id") rename(@Param("id") id: string, @Headers("x-device-token") token: string | undefined, @Body() body: RenameConversationDto) { return this.conversations.rename(id, this.token(token), body.title); }
   @Delete(":id") remove(@Param("id") id: string, @Headers("x-device-token") token?: string) { return this.conversations.remove(id, this.token(token)); }
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post(":id/messages") send(@Param("id") id: string, @Headers("x-device-token") token: string | undefined, @Body() body: SendMessageDto, @Req() request: any) { return this.chat.send(id, this.token(token), body.content, request.requestId, body.displayContent); }
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post(":id/messages/stream") async stream(@Param("id") id: string, @Headers("x-device-token") token: string | undefined, @Body() body: SendMessageDto, @Res() response: Response, @Req() request: any = {}) {
     response.status(200); response.setHeader("Content-Type", "text/event-stream; charset=utf-8"); response.setHeader("Cache-Control", "no-cache, no-transform"); response.setHeader("Connection", "keep-alive"); response.flushHeaders();
     try { for await (const item of this.chat.stream(id, this.token(token), body.content, request.requestId ?? "unknown", body.displayContent)) response.write(`event: ${item.event}\ndata: ${JSON.stringify(item.data)}\n\n`); }

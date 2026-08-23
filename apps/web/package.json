@@ -6,7 +6,7 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "node ../../scripts/lint-web.mjs",
     "test": "node --experimental-strip-types --test lib/*.test.ts"
   },
   "dependencies": {
@@ -19,10 +19,15 @@
     "react-dom": "19.2.0"
   },
   "devDependencies": {
+    "@axe-core/cli": "^4.13.0",
+    "@next/bundle-analyzer": "^16.3.1",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "autoprefixer": "latest",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.3.0",
+    "lighthouse": "^13.4.1",
     "postcss": "latest",
     "tailwindcss": "^3.4.17",
     "typescript": "5.9.3"

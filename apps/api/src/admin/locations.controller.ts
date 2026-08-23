@@ -1,4 +1,5 @@
 import { BadRequestException, Body, ConflictException, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { ApprovalStatus, LocationType } from "@prisma/client";
 import { IsArray, IsBoolean, IsEnum, IsNumber, IsOptional, IsString, MaxLength } from "class-validator";
 import { PrismaService } from "../database/prisma.service";
@@ -12,6 +13,7 @@ class AliasDto { @IsString() value!: string; @IsOptional() @IsString() language?
 class DistanceDto { @IsString() fromLocationId!: string; @IsString() toLocationId!: string; @IsNumber() distanceKm!: number; @IsOptional() @IsNumber() estimatedMinutes?: number; @IsOptional() @IsString() distanceType?: string; @IsOptional() @IsString() notes?: string; @IsOptional() @IsBoolean() isBidirectional?: boolean; }
 
 @UseGuards(AdminAuthGuard)
+@Throttle({ default: { limit: 5, ttl: 60_000 } })
 @Controller("admin/locations")
 export class LocationsController {
   constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, private readonly cache: ApplicationCache) {}

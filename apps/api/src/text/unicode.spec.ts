@@ -27,6 +27,8 @@ test("conversation persistence passes Arabic Unicode through unchanged", async (
   };
   const service = new ConversationsService(prisma, {
     resolve: async () => ({ id: "device-1" }),
+  } as any, {
+    nextVariant: async () => "control",
   } as any);
 
   await service.create("a-valid-device-token-123", arabic);

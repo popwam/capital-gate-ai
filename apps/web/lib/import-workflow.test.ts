@@ -31,12 +31,11 @@ test("Resolve shows only the canonical unresolved blocking count", () => {
   assert.equal(importStepState(workflow({ unresolvedBlockingCount: 0 }), 2).count, 0);
 });
 
-test("generated preview stays on Preview while Confirm Import is available", () => {
-  assert.deepEqual(IMPORT_STEPS, ["Upload", "Analyze", "Resolve", "Preview", "Import"]);
+test("generated preview stays on the combined review step while Confirm Import is available", () => {
+  assert.deepEqual(IMPORT_STEPS, ["المصدر", "السياق", "الحقول", "المعاينة والاعتماد"]);
   assert.equal(importStepState(workflow({ stage: "PREVIEW", unresolvedBlockingCount: 0, canPreview: true }), 2).complete, true);
   const confirmable = workflow({ stage: "IMPORT", unresolvedBlockingCount: 0, canPreview: true, canConfirm: true, previewExists: true, previewValid: true });
   assert.equal(importStepState(confirmable, 3).active, true);
-  assert.equal(importStepState(confirmable, 4).active, false);
 });
 
 test("a completed import marks every wizard step complete", () => {

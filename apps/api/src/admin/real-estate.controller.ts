@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { Prisma } from "@prisma/client";
 import { Type } from "class-transformer";
 import { IsArray, IsBoolean, IsDateString, IsEmail, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUrl, Max, MaxLength, Min } from "class-validator";
@@ -226,6 +227,7 @@ class BulkMasterPlanAssignmentDto {
 }
 
 @UseGuards(AdminAuthGuard)
+@Throttle({ default: { limit: 5, ttl: 60_000 } })
 @Controller("admin/real-estate")
 export class RealEstateController {
   constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, private readonly cache: ApplicationCache) {}

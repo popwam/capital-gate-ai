@@ -1,0 +1,214 @@
+/* Design Tokens — AICG Visual System
+ * Apple-inspired premium aesthetic with intelligent minimalism
+ * All hardcoded values should reference these tokens
+ */
+
+:root {
+  /* ============================================
+     SURFACE HIERARCHY
+     ============================================ */
+  --surface-base: #faf9f5;        /* Main background */
+  --surface-raised: #ffffff;      /* Cards, elevated elements */
+  --surface-overlay: #efede6;     /* Modals, drawers, sidebar */
+  --surface-inset: #f7f5f0;       /* Input backgrounds, inset areas */
+
+  /* ============================================
+     GLASS MATERIAL SYSTEM
+     ============================================ */
+  --glass-base: rgba(250, 249, 245, 0.88);
+  --glass-strong: rgba(250, 249, 245, 0.94);
+  --glass-subtle: rgba(250, 249, 245, 0.72);
+  --glass-blur: 18px;
+  --glass-blur-strong: 24px;
+
+  /* ============================================
+     BORDERS & DIVIDERS
+     ============================================ */
+  --border-default: #dde1dc;
+  --border-subtle: #e8ebe7;
+  --border-strong: #c8cdc9;
+  --border-focus: #8ea9a0;
+
+  /* ============================================
+     INK (TEXT HIERARCHY)
+     ============================================ */
+  --ink-primary: #14211f;
+  --ink-secondary: #66736d;
+  --ink-tertiary: #89938f;
+  --ink-on-glass: rgba(20, 33, 31, 0.95);
+
+  /* ============================================
+     BRAND COLORS
+     ============================================ */
+  --forest: #173f3b;
+  --forest-hover: #102f2c;
+  --forest-light: #e2f0e9;
+  --coral: #d97357;
+  --coral-light: #fbe9e5;
+  --accent-warm: #b08c52;
+  --accent-warm-light: #f7f2e9;
+
+  /* ============================================
+     SEMANTIC COLORS
+     ============================================ */
+  --success: #45a67a;
+  --success-bg: #edf5f1;
+  --success-border: #b9d0c6;
+  --error: #c44133;
+  --error-bg: #fdeae8;
+  --error-text: #742f25;
+  --warning: #b08c52;
+  --warning-bg: #f7f2e9;
+  --warning-border: #dfd8cc;
+
+  /* ============================================
+     SPACING SCALE (4px base)
+     ============================================ */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* ============================================
+     RADIUS SCALE
+     ============================================ */
+  --radius-sm: 8px;       /* Small chips, badges */
+  --radius-md: 12px;      /* Buttons, inputs */
+  --radius-lg: 16px;      /* Cards (inner elements) */
+  --radius-xl: 20px;      /* Cards (outer) */
+  --radius-2xl: 24px;     /* Modals, drawers, composer */
+  --radius-full: 9999px;  /* Pills, avatars */
+
+  /* ============================================
+     ELEVATION SCALE (SHADOW SYSTEM)
+     Apple-inspired layered shadows
+     ============================================ */
+
+  /* Subtle lifts */
+  --shadow-xs:
+    0 1px 2px rgba(20, 33, 31, 0.04),
+    0 0 0 1px rgba(20, 33, 31, 0.02);
+
+  --shadow-sm:
+    0 2px 4px rgba(20, 33, 31, 0.04),
+    0 4px 8px rgba(20, 33, 31, 0.02);
+
+  --shadow-md:
+    0 4px 8px rgba(20, 33, 31, 0.06),
+    0 8px 16px rgba(20, 33, 31, 0.04);
+
+  /* Floating elements */
+  --shadow-lg:
+    0 8px 16px rgba(20, 33, 31, 0.08),
+    0 16px 32px rgba(20, 33, 31, 0.04);
+
+  --shadow-xl:
+    0 12px 24px rgba(20, 33, 31, 0.10),
+    0 24px 48px rgba(20, 33, 31, 0.06);
+
+  /* Composer, modals, major UI surfaces */
+  --shadow-2xl:
+    0 18px 36px rgba(20, 33, 31, 0.12),
+    0 36px 72px rgba(20, 33, 31, 0.08);
+
+  /* ============================================
+     TYPOGRAPHY SCALE
+     ============================================ */
+  --text-xs: 11px;     /* Captions, metadata */
+  --text-sm: 13px;     /* Secondary text, labels */
+  --text-base: 16px;   /* Body */
+  --text-lg: 18px;     /* Prominent body (assistant messages) */
+  --text-xl: 20px;     /* Section headings */
+  --text-2xl: 24px;    /* Card titles */
+  --text-3xl: 32px;    /* Page titles */
+  --text-4xl: 48px;    /* Hero (welcome screen) */
+
+  --weight-normal: 400;
+  --weight-medium: 600;
+  --weight-semibold: 700;
+  --weight-bold: 800;
+  --weight-black: 900;
+
+  --leading-tight: 1.25;
+  --leading-snug: 1.4;
+  --leading-normal: 1.6;
+  --leading-relaxed: 1.75;
+  --leading-loose: 1.9;
+
+  /* ============================================
+     ANIMATION TIMING
+     Apple-inspired easing curves
+     ============================================ */
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);      /* General purpose */
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);      /* Elements entering */
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);          /* Elements exiting */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* Playful bounce */
+
+  --duration-instant: 100ms;
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
+  --duration-slower: 400ms;
+}
+
+/* ============================================
+   DARK MODE (Phase 5.2 — Ready but not activated yet)
+   ============================================ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-base: #0f1514;
+    --surface-raised: #1a2220;
+    --surface-overlay: #141d1b;
+    --surface-inset: #0a0f0e;
+
+    --glass-base: rgba(15, 21, 20, 0.88);
+    --glass-strong: rgba(15, 21, 20, 0.94);
+    --glass-subtle: rgba(15, 21, 20, 0.72);
+
+    --border-default: #2a3532;
+    --border-subtle: #1f2825;
+    --border-strong: #3d4844;
+    --border-focus: #63a295;
+
+    --ink-primary: #e8f0ed;
+    --ink-secondary: #a8b5af;
+    --ink-tertiary: #7a8782;
+    --ink-on-glass: rgba(232, 240, 237, 0.95);
+
+    /* Brand adjustments for dark */
+    --forest: #4d8b7f;
+    --forest-hover: #63a295;
+    --forest-light: #1a3330;
+    --coral: #e89480;
+    --coral-light: #2a1f1c;
+
+    --success: #5fbf8e;
+    --success-bg: #1a2f26;
+    --error: #e86b5d;
+    --error-bg: #2a1916;
+    --warning: #d4a965;
+    --warning-bg: #2a2318;
+  }
+}
+
+/* ============================================
+   REDUCED TRANSPARENCY FALLBACK
+   Performance & accessibility
+   ============================================ */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass-base: rgba(250, 249, 245, 0.96);
+    --glass-strong: rgba(250, 249, 245, 0.98);
+    --glass-subtle: rgba(250, 249, 245, 0.92);
+    --glass-blur: 0px;
+    --glass-blur-strong: 0px;
+  }
+}

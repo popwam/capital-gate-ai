@@ -13,6 +13,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { DocumentType, MediaType, Prisma, UnitStatus } from "@prisma/client";
 import { Type } from "class-transformer";
@@ -223,6 +224,7 @@ class UpdateMediaDto {
 }
 
 @UseGuards(AdminAuthGuard)
+@Throttle({ default: { limit: 5, ttl: 60_000 } })
 @Controller("admin/catalog")
 export class CatalogController {
   constructor(

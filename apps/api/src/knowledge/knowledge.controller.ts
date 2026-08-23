@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Req, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ApprovalStatus } from "@prisma/client";
 import { IsEnum, IsOptional, IsString, MinLength } from "class-validator";
@@ -9,6 +10,7 @@ import { KnowledgeService } from "./knowledge.service";
 class PasteDto { @IsString() @MinLength(20) text!: string; }
 class ItemDto { @IsString() @MinLength(1) content!: string; @IsOptional() @IsEnum(ApprovalStatus) approvalStatus?: ApprovalStatus; }
 @UseGuards(AdminAuthGuard)
+@Throttle({ default: { limit: 5, ttl: 60_000 } })
 @Controller("admin/projects/:projectId/knowledge")
 export class KnowledgeController {
   constructor(private readonly knowledge: KnowledgeService, private readonly audit: AuditService) {}

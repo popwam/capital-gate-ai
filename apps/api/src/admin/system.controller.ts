@@ -1,9 +1,11 @@
 import { Controller, Get, UseGuards } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { AdminAuthGuard } from "../auth/admin-auth.guard";
 import { HybridAIProvider } from "../providers/hybrid.provider";
 import { AIUsageService } from "../providers/ai-usage.service";
 
 @UseGuards(AdminAuthGuard)
+@Throttle({ default: { limit: 5, ttl: 60_000 } })
 @Controller("admin/system")
 export class SystemController {
   constructor(private readonly hybrid: HybridAIProvider, private readonly usage: AIUsageService) {}

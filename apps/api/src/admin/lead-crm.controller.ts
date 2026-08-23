@@ -9,6 +9,7 @@ import {
   Req,
   UseGuards,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { AdminAuthGuard } from "../auth/admin-auth.guard";
 import {
   AdminConversationListQueryDto,
@@ -20,6 +21,7 @@ import {
 import { LeadCrmService } from "./lead-crm.service";
 
 @UseGuards(AdminAuthGuard)
+@Throttle({ default: { limit: 5, ttl: 60_000 } })
 @Controller("admin/leads")
 export class LeadCrmController {
   constructor(private readonly crm: LeadCrmService) {}
@@ -71,6 +73,7 @@ export class LeadCrmController {
 }
 
 @UseGuards(AdminAuthGuard)
+@Throttle({ default: { limit: 5, ttl: 60_000 } })
 @Controller("admin/conversations")
 export class AdminConversationsController {
   constructor(private readonly crm: LeadCrmService) {}

@@ -12,11 +12,17 @@ export class AdminAuthService implements OnModuleInit {
     const count = await this.prisma.adminUser.count();
     const email = process.env.ADMIN_BOOTSTRAP_EMAIL?.trim().toLowerCase(); const password = process.env.ADMIN_BOOTSTRAP_PASSWORD;
     if (!count && email && password) {
-      if (password.length < 12) throw new Error("ADMIN_BOOTSTRAP_PASSWORD must be at least 12 characters");
+      this.validatePasswordComplexity(password);
       const admin = await this.prisma.adminUser.create({ data: { email, name: "Platform Administrator", passwordHash: await hash(password, 12) } });
       await this.audit.record(admin.id, "ADMIN_BOOTSTRAPPED", "AdminUser", admin.id);
       this.logger.warn("First administrator created. Remove ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD from the environment now.");
     } else if (!count) this.logger.warn("No administrator exists. Set one-time ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD, then redeploy.");
+  }
+  private validatePasswordComplexity(password: string) {
+    if (password.length < 12) throw new Error("ADMIN_BOOTSTRAP_PASSWORD must be at least 12 characters");
+    if (!/[A-Z]/.test(password)) throw new Error("ADMIN_BOOTSTRAP_PASSWORD must contain at least one uppercase letter");
+    if (!/[0-9]/.test(password)) throw new Error("ADMIN_BOOTSTRAP_PASSWORD must contain at least one number");
+    if (!/[^A-Za-z0-9]/.test(password)) throw new Error("ADMIN_BOOTSTRAP_PASSWORD must contain at least one special character");
   }
   async login(email: string, password: string) {
     const admin = await this.prisma.adminUser.findUnique({ where: { email: email.trim().toLowerCase() } });

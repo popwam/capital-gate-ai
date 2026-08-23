@@ -5,27 +5,31 @@ import { AIUpstreamError } from "./provider-utils";
 
 const input = { messages: [{ role: "user" as const, content: "عاوز شقة" }], intent: { language: "ar-EG" }, verifiedFacts: [] };
 
+process.env.OPENAI_FALLBACK_ENABLED = "true";
+process.env.OPENAI_API_KEY = "test-openai-key";
+process.env.OPENAI_TEXT_MODEL = "test-openai-model";
+
 test("uses Groq once for a normal customer answer", async () => {
   let groqCalls = 0, openaiCalls = 0;
-  const provider = new HybridAIProvider({} as any, { composeAnswer: async () => { groqCalls++; return "تمام"; } } as any, { composeAnswer: async () => { openaiCalls++; return "fallback"; } } as any);
+  const provider = new HybridAIProvider({} as any, { composeAnswerWithModel: async () => { groqCalls++; return "تمام"; } } as any, { composeAnswer: async () => { openaiCalls++; return "fallback"; } } as any);
   assert.equal(await provider.composeAnswer(input), "تمام");
   assert.equal(groqCalls, 1); assert.equal(openaiCalls, 0);
 });
 
 test("falls back to OpenAI for retryable Groq errors", async () => {
-  const provider = new HybridAIProvider({} as any, { composeAnswer: async () => { throw new AIUpstreamError("groq", "HTTP_503", 503, true); } } as any, { composeAnswer: async () => "بديل" } as any);
+  const provider = new HybridAIProvider({} as any, { composeAnswerWithModel: async () => { throw new AIUpstreamError("groq", "HTTP_503", 503, true); } } as any, { composeAnswer: async () => "بديل" } as any);
   assert.equal(await provider.composeAnswer(input), "بديل");
 });
 
-test("Groq 413 rebuilds an aggressive context once and succeeds", async()=>{const levels:string[]=[];const groq={composeAnswer:async(value:any)=>{levels.push(value.compactionLevel??"normal");if(levels.length===1)throw new AIUpstreamError("groq","HTTP_413",413,false);return"compact success";}};const provider=new HybridAIProvider({} as any,groq as any,{composeAnswer:async()=>{throw new Error("must not fallback")}} as any);assert.equal(await provider.composeAnswer({...input,verifiedFacts:Array(8).fill({id:"unit",description:"x".repeat(10000)})}),"compact success");assert.deepEqual(levels,["normal","aggressive"]);});
+test("Groq 413 rebuilds an aggressive context once and succeeds", async()=>{const levels:string[]=[];const groq={composeAnswerWithModel:async(value:any)=>{levels.push(value.compactionLevel??"normal");if(levels.length===1)throw new AIUpstreamError("groq","HTTP_413",413,false);return"compact success";}};const provider=new HybridAIProvider({} as any,groq as any,{composeAnswer:async()=>{throw new Error("must not fallback")}} as any);assert.equal(await provider.composeAnswer({...input,verifiedFacts:Array(8).fill({id:"unit",description:"x".repeat(10000)})}),"compact success");assert.deepEqual(levels,["normal","aggressive"]);});
 
-test("two Groq 413 responses use compact OpenAI fallback",async()=>{let groqCalls=0;let openaiLevel="";const provider=new HybridAIProvider({} as any,{composeAnswer:async()=>{groqCalls++;throw new AIUpstreamError("groq","HTTP_413",413,false)}} as any,{composeAnswer:async(value:any)=>{openaiLevel=value.compactionLevel;return"openai compact"}} as any);assert.equal(await provider.composeAnswer(input),"openai compact");assert.equal(groqCalls,2);assert.equal(openaiLevel,"aggressive");});
+test("all routed Groq 413 responses use compact OpenAI fallback",async()=>{let groqCalls=0;let openaiLevel="";const provider=new HybridAIProvider({} as any,{composeAnswerWithModel:async()=>{groqCalls++;throw new AIUpstreamError("groq","HTTP_413",413,false)}} as any,{composeAnswer:async(value:any)=>{openaiLevel=value.compactionLevel;return"openai compact"}} as any);assert.equal(await provider.composeAnswer(input),"openai compact");assert.ok(groqCalls>=2);assert.equal(openaiLevel,"aggressive");});
 
-test("Workers generates from compact context when Groq and OpenAI fail",async()=>{let workersLevel="";const workers={primaryModel:"workers-primary",composeAnswer:async(value:any)=>{workersLevel=value.compactionLevel;return"workers compact"}};const provider=new HybridAIProvider(workers as any,{composeAnswer:async()=>{throw new AIUpstreamError("groq","HTTP_413",413,false)}} as any,{composeAnswer:async()=>{throw new AIUpstreamError("openai","HTTP_503",503,true)}} as any);assert.equal(await provider.composeAnswer(input),"workers compact");assert.equal(workersLevel,"aggressive");});
+test("Workers generates from compact context when Groq and OpenAI fail",async()=>{let workersLevel="";const workers={primaryModel:"workers-primary",composeAnswer:async(value:any)=>{workersLevel=value.compactionLevel;return"workers compact"}};const provider=new HybridAIProvider(workers as any,{composeAnswerWithModel:async()=>{throw new AIUpstreamError("groq","HTTP_413",413,false)}} as any,{composeAnswer:async()=>{throw new AIUpstreamError("openai","HTTP_503",503,true)}} as any);assert.equal(await provider.composeAnswer(input),"workers compact");assert.equal(workersLevel,"aggressive");});
 
-test("all provider failures preserve the terminal upstream category",async()=>{const workers={primaryModel:"workers-primary",composeAnswer:async()=>{throw new AIUpstreamError("workers","HTTP_503",503,true)}};const provider=new HybridAIProvider(workers as any,{composeAnswer:async()=>{throw new AIUpstreamError("groq","HTTP_413",413,false)}} as any,{composeAnswer:async()=>{throw new AIUpstreamError("openai","HTTP_503",503,true)}} as any);await assert.rejects(()=>provider.composeAnswer(input),(error:any)=>error.getResponse().category==="HTTP_503"&&error.getResponse().provider==="workers");});
+test("all provider failures preserve the terminal upstream category",async()=>{const workers={primaryModel:"workers-primary",composeAnswer:async()=>{throw new AIUpstreamError("workers","HTTP_503",503,true)}};const provider=new HybridAIProvider(workers as any,{composeAnswerWithModel:async()=>{throw new AIUpstreamError("groq","HTTP_413",413,false)}} as any,{composeAnswer:async()=>{throw new AIUpstreamError("openai","HTTP_503",503,true)}} as any);await assert.rejects(()=>provider.composeAnswer(input),(error:any)=>error.getResponse().category==="HTTP_503"&&error.getResponse().provider==="workers");});
 
-test("Groq stream retries 413 once with compact context",async()=>{const levels:string[]=[];const groq={streamAnswer:async function*(value:any){levels.push(value.compactionLevel??"normal");if(levels.length===1)throw new AIUpstreamError("groq","HTTP_413",413,false);yield"stream success";}};const provider=new HybridAIProvider({} as any,groq as any,{} as any);let result="";for await(const chunk of provider.streamAnswer(input))result+=chunk;assert.equal(result,"stream success");assert.deepEqual(levels,["normal","aggressive"]);});
+test("Groq stream retries 413 once with compact context",async()=>{const levels:string[]=[];const groq={streamAnswerWithModel:async function*(value:any){levels.push(value.compactionLevel??"normal");if(levels.length===1)throw new AIUpstreamError("groq","HTTP_413",413,false);yield"stream success";}};const provider=new HybridAIProvider({} as any,groq as any,{} as any);let result="";for await(const chunk of provider.streamAnswer(input))result+=chunk;assert.equal(result,"stream success");assert.deepEqual(levels,["normal","aggressive"]);});
 
 test("Workers failure does not block deterministic intent or column ingestion", async () => {
   const workers = { extractIntent: async () => { throw new Error("down"); }, mapColumns: async () => { throw new Error("down"); } };

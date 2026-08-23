@@ -19,6 +19,6 @@ test("advisor evaluation set covers at least 25 Arabic, English, mixed and multi
 test("advisor guardrails require verified facts, one useful question and no fake scarcity", () => {
   const system = advisorMessages({ messages: [], intent: { language: "ar-EG" }, verifiedFacts: [] })[0].content;
   assert.match(system, /only come from VERIFIED_FACTS/);
-  assert.match(system, /ask at most one useful question/);
+  assert.match(system, /ask at most one useful question/i);
   assert.match(system, /Never invent.*scarcity/);
 });

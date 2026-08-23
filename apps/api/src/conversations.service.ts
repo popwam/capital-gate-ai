@@ -1,10 +1,11 @@
 import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "./database/prisma.service";
 import { DevicesService } from "./devices.service";
+import { PromptABTestingService } from "./providers/prompt-ab-testing.service";
 
 @Injectable()
 export class ConversationsService {
-  constructor(private readonly prisma: PrismaService, private readonly devices: DevicesService) {}
+  constructor(private readonly prisma: PrismaService, private readonly devices: DevicesService, private readonly promptABTesting: PromptABTestingService) {}
   private async owned(id: string, rawToken: string) {
     const device = await this.devices.resolve(rawToken);
     const conversation = await this.prisma.conversation.findFirst({ where: { id, deviceId: device.id } });
@@ -21,7 +22,8 @@ export class ConversationsService {
   }
   async create(rawToken: string, title?: string) {
     const device = await this.devices.resolve(rawToken);
-    return this.prisma.conversation.create({ data: { deviceId: device.id, title: title?.slice(0, 80) || "New conversation" } });
+    const promptVariant = await this.promptABTesting.nextVariant();
+    return this.prisma.conversation.create({ data: { deviceId: device.id, title: title?.slice(0, 80) || "New conversation", promptVariant } });
   }
   async rename(id: string, rawToken: string, title: string) { const { conversation } = await this.owned(id, rawToken); return this.prisma.conversation.update({ where: { id: conversation.id }, data: { title: title.trim().slice(0, 80) } }); }
   async remove(id: string, rawToken: string) { const { conversation } = await this.owned(id, rawToken); await this.prisma.conversation.delete({ where: { id: conversation.id } }); return { deleted: true }; }

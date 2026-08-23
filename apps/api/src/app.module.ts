@@ -25,6 +25,7 @@ import { GroqProvider } from "./providers/groq.provider";
 import { OpenAIProvider } from "./providers/openai.provider";
 import { HybridAIProvider } from "./providers/hybrid.provider";
 import { AIUsageService } from "./providers/ai-usage.service";
+import { PromptABTestingService } from "./providers/prompt-ab-testing.service";
 import { createAIProvider } from "./providers/ai-provider.factory";
 import { MapsService } from "./maps.service";
 import {
@@ -35,8 +36,16 @@ import { LeadCrmService } from "./admin/lead-crm.service";
 import { SystemController } from "./admin/system.controller";
 import { RealEstateController } from "./admin/real-estate.controller";
 import { ProjectStructureController } from "./admin/project-structure.controller";
+import { AIAnalyticsController } from "./admin/ai-analytics.controller";
 import { ApplicationCache } from "./cache/application-cache";
 import { CustomerTrustService } from "./customer-trust.service";
+import {
+  ConversationFormatterService,
+  DeterministicAnswerService,
+  LeadHandoffService,
+  PaymentPresenterService,
+  PropertyPresenterService,
+} from "./conversation";
 
 @Module({
   imports: [
@@ -58,6 +67,7 @@ import { CustomerTrustService } from "./customer-trust.service";
     SystemController,
     RealEstateController,
     ProjectStructureController,
+    AIAnalyticsController,
   ],
   providers: [
     ChatService,
@@ -66,6 +76,11 @@ import { CustomerTrustService } from "./customer-trust.service";
     PropertySearchService,
     ApplicationCache,
     CustomerTrustService,
+    ConversationFormatterService,
+    PaymentPresenterService,
+    PropertyPresenterService,
+    DeterministicAnswerService,
+    LeadHandoffService,
     ImporterService,
     KnowledgeService,
     StorageService,
@@ -78,6 +93,7 @@ import { CustomerTrustService } from "./customer-trust.service";
     OpenAIProvider,
     HybridAIProvider,
     AIUsageService,
+    PromptABTestingService,
     {
       provide: "AI_PROVIDER",
       inject: [HybridAIProvider, DemoAIProvider],

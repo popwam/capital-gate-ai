@@ -940,6 +940,7 @@ model Conversation {
   device           AnonymousDevice    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
   title            String?
   detectedLanguage String?
+  promptVariant    String             @default("control")
   messages         Message[]
   state            ConversationState?
   leads            Lead[]
@@ -1212,18 +1213,23 @@ model AuditLog {
 }
 
 model AIUsage {
-  id           String   @id @default(cuid())
-  provider     String
-  model        String
-  taskType     String
-  inputTokens  Int?
-  outputTokens Int?
-  latencyMs    Int
-  success      Boolean
-  fallbackUsed Boolean  @default(false)
-  errorCode    String?
-  createdAt    DateTime @default(now())
+  id             String   @id @default(cuid())
+  provider       String
+  model          String
+  taskType       String
+  inputTokens    Int?
+  outputTokens   Int?
+  latencyMs      Int
+  success        Boolean
+  fallbackUsed   Boolean  @default(false)
+  errorCode      String?
+  promptVersion  String?
+  promptVariant  String?  @default("control")
+  conversationId String?
+  createdAt      DateTime @default(now())
 
   @@index([provider, createdAt])
   @@index([taskType, createdAt])
+  @@index([promptVersion, createdAt])
+  @@index([conversationId])
 }

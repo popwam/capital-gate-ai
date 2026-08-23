@@ -101,7 +101,7 @@ export type StructuredIntent = {
 };
 
 export type AIContextKind = "PROPERTY_SEARCH" | "PROJECT_DETAILS" | "DEVELOPER_HISTORY" | "INVESTMENT" | "RESALE" | "RENTAL" | "AMENITIES" | "MEDIA_REQUEST" | "BROCHURE_REQUEST" | "DISTANCE" | "COMPARISON" | "AGGREGATION";
-export type AnswerInput = { messages: AIMessage[]; intent: StructuredIntent; verifiedFacts: unknown[]; approvedKnowledge?: unknown[]; conversationSummary?: unknown; contextKind?: AIContextKind; candidatesBeforeRanking?: number; compactionLevel?: "normal" | "aggressive"; requestId?: string; conversationId?: string };
+export type AnswerInput = { messages: AIMessage[]; intent: StructuredIntent; verifiedFacts: unknown[]; approvedKnowledge?: unknown[]; conversationSummary?: unknown; contextKind?: AIContextKind; candidatesBeforeRanking?: number; compactionLevel?: "normal" | "aggressive"; requestId?: string; conversationId?: string; promptVersion?: string; promptVariant?: string };
 export type AIHealth = { provider: string; configured: boolean; healthy: boolean; model: string | null; errorCode?: string };
 export type AITraceContext = { requestId?: string; conversationId?: string };
 

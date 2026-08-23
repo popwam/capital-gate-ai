@@ -1,8 +1,10 @@
 import { Controller, Get, Query, UseGuards } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { AdminAuthGuard } from "../auth/admin-auth.guard";
 import { MapsService } from "../maps.service";
 
 @UseGuards(AdminAuthGuard)
+@Throttle({ default: { limit: 5, ttl: 60_000 } })
 @Controller("admin/maps")
 export class MapsController {
   constructor(private readonly maps: MapsService) {}

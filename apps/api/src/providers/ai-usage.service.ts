@@ -5,8 +5,21 @@ import { PrismaService } from "../database/prisma.service";
 export class AIUsageService {
   private readonly logger = new Logger(AIUsageService.name);
   constructor(private readonly prisma: PrismaService) {}
-  async record(data: { provider: string; model: string; taskType: string; latencyMs: number; success: boolean; fallbackUsed?: boolean; errorCode?: string; inputTokens?: number; outputTokens?: number }) {
-    try { await this.prisma.aIUsage.create({ data: { ...data, fallbackUsed: data.fallbackUsed ?? false } }); }
+  async record(data: {
+    provider: string;
+    model: string;
+    taskType: string;
+    latencyMs: number;
+    success: boolean;
+    fallbackUsed?: boolean;
+    errorCode?: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    promptVersion?: string;
+    promptVariant?: string;
+    conversationId?: string;
+  }) {
+    try { await this.prisma.aIUsage.create({ data: { ...data, fallbackUsed: data.fallbackUsed ?? false, promptVariant: data.promptVariant ?? 'control' } }); }
     catch { this.logger.warn(`AI usage record failed provider=${data.provider} task=${data.taskType}`); }
   }
   async stats() {

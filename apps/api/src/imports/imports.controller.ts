@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, HttpStatus, Logger, Param, Patch, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { Allow, IsIn, IsNotEmpty, IsString } from "class-validator";
 import { extname } from "node:path";
@@ -15,6 +16,7 @@ class CorrectionDto extends SheetMappingDto {}
 class CorrectionDecisionDto { @Allow() decisions?: Record<string,string>; }
 class RemoveBatchDto { @IsIn(["DELETE_UNFINISHED", "DELETE_SOURCE_RECORD", "DELETE_EXCLUSIVE_RECORDS", "ROLLBACK_SAFE"]) mode!: "DELETE_UNFINISHED" | "DELETE_SOURCE_RECORD" | "DELETE_EXCLUSIVE_RECORDS" | "ROLLBACK_SAFE"; }
 @UseGuards(AdminAuthGuard)
+@Throttle({ default: { limit: 5, ttl: 60_000 } })
 @Controller("admin/imports")
 export class ImportsController {
   private readonly logger = new Logger(ImportsController.name);
