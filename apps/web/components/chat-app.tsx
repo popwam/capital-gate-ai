@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import {
-  ArrowUp, Building2, Check, ChevronDown, Clock3, FileText,
+  ArrowUp, Check, ChevronDown, Clock3, FileText,
   Heart, Image as ImageIcon, MapPin, Menu, MessageSquareText,
-  MoreHorizontal, Plus, Search, ShieldCheck, Sparkles, Trash2, X
+  MoreHorizontal, Plus, Search, ShieldCheck, Trash2, X
 } from "lucide-react";
 import { LogoMark } from "./logo";
 import { ApiMessage, conversationsApi } from "@/lib/api";
@@ -17,9 +17,9 @@ type Conversation = { id: string; title: string; updatedAt: string; messages: Me
 type ActionSend = (value: string, displayValue?: string) => void;
 
 const starters = [
-  { icon: Building2, labelAr: "بدور على بيت", promptAr: "عاوز شقة في القاهرة الجديدة", labelEn: "Looking for a home", promptEn: "I want an apartment in New Cairo" },
-  { icon: Sparkles, labelAr: "بفكر في استثمار", promptAr: "وريني اختيارات استثمارية في حدود 15 مليون", labelEn: "Considering an investment", promptEn: "Show me investment options around EGP 15 million" },
-  { icon: MapPin, labelAr: "المكان أهم حاجة", promptAr: "إيه المتاح قريب من العاصمة الإدارية؟", labelEn: "Location matters most", promptEn: "What is available near the New Administrative Capital?" }
+  { labelAr: "بدور على بيت في القاهرة الجديدة", promptAr: "عاوز شقة في القاهرة الجديدة", labelEn: "Find a home in New Cairo", promptEn: "I want an apartment in New Cairo" },
+  { labelAr: "عايز فرصة استثمارية في حدود 15 مليون", promptAr: "وريني اختيارات استثمارية في حدود 15 مليون", labelEn: "Explore an investment around EGP 15M", promptEn: "Show me investment options around EGP 15 million" },
+  { labelAr: "وريني المتاح قريب من العاصمة", promptAr: "إيه المتاح قريب من العاصمة الإدارية؟", labelEn: "Search near the New Capital", promptEn: "What is available near the New Administrative Capital?" }
 ];
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -101,31 +101,32 @@ export default function ChatApp() {
   const isArabic = lang === "AR";
 
   return (
-    <main className="flex h-[100dvh] overflow-hidden" style={{ background: 'var(--surface-base)' }}>
-      <aside className="hidden w-[292px] shrink-0 flex-col border-r bg-[var(--surface-overlay)] lg:flex" style={{ borderColor: 'var(--border-default)' }}>
+    <main className="cg-chat flex h-[100dvh] overflow-hidden" style={{ background: 'var(--surface-base)' }}>
+      <aside className="hidden w-[264px] shrink-0 flex-col border-e bg-[var(--surface-overlay)] lg:flex" style={{ borderColor: 'var(--border-subtle)' }}>
         <Sidebar conversations={conversations} activeId={activeId} onSelect={setActiveId} onNew={newChat} onDelete={removeConversation} onRename={renameConversation} isArabic={isArabic} />
       </aside>
 
-      {drawer && <div className="fixed inset-0 z-50 lg:hidden"><button className="absolute inset-0 bg-black/25 backdrop-blur-[2px]" onClick={() => setDrawer(false)} aria-label="Close navigation"/><aside className="relative flex h-full w-[86%] max-w-[330px] flex-col shadow-2xl" style={{ background: 'var(--surface-overlay)', boxShadow: 'var(--shadow-2xl)' }}><button onClick={() => setDrawer(false)} className="absolute right-3 top-3 grid h-10 w-10 place-items-center rounded-full hover:bg-black/5"><X size={19}/></button><Sidebar conversations={conversations} activeId={activeId} onSelect={id => {setActiveId(id);setDrawer(false)}} onNew={newChat} onDelete={removeConversation} onRename={renameConversation} isArabic={isArabic}/></aside></div>}
+      {drawer && <div className="fixed inset-0 z-50 lg:hidden"><button className="absolute inset-0 bg-black/45 backdrop-blur-[2px]" onClick={() => setDrawer(false)} aria-label="Close navigation"/><aside className="relative flex h-full w-[82%] max-w-[304px] flex-col shadow-2xl" style={{ background: 'var(--surface-overlay)', boxShadow: 'var(--shadow-2xl)' }}><button onClick={() => setDrawer(false)} className="absolute end-2 top-2 grid h-11 w-11 place-items-center rounded-full hover:bg-white/5" aria-label={isArabic ? "إغلاق قائمة المحادثات" : "Close conversations"}><X size={18}/></button><Sidebar conversations={conversations} activeId={activeId} onSelect={id => {setActiveId(id);setDrawer(false)}} onNew={newChat} onDelete={removeConversation} onRename={renameConversation} isArabic={isArabic}/></aside></div>}
 
       <section className="cg-surface relative flex min-w-0 flex-1 flex-col">
-        <header className="cg-glass-strong z-20 flex h-[68px] shrink-0 items-center justify-between px-4 sm:px-6" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-          <div className="flex items-center gap-3">
-            <button onClick={() => setDrawer(true)} className="grid h-10 w-10 place-items-center rounded-full lg:hidden" style={{ border: '1px solid var(--border-default)' }} aria-label="Open conversations"><Menu size={19}/></button>
-            <div className="lg:hidden"><LogoMark compact/></div>
-            <div className="hidden sm:block"><p className="text-[14px] font-semibold" dir="auto">{active?.title ?? (isArabic ? "محادثة جديدة" : "New conversation")}</p><p className="mt-0.5 flex items-center gap-1.5 text-[13px] font-medium" style={{ color: 'var(--ink-tertiary)' }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--success)' }}/> Cg verified inventory</p></div>
+        <header className="cg-glass-strong z-20 flex h-14 shrink-0 items-center justify-between px-2 sm:px-5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <div className="flex min-w-0 items-center gap-1 sm:gap-3">
+            <button onClick={() => setDrawer(true)} className="grid h-11 w-11 place-items-center rounded-full lg:hidden" aria-label="Open conversations"><Menu size={18}/></button>
+            <span className="text-[14px] font-extrabold lg:hidden">Cg</span>
+            <div className="hidden min-w-0 sm:block"><p className="max-w-[48vw] truncate text-[13px] font-semibold" dir="auto">{active?.title ?? (isArabic ? "محادثة جديدة" : "New conversation")}</p></div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => setLang(lang === "EN" ? "AR" : "EN")} className="btn-ghost h-11 rounded-full px-3 text-[13px] font-bold tracking-wide" style={{ border: '1px solid var(--border-default)' }} aria-label={lang === "EN" ? "التبديل إلى العربية" : "Switch to English"}>{lang === "EN" ? "العربية" : "EN"}</button>
-            <button onClick={newChat} className="btn-primary grid h-11 w-11 place-items-center rounded-full text-white" style={{ background: 'var(--forest)', boxShadow: 'var(--shadow-sm)' }} aria-label={isArabic ? "محادثة جديدة" : "New conversation"}><Plus size={17}/></button>
+            <span className="hidden items-center gap-1.5 text-[11px] font-medium sm:flex" style={{ color: 'var(--ink-tertiary)' }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--success)' }}/>{isArabic ? "مخزون موثق" : "Verified inventory"}</span>
+            <button onClick={() => setLang(lang === "EN" ? "AR" : "EN")} className="btn-ghost grid h-11 min-w-11 place-items-center rounded-full px-2 text-[12px] font-bold" aria-label={lang === "EN" ? "التبديل إلى العربية" : "Switch to English"}>{lang === "EN" ? "ع" : "EN"}</button>
+            <button onClick={newChat} className="grid h-11 w-11 place-items-center rounded-full lg:hidden" aria-label={isArabic ? "محادثة جديدة" : "New conversation"}><Plus size={17}/></button>
           </div>
         </header>
 
         <div ref={scrollRef} className="scrollbar-none flex-1 overflow-y-auto">
           {messages.length === 0 ? <Welcome isArabic={isArabic} onSelect={setInput}/> : (
-            <div className="mx-auto w-full max-w-[860px] px-4 pb-44 pt-7 sm:px-8 sm:pt-10" role="log" aria-live="polite" aria-atomic="false" aria-label={isArabic ? "سجل المحادثة" : "Conversation log"}>
+            <div className="mx-auto w-full max-w-[820px] px-4 pb-32 pt-6 sm:px-7 sm:pt-9" role="log" aria-live="polite" aria-atomic="false" aria-label={isArabic ? "سجل المحادثة" : "Conversation log"}>
               {messages.map((m, i) => <MessageView key={m.id} message={m} liked={liked} setLiked={setLiked} onAction={send} isLast={i === messages.length - 1} isArabic={isArabic}/>) }
-              {generating && <div className="message-rise mb-7 flex gap-3"><AssistantAvatar/>{streamingText ? <div className="message-assistant chat-copy max-w-[92%] pt-0.5 tracking-[.005em] sm:max-w-[86%]" dir={textDirection(streamingText)}><><RichChatText text={streamingText}/><span className="ms-1 inline-block h-4 w-0.5 animate-pulse" style={{ background: 'var(--forest)' }}/></></div> : <div className="mt-1 flex h-9 items-center gap-2 rounded-2xl rounded-tl-sm px-4" style={{ background: 'var(--surface-inset)' }} role="status" aria-live="polite" aria-atomic="true"><div className="flex gap-1.5"><span className="typing-dot h-1.5 w-1.5 rounded-full" style={{ background: 'var(--forest)' }}/><span className="typing-dot h-1.5 w-1.5 rounded-full" style={{ background: 'var(--forest)' }}/><span className="typing-dot h-1.5 w-1.5 rounded-full" style={{ background: 'var(--forest)' }}/></div><span className="text-[11px] font-medium" style={{ color: 'var(--ink-tertiary)' }}>Cg {isArabic ? 'يفكر' : 'thinking'}</span></div>}</div>}
+              {generating && <div className="message-rise mb-6 flex gap-2.5"><AssistantAvatar/>{streamingText ? <div className="message-assistant chat-copy max-w-[92%] pt-0.5 sm:max-w-[88%]" dir={textDirection(streamingText)}><><RichChatText text={streamingText}/><span className="ms-1 inline-block h-4 w-0.5 animate-pulse" style={{ background: 'var(--accent)' }}/></></div> : <div className="mt-1 flex h-8 items-center gap-2 px-1" role="status" aria-live="polite" aria-atomic="true"><div className="flex gap-1"><span className="typing-dot h-1 w-1 rounded-full"/><span className="typing-dot h-1 w-1 rounded-full"/><span className="typing-dot h-1 w-1 rounded-full"/></div><span className="text-[11px] font-medium" style={{ color: 'var(--ink-tertiary)' }}>Cg {isArabic ? 'بيفكر' : 'thinking'}</span></div>}</div>}
             </div>
           )}
         </div>
@@ -140,26 +141,24 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, onRename,
   const [query,setQuery]=useState("");
   const visible=conversations.filter(c=>!query.trim()||c.title.toLowerCase().includes(query.trim().toLowerCase()));
   return <>
-    <div className="px-5 pb-5 pt-6"><div className="logo-entrance"><LogoMark/></div><button onClick={onNew} className="btn-primary mt-7 flex h-11 w-full items-center justify-center gap-2 rounded-xl text-[13px] font-bold text-white transition" style={{ background: 'var(--forest)', boxShadow: 'var(--shadow-sm)' }} aria-label={isArabic ? "محادثة جديدة" : "New conversation"}><Plus size={16}/> {isArabic ? "محادثة جديدة" : "New conversation"}</button></div>
-    <div className="px-4"><div className="relative"><label htmlFor="conversation-search" className="sr-only">{isArabic ? "ابحث في المحادثات" : "Search conversations"}</label><Search className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-tertiary)' }} size={14} aria-hidden="true"/><input id="conversation-search" value={query} onChange={e=>setQuery(e.target.value)} className="h-11 w-full rounded-xl pl-9 pr-3 text-[13px] outline-none" style={{ border: '1px solid var(--border-default)', background: 'var(--surface-inset)', boxShadow: 'inset 0 1px 2px rgba(20, 33, 31, 0.04)' }} placeholder={isArabic ? "ابحث في المحادثات" : "Search conversations"} aria-label={isArabic ? "ابحث في المحادثات" : "Search conversations"}/></div></div>
-    <nav aria-label={isArabic ? "المحادثات" : "Conversations"} className="scrollbar-none mt-6 flex-1 overflow-y-auto px-3"><p className="px-2 text-[12px] font-bold uppercase tracking-[.16em]" style={{ color: 'var(--ink-tertiary)' }}>{isArabic ? "الأخيرة" : "Recent"}</p><div className="mt-2 space-y-1" role="list">{visible.map(c => <button key={c.id} onClick={() => onSelect(c.id)} onDoubleClick={()=>onRename(c.id,c.title)} title="Double-click to rename" className={`${activeId === c.id ? 'conversation-active' : ''} group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-start transition`} style={{ background: activeId === c.id ? 'var(--surface-raised)' : 'transparent', boxShadow: activeId === c.id ? 'var(--shadow-sm)' : 'none' }} role="listitem" aria-current={activeId === c.id ? 'page' : undefined}><MessageSquareText size={15} style={{ color: activeId === c.id ? 'var(--coral)' : 'var(--ink-tertiary)' }} aria-hidden="true"/><span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-semibold" dir="auto">{c.title}</span><span className="mt-0.5 block text-[11px]" style={{ color: 'var(--ink-tertiary)' }}>{c.updatedAt}</span></span><span onClick={e => {e.stopPropagation();onDelete(c.id)}} className="hidden h-11 w-11 place-items-center rounded-lg hover:text-[#8f632c] group-hover:grid" style={{ color: 'var(--ink-tertiary)', background: 'transparent' }} onMouseEnter={(e) => e.currentTarget.style.background = 'var(--warning-bg)'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'} role="button" tabIndex={0} aria-label={isArabic ? "حذف المحادثة" : "Delete conversation"}><Trash2 size={13}/></span></button>)}{!visible.length&&<p className="px-3 py-5 text-center text-[12px]" style={{ color: 'var(--ink-tertiary)' }}>{isArabic ? "مفيش محادثات مطابقة" : "No matching conversations"}</p>}</div></nav>
+    <div className="px-4 pb-4 pt-5"><div className="logo-entrance"><LogoMark inverse/></div><button onClick={onNew} className="btn-primary mt-5 flex h-10 w-full items-center justify-center gap-2 rounded-lg text-[12px] font-bold text-white transition" style={{ background: 'var(--accent)', boxShadow: 'var(--shadow-sm)' }} aria-label={isArabic ? "محادثة جديدة" : "New conversation"}><Plus size={15}/> {isArabic ? "محادثة جديدة" : "New conversation"}</button></div>
+    <div className="px-3"><div className="relative"><label htmlFor="conversation-search" className="sr-only">{isArabic ? "ابحث في المحادثات" : "Search conversations"}</label><Search className="absolute start-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-tertiary)' }} size={13} aria-hidden="true"/><input id="conversation-search" value={query} onChange={e=>setQuery(e.target.value)} className="h-10 w-full rounded-lg bg-[var(--surface-inset)] pe-3 ps-9 text-[12px] outline-none" placeholder={isArabic ? "ابحث في المحادثات" : "Search conversations"} aria-label={isArabic ? "ابحث في المحادثات" : "Search conversations"}/></div></div>
+    <nav aria-label={isArabic ? "المحادثات" : "Conversations"} className="scrollbar-none mt-5 flex-1 overflow-y-auto px-2"><p className="px-2 text-[10px] font-bold uppercase tracking-[.12em]" style={{ color: 'var(--ink-tertiary)' }}>{isArabic ? "الأخيرة" : "Recent"}</p><div className="mt-1.5 space-y-0.5" role={visible.length ? "list" : undefined}>{visible.map(c => <button key={c.id} onClick={() => onSelect(c.id)} onDoubleClick={()=>onRename(c.id,c.title)} title="Double-click to rename" className={`${activeId === c.id ? 'conversation-active' : ''} group flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-start transition`} style={{ background: activeId === c.id ? 'var(--surface-raised)' : 'transparent' }} role="listitem" aria-current={activeId === c.id ? 'page' : undefined}><MessageSquareText size={14} style={{ color: activeId === c.id ? 'var(--accent-warm)' : 'var(--ink-tertiary)' }} aria-hidden="true"/><span className="min-w-0 flex-1"><span className="block truncate text-[12px] font-semibold" dir="auto">{c.title}</span><span className="block text-[10px]" style={{ color: 'var(--ink-tertiary)' }}>{c.updatedAt}</span></span><span onClick={e => {e.stopPropagation();onDelete(c.id)}} className="hidden h-10 w-10 place-items-center rounded-lg group-hover:grid" style={{ color: 'var(--ink-tertiary)' }} role="button" tabIndex={0} aria-label={isArabic ? "حذف المحادثة" : "Delete conversation"}><Trash2 size={13}/></span></button>)}{!visible.length&&<p className="px-3 py-5 text-center text-[12px]" style={{ color: 'var(--ink-tertiary)' }}>{isArabic ? "مفيش محادثات مطابقة" : "No matching conversations"}</p>}</div></nav>
   </>;
 }
 
 function Welcome({ onSelect, isArabic }: { onSelect:(v:string)=>void; isArabic:boolean }) {
-  return <div className="mx-auto flex min-h-full w-full max-w-[820px] flex-col justify-center px-4 pb-40 pt-8 sm:px-7 sm:pb-44" dir={isArabic ? "rtl" : "ltr"}>
-    <div className="mx-auto w-full max-w-[680px] text-center">
-      <div className="logo-entrance mx-auto mb-7 w-fit"><LogoMark/></div>
-      <div className="mb-3 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-bold shadow-sm" style={{ border: '1px solid var(--border-default)', background: 'rgba(255, 255, 255, 0.75)', color: 'var(--ink-secondary)' }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--success)' }}/>{isArabic?"بيفهم سؤالك قبل ما يدور":"Understands first, searches second"}</div>
-      <h1 className="text-balance text-[32px] font-black leading-[1.28] tracking-[-.045em] sm:text-[48px]" style={{ color: 'var(--ink-primary)' }}>{isArabic ? "مش شات عقارات تقليدي." : "Not another property chatbot."}</h1>
-      <p className="mx-auto mt-4 max-w-[590px] text-[16px] leading-8 sm:text-[17px]" style={{ color: 'var(--ink-secondary)' }}>{isArabic ? "اكتب اللي في دماغك بطريقتك. Cg Ai يربط كلامك بالمخزون الموثق، ويشرحلك الفرق بدل ما يرمي قدامك ليستة وحدات." : "Ask naturally. Cg Ai connects your intent to verified inventory and explains the trade-offs instead of dumping listings."}</p>
+  return <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col justify-center px-4 pb-28 pt-5 sm:px-7 sm:pb-32" dir={isArabic ? "rtl" : "ltr"}>
+    <div className="w-full max-w-[620px]">
+      <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold" style={{ color: 'var(--ink-secondary)' }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--success)' }}/>{isArabic?"إجابات من المخزون الموثق":"Answers from verified inventory"}</div>
+      <h1 className="text-balance text-[28px] font-extrabold leading-[1.4] sm:text-[38px]" style={{ color: 'var(--ink-primary)' }}>{isArabic ? "احكيلي إيه اللي بتدور عليه." : "Tell me what you’re looking for."}</h1>
+      <p className="mt-2 max-w-[560px] text-[14px] leading-7 sm:text-[15px]" style={{ color: 'var(--ink-secondary)' }}>{isArabic ? "ميزانية، منطقة، أو هدف استثماري — اتكلم بطريقتك وأنا أرتب البحث." : "Share a budget, location, or investment goal. Ask naturally and I’ll shape the search."}</p>
     </div>
-    <div className="mx-auto mt-8 grid w-full max-w-[700px] gap-2.5 sm:grid-cols-3" dir={isArabic?"rtl":"ltr"}>{starters.map(({icon:Icon,labelAr,promptAr,labelEn,promptEn}) => { const label = isArabic ? labelAr : labelEn; const prompt = isArabic ? promptAr : promptEn; return <button key={label} type="button" onClick={() => onSelect(prompt)} className="group flex min-h-[106px] min-w-0 flex-col items-start justify-between rounded-[20px] border border-[#dfe3de] bg-white/82 p-4 text-start shadow-[0_10px_30px_rgba(20,41,39,.045)] transition active:scale-[.99] sm:hover:-translate-y-1 sm:hover:border-[#aebeb7] sm:hover:shadow-soft"><span className="grid h-9 w-9 place-items-center rounded-xl bg-[#edf2ef] text-[#315f55]"><Icon size={17}/></span><span className="flex w-full min-w-0 items-end justify-between gap-2 text-[13px] font-bold"><span className="truncate">{label}</span><span className="text-[12px] font-semibold text-[#9a855d]">{isArabic?"اكتبها":"Draft"}</span></span></button>})}</div>
-    <p className="mx-auto mt-4 max-w-[680px] text-center text-[12px] leading-6 text-[#84908a]">{isArabic?"الاقتراحات بتتكتب في خانة السؤال فقط — راجعها وكملها وبعدين اضغط إرسال.":"Suggestions only fill the composer. Edit or continue them before you send."}</p>
+    <div className="mt-6 w-full max-w-[620px] divide-y divide-[var(--border-subtle)]" dir={isArabic?"rtl":"ltr"}>{starters.map(({labelAr,promptAr,labelEn,promptEn}) => { const label = isArabic ? labelAr : labelEn; const prompt = isArabic ? promptAr : promptEn; return <button key={label} type="button" onClick={() => onSelect(prompt)} className="group flex min-h-11 w-full items-center justify-between gap-3 py-2.5 text-start text-[13px] font-semibold transition hover:text-[var(--accent-warm)]"><span>{label}</span><ArrowUp className="shrink-0 rotate-[-45deg] opacity-50 transition group-hover:opacity-100" size={14}/></button>})}</div>
   </div>;
 }
 
-function AssistantAvatar() { return <div className="avatar-assistant grid h-8 w-8 shrink-0 place-items-center rounded-[11px] text-[#e2c58e]" style={{ background: 'var(--ink-primary)', boxShadow: 'var(--shadow-sm)' }} aria-hidden="true"><span className="text-[11px] font-black tracking-[-.08em]">Cg</span></div>; }
+function AssistantAvatar() { return <div className="avatar-assistant grid h-7 w-7 shrink-0 place-items-center rounded-lg" aria-hidden="true"><span className="text-[10px] font-black">Cg</span></div>; }
 
 function MessageView({ message, liked, setLiked, onAction, isLast, isArabic }: { message:Message;liked:boolean;setLiked:(v:boolean)=>void;onAction:ActionSend;isLast:boolean;isArabic:boolean }) {
   const assistant = message.role === "assistant";
@@ -173,10 +172,10 @@ function MessageView({ message, liked, setLiked, onAction, isLast, isArabic }: {
   const paymentAction = actions.find((action:any) => action.type === "PAYMENT_CHOICES");
   const closedAction = actions.find((action:any) => action.type === "CONVERSATION_CLOSED");
   const contact = Boolean(contactAction);
-  return <div className={`message-rise mb-7 flex gap-3 ${assistant ? "justify-start" : "justify-end"}`}>
+  return <div className={`message-rise mb-6 flex gap-2.5 ${assistant ? "justify-start" : "justify-end"}`}>
     {assistant && <AssistantAvatar/>}
     <div className={assistant ? "max-w-[94%] sm:max-w-[86%]" : "max-w-[88%] sm:max-w-[78%]"}>
-      <div dir={textDirection(message.text)} className={assistant ? "chat-copy pt-0.5 text-start text-[17px] leading-[1.9] tracking-[.005em] text-[#27322e] sm:text-[18px]" : "chat-copy rounded-[20px] rounded-tr-md bg-[#ebe8e1] px-4 py-3 text-start text-[17px] leading-[1.85] text-[#26312d] sm:text-[18px]"}><RichChatText text={message.text}/></div>
+      <div dir={textDirection(message.text)} className={assistant ? "chat-copy message-assistant pt-0.5 text-start text-[16px] leading-[1.9] sm:text-[17px]" : "chat-copy message-user rounded-[18px] rounded-tr-md px-3.5 py-2.5 text-start text-[15px] leading-[1.8] sm:text-[16px]"}><RichChatText text={message.text}/></div>
       {!!cards.length && <PropertyResults properties={cards} liked={liked} setLiked={setLiked} onAction={onAction} isArabic={isArabic}/>}
       {!!photos.length && <MediaGallery media={photos}/>}
       {!!brochures.length && <Documents documents={brochures}/>}
@@ -263,7 +262,7 @@ function humanPropertyLabel(property:any,isArabic:boolean) {
 }
 
 function RichChatText({text}:{text:string}) {
-  const inline=(line:string,key:string)=>line.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part,index)=>part.startsWith("**")&&part.endsWith("**")?<strong key={`${key}-${index}`} className="font-bold text-[#1d2d29]">{part.slice(2,-2)}</strong>:<span key={`${key}-${index}`}>{part}</span>);
+  const inline=(line:string,key:string)=>line.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part,index)=>part.startsWith("**")&&part.endsWith("**")?<strong key={`${key}-${index}`} className="font-bold" style={{color:'var(--ink-primary)'}}>{part.slice(2,-2)}</strong>:<span key={`${key}-${index}`}>{part}</span>);
   return <>{String(text??"").split("\n").map((line,index)=><span key={index}>{inline(line,String(index))}{index<String(text??"").split("\n").length-1&&<br/>}</span>)}</>;
 }
 
@@ -310,14 +309,13 @@ function ClosedComposer({isArabic,onNew}:{isArabic:boolean;onNew:()=>void}) {
 }
 
 function Composer({ input, setInput, send, disabled, isArabic }: {input:string;setInput:(v:string)=>void;send:()=>void;disabled:boolean;isArabic:boolean}) {
-  return <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-10 sm:px-6" style={{ background: 'linear-gradient(to top, var(--surface-base), var(--surface-base) 60%, transparent)' }}>
-    <div className="pointer-events-auto mx-auto max-w-[860px]">
-      <div className="input-focus-glow cg-glass rounded-[24px] p-2 transition" style={{ border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-2xl)' }}>
+  return <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-8 sm:px-6" style={{ background: 'linear-gradient(to top, var(--surface-base), var(--surface-base) 64%, transparent)' }}>
+    <div className="pointer-events-auto mx-auto max-w-[820px]">
+      <div className="input-focus-glow cg-glass flex items-end gap-2 rounded-[18px] px-2 py-1.5 transition" style={{ border: '1px solid var(--border-default)', boxShadow: 'var(--shadow-lg)' }}>
         <label htmlFor="message-input" className="sr-only">{isArabic ? "اكتب رسالتك" : "Type your message"}</label>
-        <textarea id="message-input" autoFocus dir={input ? textDirection(input) : (isArabic ? "rtl" : "ltr")} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();send();}}} rows={1} placeholder={isArabic ? "اكتب سؤالك وكمله براحتك..." : "Write your question — take your time..."} className="scrollbar-none block max-h-32 min-h-[54px] w-full resize-none bg-transparent px-3 py-3 text-start text-[16px] leading-[1.75] outline-none" style={{ color: 'var(--ink-primary)', caretColor: 'var(--forest)' }} aria-label={isArabic ? "اكتب رسالتك" : "Type your message"}/>
-        <div className="flex items-center justify-between gap-3 px-1 pb-1"><span className="min-w-0 truncate ps-2 text-[11px] font-medium" style={{ color: 'var(--ink-tertiary)' }}>{isArabic?"Enter لسطر جديد · Ctrl/⌘ + Enter للإرسال":"Enter for a new line · Ctrl/⌘ + Enter to send"}</span><button disabled={disabled || !input.trim()} onClick={send} className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-white transition enabled:hover:scale-105" style={{ background: disabled || !input.trim() ? 'var(--border-default)' : 'var(--forest)' }} aria-label={isArabic?"إرسال":"Send"}><ArrowUp size={18}/></button></div>
+        <textarea id="message-input" dir={input ? textDirection(input) : (isArabic ? "rtl" : "ltr")} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();send();}}} rows={1} placeholder={isArabic ? "اسأل عن وحدة، منطقة، أو ميزانية..." : "Ask about a unit, location, or budget..."} className="scrollbar-none block max-h-32 min-h-11 flex-1 resize-none bg-transparent px-2.5 py-2.5 text-start text-[15px] leading-6 text-[var(--ink-primary)] caret-[var(--accent)] outline-none" aria-label={isArabic ? "اكتب رسالتك" : "Type your message"}/>
+        <button disabled={disabled || !input.trim()} onClick={send} className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-white transition" style={{ background: disabled || !input.trim() ? 'var(--surface-raised)' : 'var(--accent)' }} aria-label={isArabic?"إرسال":"Send"}><ArrowUp size={17}/></button>
       </div>
-      <p className="mt-2 text-center text-[11px]" style={{ color: 'var(--ink-tertiary)' }}>{isArabic ? "Cg Ai يجاوب من البيانات الموثقة المتاحة في المنصة." : "Cg Ai answers from verified platform data."}</p>
     </div>
   </div>;
 }

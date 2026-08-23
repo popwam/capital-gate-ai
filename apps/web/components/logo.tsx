@@ -10,7 +10,7 @@ export function LogoMark({ compact = false, inverse = false }: { compact?: boole
           <div className={`flex items-baseline gap-1 font-black tracking-[-.055em] ${inverse ? "text-white" : "text-[#142927]"}`}>
             <span className="text-[19px]">Cg</span><span className="text-[12px] font-bold tracking-[-.03em] text-[#a1834e]">Ai</span>
           </div>
-          <div className={`mt-1.5 truncate text-[9px] font-bold uppercase tracking-[.17em] ${inverse ? "text-white/45" : "text-[#7a8580]"}`}>property intelligence</div>
+          <div className={`mt-1.5 truncate text-[9px] font-bold uppercase tracking-[.17em] ${inverse ? "text-white/50" : "text-[#7a8580]"}`}>property intelligence</div>
         </div>
       )}
     </div>

@@ -166,7 +166,7 @@ export class PropertySearchService {
   }
 
   private async normalizedWhere(intent: StructuredIntent): Promise<Prisma.UnitWhereInput | null> {
-    if (intent.extractionDegraded && !intent.locations?.length && intent.budgetMin == null && intent.budgetMax == null && intent.bedrooms == null && !intent.propertyTypes?.length && intent.builtUpAreaMin == null && intent.minimumArea == null && !intent.aggregationDimension && !intent.inventoryMarket) return null;
+    if (intent.extractionDegraded && !intent.searchRelaxationAuthorized && !intent.locations?.length && intent.budgetMin == null && intent.budgetMax == null && intent.bedrooms == null && !intent.propertyTypes?.length && intent.builtUpAreaMin == null && intent.minimumArea == null && !intent.aggregationDimension && !intent.inventoryMarket) return null;
     const locationIds = await this.resolveLocations(intent.locations);
     if (intent.locations?.length && !locationIds.length) return null;
     const rejectedLocationIds = await this.resolveLocations(intent.rejectedLocations);
@@ -255,6 +255,7 @@ export class PropertySearchService {
       preferredPaymentDurationMonths: intent.preferredPaymentDurationMonths ?? null,
       maxDownPayment: intent.maxDownPayment ?? null,
       maxMonthlyInstallment: intent.maxMonthlyInstallment ?? null,
+      queryObjective: intent.queryObjective ?? "BEST_MATCH",
       proximityPreferences: intent.proximityPreferences ?? [],
     };
   }
@@ -351,7 +352,7 @@ export class PropertySearchService {
     const raw = await (this.cache?.getOrLoad("property-search-v3", cacheKey, 20_000, loader) ?? loader());
     const withPlans = await this.attachEffectivePaymentPlans(raw as any[], intent);
     const units = await this.attachEffectiveMedia(withPlans);
-    return units.map(unit => {
+    const ranked = units.map(unit => {
       let score = 40;
       const reasons: string[] = ["currently available"];
       if (intent.bedrooms != null && unit.bedrooms === intent.bedrooms) { score += 14; reasons.push("bedroom match"); }
@@ -367,7 +368,13 @@ export class PropertySearchService {
         if (intent.maxMonthlyInstallment != null && unit.bestPaymentPlan.monthlyEquivalent != null && unit.bestPaymentPlan.monthlyEquivalent <= intent.maxMonthlyInstallment) { score += 7; reasons.push("monthly installment match"); }
       }
       return { ...unit, closestGate: closestGate(unit as any), matchScore: Math.max(0, Math.min(100, score)), matchReasons: [...new Set(reasons)] };
-    }).sort((a, b) => b.matchScore - a.matchScore || Number(a.price ?? Number.MAX_SAFE_INTEGER) - Number(b.price ?? Number.MAX_SAFE_INTEGER)).slice(0, limit);
+    });
+    ranked.sort((a, b) => {
+      if (intent.queryObjective === "CHEAPEST") return Number(a.price ?? Number.MAX_SAFE_INTEGER) - Number(b.price ?? Number.MAX_SAFE_INTEGER) || b.matchScore - a.matchScore;
+      if (intent.queryObjective === "MOST_EXPENSIVE") return Number(b.price ?? Number.MIN_SAFE_INTEGER) - Number(a.price ?? Number.MIN_SAFE_INTEGER) || b.matchScore - a.matchScore;
+      return b.matchScore - a.matchScore || Number(a.price ?? Number.MAX_SAFE_INTEGER) - Number(b.price ?? Number.MAX_SAFE_INTEGER);
+    });
+    return ranked.slice(0, limit);
   }
 
   async getProperty(id: string) { const unit = await this.prisma.unit.findUnique({ where: { id }, include: { developer: true, project: { include: { location: true, developer: true, gates: { where: { isActive: true } } } }, phaseRef: true, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } }, paymentPlans: { where: { isActive: true } }, offers: true, media: true, priceHistory: { orderBy: { effectiveAt: "desc" } } } }); if (!unit) throw new NotFoundException("Property not found"); const withPlans = await this.attachEffectivePaymentPlans([unit]); return (await this.attachEffectiveMedia(withPlans))[0]; }

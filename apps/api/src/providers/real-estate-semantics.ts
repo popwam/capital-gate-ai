@@ -1,4 +1,5 @@
 import { StructuredIntent } from "./ai-provider";
+import { applyConstraintOperations, inferConstraintOperations, queryObjective } from "./constraint-lifecycle";
 
 const arabicDigits: Record<string, string> = { "٠":"0", "١":"1", "٢":"2", "٣":"3", "٤":"4", "٥":"5", "٦":"6", "٧":"7", "٨":"8", "٩":"9" };
 const numberText = (value: string) => value.replace(/[٠-٩]/g, (digit) => arabicDigits[digit]);
@@ -6,6 +7,11 @@ const numberText = (value: string) => value.replace(/[٠-٩]/g, (digit) => arabi
 export function normalizeRealEstateSemantics(source: string, extracted: StructuredIntent, previous: StructuredIntent): StructuredIntent {
   const text = numberText(source.toLowerCase()).replace(/م²|م٢/g, "متر");
   const next: StructuredIntent = { ...previous, ...extracted, requestedMedia: extracted.requestedMedia, exactRouteRequested: extracted.exactRouteRequested, routeOrigin: extracted.routeOrigin, routeDestination: extracted.routeDestination, temporaryIntent: undefined, aggregationDimension: undefined };
+  const operations = [...(extracted.constraintOperations ?? []), ...inferConstraintOperations(source)];
+  applyConstraintOperations(next, operations);
+  delete next.constraintOperations;
+  next.searchRelaxationAuthorized = operations.length ? true : undefined;
+  next.queryObjective = queryObjective(source) ?? next.queryObjective;
 
   const explicitResale = /(?:ريسيل|ري\s*سيل|إعادة\s*بيع|اعادة\s*بيع|resale|secondary\s*market)/iu.test(text);
   const explicitPrimary = /(?:primary|من\s+المطور|بيع\s+أول|بيع\s+اول|أول\s+بيع|اول\s+بيع|new\s+from\s+(?:the\s+)?developer)/iu.test(text);

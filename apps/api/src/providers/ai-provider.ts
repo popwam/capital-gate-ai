@@ -31,6 +31,15 @@ export type PresentationState = {
   conversationClosedReason?: string;
 };
 
+export type SearchConstraint =
+  | "BUDGET" | "PURPOSE" | "PROPERTY_TYPE" | "LOCATION" | "BEDROOMS"
+  | "AREA" | "PROJECT" | "DEVELOPER" | "PAYMENT" | "DELIVERY" | "PROXIMITY";
+
+export type ConstraintOperation = {
+  operation: "REMOVE" | "RESET" | "BROADEN";
+  constraint: SearchConstraint | "SEARCH";
+};
+
 export type StructuredIntent = {
   language: string;
   dialect?: "EGYPTIAN_ARABIC" | "MSA" | "ENGLISH" | "MIXED";
@@ -98,6 +107,11 @@ export type StructuredIntent = {
   investmentRequirements?: string[];
   customerConcerns?: string[];
   extractionDegraded?: boolean;
+  /** Current-turn patch metadata. Applied before persistence, then discarded. */
+  constraintOperations?: ConstraintOperation[];
+  queryObjective?: "CHEAPEST" | "MOST_EXPENSIVE" | "BEST_MATCH";
+  /** Current-turn deterministic permission; reset on the next semantic merge. */
+  searchRelaxationAuthorized?: boolean;
 };
 
 export type AIContextKind = "PROPERTY_SEARCH" | "PROJECT_DETAILS" | "DEVELOPER_HISTORY" | "INVESTMENT" | "RESALE" | "RENTAL" | "AMENITIES" | "MEDIA_REQUEST" | "BROCHURE_REQUEST" | "DISTANCE" | "COMPARISON" | "AGGREGATION";

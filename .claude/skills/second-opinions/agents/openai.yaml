@@ -1,9 +1,0 @@
-interface:
-  display_name: "Second Opinions"
-  short_description: "Get validation from a different AI model before committing major changes — detects available LLM CLIs and routes to the best one."
-  icon_small: "./assets/icon.svg"
-  icon_large: "./assets/icon.svg"
-  brand_color: "#4F46E5"
-  default_prompt: "Run a bounded independent review of the complete requested worktree or diff and summarize actionable findings."
-policy:
-  allow_implicit_invocation: true

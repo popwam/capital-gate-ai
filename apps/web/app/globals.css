@@ -264,9 +264,8 @@ input, textarea { text-align: start; }
 
 /* Message role distinction */
 .message-user {
-  background: linear-gradient(135deg, var(--surface-raised) 0%, #fdfcf8 100%);
-  border: 1px solid var(--border-subtle);
-  box-shadow: var(--shadow-sm);
+  background: var(--surface-raised);
+  color: var(--ink-primary);
 }
 
 .message-assistant {
@@ -276,17 +275,42 @@ input, textarea { text-align: start; }
 
 /* Assistant avatar subtle glow */
 .avatar-assistant {
-  box-shadow: 0 0 0 3px rgba(23, 63, 59, 0.08);
+  background: var(--surface-raised);
+  color: var(--accent-warm);
 }
 
 
 /* Cg Ai mobile-first surface helpers */
 .cg-surface {
-  background:
-    radial-gradient(circle at 18% 0%, rgba(202, 224, 215, .40), transparent 34%),
-    radial-gradient(circle at 92% 18%, rgba(207, 176, 116, .13), transparent 26%),
-    var(--surface-base);
+  background: var(--surface-base);
 }
+
+.cg-chat {
+  --surface-base: #0d1413;
+  --surface-raised: #1a2522;
+  --surface-overlay: #111a18;
+  --surface-inset: #16201e;
+  --glass-base: rgba(20, 30, 28, .92);
+  --glass-strong: rgba(13, 20, 19, .94);
+  --border-default: #30403b;
+  --border-subtle: #202d29;
+  --border-focus: #718f86;
+  --ink-primary: #f1f5f3;
+  --ink-secondary: #b5c1bc;
+  --ink-tertiary: #84938d;
+  --forest: #4f8e80;
+  --accent: #3f766b;
+  --accent-warm: #d1b273;
+  --success: #65c797;
+  color: var(--ink-primary);
+}
+
+.cg-chat input::placeholder,
+.cg-chat textarea::placeholder { color: #82908b; opacity: 1; }
+
+.cg-chat .typing-dot { background: var(--accent-warm); }
+
+.cg-chat .conversation-active::before { background: var(--accent-warm); }
 
 .cg-glass {
   background: var(--glass-base);

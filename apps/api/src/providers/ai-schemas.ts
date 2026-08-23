@@ -179,6 +179,11 @@ export const StructuredIntentSchema = z.object({
   investmentRequirements: z.array(z.string()).optional(),
   customerConcerns: z.array(z.string()).optional(),
   extractionDegraded: z.boolean().optional(),
+  constraintOperations: z.array(z.object({
+    operation: z.enum(["REMOVE", "RESET", "BROADEN"]),
+    constraint: z.enum(["BUDGET", "PURPOSE", "PROPERTY_TYPE", "LOCATION", "BEDROOMS", "AREA", "PROJECT", "DEVELOPER", "PAYMENT", "DELIVERY", "PROXIMITY", "SEARCH"]),
+  })).optional(),
+  queryObjective: z.enum(["CHEAPEST", "MOST_EXPENSIVE", "BEST_MATCH"]).optional(),
 });
 
 // ============================================================================

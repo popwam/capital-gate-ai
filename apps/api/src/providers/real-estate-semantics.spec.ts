@@ -1,6 +1,15 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import { normalizeRealEstateSemantics } from "./real-estate-semantics";
+import { deterministicIntent } from "./deterministic-intent";
+import { applyDeterministicTurnSemantics, planCustomerTurn } from "../customer-turn-planner";
+import { StructuredIntent } from "./ai-provider";
+
+function turn(previous: StructuredIntent, source: string) {
+  const plan = planCustomerTurn(source, previous);
+  const extracted = normalizeRealEstateSemantics(source, deterministicIntent([{ role: "user", content: source }], previous), previous);
+  return applyDeterministicTurnSemantics(source, extracted, previous, plan);
+}
 
 test("Egyptian unit-area requirements are deterministic and remain across aggregation turns", () => {
   const first = normalizeRealEstateSemantics("عاوز بيت مساحته فوق 100 متر", { language: "ar-EG" }, { language: "ar-EG" });
@@ -41,4 +50,67 @@ test("30 natural Egyptian and mixed aggregation evaluations distinguish dimensio
     const result = normalizeRealEstateSemantics(message, { language: "ar-EG" }, { language: "ar-EG" });
     assert.equal(result.aggregationDimension, expected, message);
   }
+});
+
+test("the reported multi-turn budget and investment lifecycle never revives removed state", () => {
+  let state: StructuredIntent = { language: "ar-EG" };
+  state = turn(state, "بفكر في حاجة بين 4 - 6 مليون تكون استثمارية");
+  assert.equal(state.budgetMin, 4_000_000);
+  assert.equal(state.budgetMax, 6_000_000);
+  assert.equal(state.purpose, "INVESTMENT");
+
+  state = turn(state, "لا ارخص من كدا اقل من 5 مليون");
+  assert.equal(state.budgetMax, 5_000_000);
+  assert.equal(state.purpose, "INVESTMENT");
+
+  state = turn(state, "الغي الاستثمار مش لازم استثماري");
+  assert.equal(state.purpose, undefined);
+  assert.equal(state.budgetMax, 5_000_000, "removing purpose preserves the unrelated budget");
+
+  state = turn(state, "الغي الشرط ال 5 م");
+  assert.equal(state.budgetMin, undefined);
+  assert.equal(state.budgetMax, undefined);
+  assert.equal(state.priceMax, undefined);
+
+  state = turn(state, "ارخص وحدة عندك نوعها اي");
+  assert.equal(state.queryObjective, "CHEAPEST");
+  assert.equal(state.propertyTypes, undefined);
+  assert.equal(state.budgetMax, undefined);
+});
+
+test("Egyptian removal variants are semantic operations and preserve unrelated constraints", () => {
+  const previous: StructuredIntent = { language: "ar-EG", budgetMax: 5_000_000, priceMax: 5_000_000, purpose: "INVESTMENT", locations: ["التجمع"], propertyTypes: ["Apartment"] };
+  for (const source of ["الغي شرط السعر", "شيل الميزانية", "انس الميزانية", "فكك من الميزانية", "السعر مش مهم", "أي سعر"]) {
+    const result = turn(previous, source);
+    assert.equal(result.budgetMax, undefined, source);
+    assert.equal(result.locations?.[0], "التجمع", source);
+    assert.equal(result.purpose, "INVESTMENT", source);
+  }
+  for (const source of ["الغي الاستثمار", "مش لازم استثماري", "شيل شرط الاستثمار", "مش مهم النوع", "أي نوع"]) {
+    const result = turn(previous, source);
+    if (/الاستثمار|استثماري/u.test(source)) assert.equal(result.purpose, undefined, source);
+    else assert.equal(result.propertyTypes, undefined, source);
+    assert.equal(result.budgetMax, 5_000_000, source);
+  }
+});
+
+test("explicit broadening relaxes search state while ordinary follow-ups never do", () => {
+  const previous: StructuredIntent = { language: "ar-EG", budgetMax: 5_000_000, priceMax: 5_000_000, purpose: "INVESTMENT", propertyTypes: ["Apartment"] };
+  const preserved = turn(previous, "طب وريني المتاح");
+  assert.equal(preserved.budgetMax, 5_000_000);
+  assert.equal(preserved.purpose, "INVESTMENT");
+
+  const broadened = turn(previous, "وسع البحث");
+  assert.equal(broadened.budgetMax, undefined);
+  assert.equal(broadened.purpose, undefined);
+  assert.deepEqual(broadened.propertyTypes, ["Apartment"]);
+});
+
+test("no-match confirmation applies the offered widening to persisted effective state", () => {
+  const previous: StructuredIntent = { language: "ar-EG", budgetMax: 5_000_000, priceMax: 5_000_000, presentation: { awaitingConfirmation: true, lastOfferedAction: "SEARCH_WIDEN" } };
+  const plan = planCustomerTurn("أيوه", previous);
+  const result = applyDeterministicTurnSemantics("أيوه", previous, previous, plan);
+  assert.equal(plan.widenSearch, true);
+  assert.equal(result.budgetMax, undefined);
+  assert.equal(result.priceMax, undefined);
 });

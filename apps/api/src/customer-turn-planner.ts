@@ -1,4 +1,5 @@
 import { CustomerTurnIntent, PresentationState, StructuredIntent } from "./providers/ai-provider";
+import { applyConstraintOperations, inferConstraintOperations, queryObjective } from "./providers/constraint-lifecycle";
 
 export type UIActionType = "PROPERTY_CARDS" | "PROJECT_PHOTOS" | "PROJECT_BROCHURE" | "PROJECT_LOCATION" | "DISTANCE_RESULT" | "VIEWING_REQUEST" | "CONTACT_REQUEST" | "PAYMENT_CHOICES" | "CONVERSATION_CLOSED";
 export type UIAction = { type: UIActionType; payload: Record<string, unknown> };
@@ -126,6 +127,9 @@ export function planCustomerTurn(source: string, previous: StructuredIntent): Tu
   if (/(?:نظام\s+السداد|خطه\s+السداد|خطة\s+السداد|تقسيط|قسط|مقدم|كاش|نقدي|cash|payment plan|installments?)/iu.test(text))
     return { intent: "PAYMENT_PLAN", requiresDatabase: true, requiresExtraction: false, emitCards: false, executeBrochure: false, exactUnitId: unitId };
 
+  if (inferConstraintOperations(source).length || queryObjective(source))
+    return { intent: previous.presentation?.searchCandidateIds?.length ? "PROPERTY_REFINEMENT" : "PROPERTY_SEARCH", requiresDatabase: true, requiresExtraction: true, emitCards: false, executeBrochure: false };
+
   if (/(?:متاحه|متاح|availability|available).*(?:وحده|unit)|(?:في|هل).*(?:وحده|unit).*(?:اقل|أقل|under)/iu.test(text))
     return { intent: "AVAILABILITY_CHECK", requiresDatabase: true, requiresExtraction: true, emitCards: false, executeBrochure: false };
 
@@ -166,6 +170,10 @@ function money(value: string) { const n = Number(value.replace(",", ".")); retur
 export function applyDeterministicTurnSemantics(source: string, extracted: StructuredIntent, previous: StructuredIntent, plan: TurnPlan): StructuredIntent {
   const text = normalize(source);
   const next: StructuredIntent = { ...extracted, turnIntent: plan.intent, presentation: previous.presentation ?? {} };
+  if (plan.widenSearch) {
+    applyConstraintOperations(next, [{ operation: "BROADEN", constraint: "SEARCH" }]);
+    next.searchRelaxationAuthorized = true;
+  }
   const hasArabic = /[\u0600-\u06ff]/u.test(source);
   const hasLatin = /[a-z]/iu.test(source);
   if (hasArabic && !hasLatin) { next.language = "ar-EG"; next.dialect = "EGYPTIAN_ARABIC"; }

@@ -126,6 +126,16 @@ describe("ai-schemas", () => {
       assert.equal(result.presentation?.selectedProjectId, "proj-123");
       assert.equal(result.presentation?.awaitingConfirmation, true);
     });
+
+    it("should validate explicit constraint lifecycle operations and ranking objectives", () => {
+      const result = validateIntent({
+        language: "ar-EG",
+        constraintOperations: [{ operation: "REMOVE", constraint: "BUDGET" }],
+        queryObjective: "CHEAPEST",
+      });
+      assert.equal(result.constraintOperations?.[0]?.constraint, "BUDGET");
+      assert.equal(result.queryObjective, "CHEAPEST");
+    });
   });
 
   describe("validateKnowledge", () => {

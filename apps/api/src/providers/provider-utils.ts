@@ -1,5 +1,5 @@
 import { ServiceUnavailableException } from "@nestjs/common";
-import { ProximityPreference, StructuredIntent } from "./ai-provider";
+import { ConstraintOperation, ProximityPreference, StructuredIntent } from "./ai-provider";
 export { advisorMessages } from "./ai-context";
 
 export type ProviderName = "workers" | "groq" | "openai";
@@ -35,6 +35,13 @@ export function sanitizeIntent(raw:Record<string,unknown>,previous:StructuredInt
   const boolean=(key:string)=>typeof raw[key]==="boolean"?Boolean(raw[key]):undefined;
   const texts=(key:string)=>Array.isArray(raw[key])?(raw[key] as unknown[]).filter((v):v is string=>typeof v==="string").slice(0,30):undefined;
   const oneOf=<T extends string>(key:string,values:readonly T[])=>values.includes(raw[key] as T)?raw[key] as T:undefined;
+  const operations = Array.isArray(raw.constraintOperations) ? raw.constraintOperations.flatMap((item): ConstraintOperation[] => {
+    if (!item || typeof item !== "object") return [];
+    const value = item as Record<string,unknown>;
+    const operation = oneOfValue(value.operation,["REMOVE","RESET","BROADEN"] as const);
+    const constraint = oneOfValue(value.constraint,["BUDGET","PURPOSE","PROPERTY_TYPE","LOCATION","BEDROOMS","AREA","PROJECT","DEVELOPER","PAYMENT","DELIVERY","PROXIMITY","SEARCH"] as const);
+    return operation && constraint ? [{ operation, constraint }] : [];
+  }).slice(0,20) : undefined;
   return{
     ...previous,
     language:text("language")??previous.language??"ar-EG",
@@ -91,8 +98,11 @@ export function sanitizeIntent(raw:Record<string,unknown>,previous:StructuredInt
     investmentRequirements:texts("investmentRequirements")??previous.investmentRequirements,
     customerConcerns:texts("customerConcerns")??previous.customerConcerns,
     externalUnitId:text("externalUnitId")??previous.externalUnitId,
-    extractionDegraded:false
+    extractionDegraded:false,
+    constraintOperations:operations,
+    queryObjective:oneOf("queryObjective",["CHEAPEST","MOST_EXPENSIVE","BEST_MATCH"] as const)??previous.queryObjective
   };
 }
+function oneOfValue<T extends string>(value:unknown,values:readonly T[]){return values.includes(value as T)?value as T:undefined;}
 export async function checkedJson(response:Response,provider:ProviderName){if(!response.ok){const retryable=response.status===408||response.status===409||response.status===429||response.status>=500;throw new AIUpstreamError(provider,`HTTP_${response.status}`,response.status,retryable);}return response.json() as Promise<Record<string,any>>;}
 export function unavailable(provider:ProviderName,error:unknown):never{const upstream=error instanceof AIUpstreamError?error:new AIUpstreamError(provider,"NETWORK",undefined,true);throw new ServiceUnavailableException({code:"AI_TEMPORARILY_UNAVAILABLE",provider,category:upstream.code,upstreamStatus:upstream.status,safe:true});}

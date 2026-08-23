@@ -136,8 +136,8 @@ export class DeterministicAnswerService {
         location ? (ar ? `في ${location}` : `in ${location}`) : null,
       ].filter(Boolean).join(ar ? " · " : " · ");
       return ar
-        ? `مفيش اختيار موثق مطابق${constraints ? ` لـ ${constraints}` : " للشروط دي"} حاليًا. مش هوسع البحث أو أغير نوع الوحدة من نفسي؛ لو تحب نغيّر شرط واحد قولي أنهي واحد.`
-        : `There is no verified option matching${constraints ? ` ${constraints}` : " those constraints"} right now. I won't widen the search or change the property type on my own; tell me which one condition you want to relax.`;
+        ? `تحت الشروط الحالية${constraints ? ` (${constraints})` : ""} مش ظاهر عندي اختيار موثق. أقدر أوسع النطاق لو تحب، أو تشيل شرط محدد زي السعر أو النوع.`
+        : `There is no verified option matching the current constraints${constraints ? ` (${constraints})` : ""}. I can widen the scope if you want, or you can remove a specific condition such as price or type.`;
     }
 
     return undefined;
