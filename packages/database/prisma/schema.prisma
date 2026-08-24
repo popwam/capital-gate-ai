@@ -94,30 +94,30 @@ enum LeadStatus {
 }
 
 model Location {
-  id            String             @id @default(cuid())
-  type          LocationType
-  name          String
-  canonicalName String?
-  nameAr        String?
-  nameEn        String?
-  formattedAddress String?
-  source        String?
-  slug          String             @unique
-  parentId      String?
-  parent        Location?          @relation("LocationTree", fields: [parentId], references: [id])
-  children      Location[]         @relation("LocationTree")
-  latitude      Decimal?           @db.Decimal(10, 7)
-  longitude     Decimal?           @db.Decimal(10, 7)
-  googlePlaceId String?
-  aliases       LocationAlias[]
-  distancesFrom LocationDistance[] @relation("DistanceFrom")
-  distancesTo   LocationDistance[] @relation("DistanceTo")
-  projects      Project[]
-  importSheets  ImportSheet[]
+  id                String                      @id @default(cuid())
+  type              LocationType
+  name              String
+  canonicalName     String?
+  nameAr            String?
+  nameEn            String?
+  formattedAddress  String?
+  source            String?
+  slug              String                      @unique
+  parentId          String?
+  parent            Location?                   @relation("LocationTree", fields: [parentId], references: [id])
+  children          Location[]                  @relation("LocationTree")
+  latitude          Decimal?                    @db.Decimal(10, 7)
+  longitude         Decimal?                    @db.Decimal(10, 7)
+  googlePlaceId     String?
+  aliases           LocationAlias[]
+  distancesFrom     LocationDistance[]          @relation("DistanceFrom")
+  distancesTo       LocationDistance[]          @relation("DistanceTo")
+  projects          Project[]
+  importSheets      ImportSheet[]
   portfolioProjects DeveloperProjectPortfolio[]
-  projectLandmarks ProjectLandmark[]
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
+  projectLandmarks  ProjectLandmark[]
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
 
   @@index([parentId, type])
 }
@@ -137,17 +137,17 @@ model LocationAlias {
 }
 
 model LocationDistance {
-  id               String    @id @default(cuid())
-  fromLocationId   String
-  toLocationId     String
-  from             Location  @relation("DistanceFrom", fields: [fromLocationId], references: [id])
-  to               Location  @relation("DistanceTo", fields: [toLocationId], references: [id])
-  distanceKm       Decimal   @db.Decimal(8, 2)
-  estimatedMinutes Int?
-  distanceType     String    @default("ADMIN_VERIFIED")
-  notes            String?
-  isBidirectional  Boolean   @default(true)
-  verifiedAt       DateTime?
+  id                String     @id @default(cuid())
+  fromLocationId    String
+  toLocationId      String
+  from              Location   @relation("DistanceFrom", fields: [fromLocationId], references: [id])
+  to                Location   @relation("DistanceTo", fields: [toLocationId], references: [id])
+  distanceKm        Decimal    @db.Decimal(8, 2)
+  estimatedMinutes  Int?
+  distanceType      String     @default("ADMIN_VERIFIED")
+  notes             String?
+  isBidirectional   Boolean    @default(true)
+  verifiedAt        DateTime?
   verifiedByAdminId String?
   verifiedBy        AdminUser? @relation(fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
 
@@ -155,125 +155,125 @@ model LocationDistance {
 }
 
 model Developer {
-  id          String       @id @default(cuid())
-  name        String
-  slug        String       @unique
-  description String?
-  canonicalName String?
-  nameAr String?
-  nameEn String?
-  shortName String?
-  brandName String?
-  logoUrl String?
-  coverImageUrl String?
-  website String?
-  foundedYear Int?
-  headquarters String?
-  country String?
-  developerType String?
-  salesPhone String?
-  email String?
-  socialLinks Json?
-  shortDescriptionAr String?
-  shortDescriptionEn String?
-  fullDescriptionAr String?
-  fullDescriptionEn String?
-  yearsInMarket Int?
-  deliveredProjectsCount Int?
+  id                             String                      @id @default(cuid())
+  name                           String
+  slug                           String                      @unique
+  description                    String?
+  canonicalName                  String?
+  nameAr                         String?
+  nameEn                         String?
+  shortName                      String?
+  brandName                      String?
+  logoUrl                        String?
+  coverImageUrl                  String?
+  website                        String?
+  foundedYear                    Int?
+  headquarters                   String?
+  country                        String?
+  developerType                  String?
+  salesPhone                     String?
+  email                          String?
+  socialLinks                    Json?
+  shortDescriptionAr             String?
+  shortDescriptionEn             String?
+  fullDescriptionAr              String?
+  fullDescriptionEn              String?
+  yearsInMarket                  Int?
+  deliveredProjectsCount         Int?
   projectsUnderConstructionCount Int?
-  geographicFocus String[]
-  specialties String[]
-  sourceMetadata Json?
-  projects    Project[]
-  units       Unit[]
-  media       Media[]
-  documents   Document[]
-  imports     DataImport[]
-  importSheets ImportSheet[]
-  portfolioProjects DeveloperProjectPortfolio[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  geographicFocus                String[]
+  specialties                    String[]
+  sourceMetadata                 Json?
+  projects                       Project[]
+  units                          Unit[]
+  media                          Media[]
+  documents                      Document[]
+  imports                        DataImport[]
+  importSheets                   ImportSheet[]
+  portfolioProjects              DeveloperProjectPortfolio[]
+  createdAt                      DateTime                    @default(now())
+  updatedAt                      DateTime                    @updatedAt
 }
 
 model Project {
-  id                  String                 @id @default(cuid())
-  developerId         String
-  developer           Developer              @relation(fields: [developerId], references: [id])
-  locationId          String?
-  location            Location?              @relation(fields: [locationId], references: [id])
-  name                String
-  canonicalName       String?
-  nameAr              String?
-  nameEn              String?
-  slug                String                 @unique
-  shortDescription    String?
-  description         String?
-  shortDescriptionAr  String?
-  shortDescriptionEn  String?
-  fullDescriptionAr   String?
-  fullDescriptionEn   String?
-  adminStatus         String                 @default("DRAFT")
-  launchDate          DateTime?
-  launchYear          Int?
-  officialWebsite     String?
-  formattedAddress    String?
-  googlePlaceId       String?
-  latitude            Decimal?               @db.Decimal(10, 7)
-  longitude           Decimal?               @db.Decimal(10, 7)
-  boundaryGeoJson     Json?
-  boundarySource      String?
-  boundaryConfirmedAt DateTime?
+  id                         String                    @id @default(cuid())
+  developerId                String
+  developer                  Developer                 @relation(fields: [developerId], references: [id])
+  locationId                 String?
+  location                   Location?                 @relation(fields: [locationId], references: [id])
+  name                       String
+  canonicalName              String?
+  nameAr                     String?
+  nameEn                     String?
+  slug                       String                    @unique
+  shortDescription           String?
+  description                String?
+  shortDescriptionAr         String?
+  shortDescriptionEn         String?
+  fullDescriptionAr          String?
+  fullDescriptionEn          String?
+  adminStatus                String                    @default("DRAFT")
+  launchDate                 DateTime?
+  launchYear                 Int?
+  officialWebsite            String?
+  formattedAddress           String?
+  googlePlaceId              String?
+  latitude                   Decimal?                  @db.Decimal(10, 7)
+  longitude                  Decimal?                  @db.Decimal(10, 7)
+  boundaryGeoJson            Json?
+  boundarySource             String?
+  boundaryConfirmedAt        DateTime?
   boundaryConfirmedByAdminId String?
-  boundaryConfirmedBy AdminUser?             @relation("ProjectBoundaryConfirmation", fields: [boundaryConfirmedByAdminId], references: [id], onDelete: SetNull)
-  masterPlanCalibration Json?
-  projectStatus       String?
-  projectType         String?
-  projectTypes        String[]               @default([])
-  deliveryInformation String?
-  deliveryStatus      String?
-  deliveryStatuses    String[]               @default([])
-  deliveryDate        DateTime?
-  deliveryYear        Int?
-  finishingOptions    String[]
-  totalLandArea       Decimal?               @db.Decimal(14, 2)
-  builtUpPercentage   Decimal?               @db.Decimal(7, 4)
-  numberOfPhases      Int?
-  totalUnits          Int?
-  densityDescription  String?
-  gatedCommunity      Boolean?
-  unitTypes           String[]
-  minArea             Decimal?               @db.Decimal(10, 2)
-  maxArea             Decimal?               @db.Decimal(10, 2)
-  minBedrooms         Int?
-  maxBedrooms         Int?
-  priceSummary        String?
-  paymentSummary      String?
-  maintenanceSummary  String?
-  clubFeesSummary     String?
-  customerFit         String[]
-  sourceMetadata      Json?
-  units               Unit[]
-  knowledge           ProjectKnowledge[]
-  knowledgeItems      ProjectKnowledgeItem[]
-  media               Media[]
-  mediaRules          UnitMediaRule[]
-  documents           Document[]
-  imports             DataImport[]
-  importSheets        ImportSheet[]
-  paymentPlans        PaymentPlan[]
-  amenities           ProjectAmenity[]
-  gates               ProjectGate[]
-  zones               ProjectZone[]
-  buildings           ProjectBuilding[]
-  phases              ProjectPhase[]
-  phaseAliases        ProjectPhaseAlias[]
-  marketProfiles      MarketProfile[]
-  investmentProfile   ProjectInvestmentProfile?
-  landmarks           ProjectLandmark[]
-  competitorsFrom     ProjectCompetitor[]    @relation("CompetitorFrom")
-  competitorsTo       ProjectCompetitor[]    @relation("CompetitorTo")
-  createdAt           DateTime               @default(now())
-  updatedAt           DateTime               @updatedAt
+  boundaryConfirmedBy        AdminUser?                @relation("ProjectBoundaryConfirmation", fields: [boundaryConfirmedByAdminId], references: [id], onDelete: SetNull)
+  masterPlanCalibration      Json?
+  projectStatus              String?
+  projectType                String?
+  projectTypes               String[]                  @default([])
+  deliveryInformation        String?
+  deliveryStatus             String?
+  deliveryStatuses           String[]                  @default([])
+  deliveryDate               DateTime?
+  deliveryYear               Int?
+  finishingOptions           String[]
+  totalLandArea              Decimal?                  @db.Decimal(14, 2)
+  builtUpPercentage          Decimal?                  @db.Decimal(7, 4)
+  numberOfPhases             Int?
+  totalUnits                 Int?
+  densityDescription         String?
+  gatedCommunity             Boolean?
+  unitTypes                  String[]
+  minArea                    Decimal?                  @db.Decimal(10, 2)
+  maxArea                    Decimal?                  @db.Decimal(10, 2)
+  minBedrooms                Int?
+  maxBedrooms                Int?
+  priceSummary               String?
+  paymentSummary             String?
+  maintenanceSummary         String?
+  clubFeesSummary            String?
+  customerFit                String[]
+  sourceMetadata             Json?
+  units                      Unit[]
+  knowledge                  ProjectKnowledge[]
+  knowledgeItems             ProjectKnowledgeItem[]
+  media                      Media[]
+  mediaRules                 UnitMediaRule[]
+  documents                  Document[]
+  imports                    DataImport[]
+  importSheets               ImportSheet[]
+  paymentPlans               PaymentPlan[]
+  amenities                  ProjectAmenity[]
+  gates                      ProjectGate[]
+  zones                      ProjectZone[]
+  buildings                  ProjectBuilding[]
+  phases                     ProjectPhase[]
+  phaseAliases               ProjectPhaseAlias[]
+  marketProfiles             MarketProfile[]
+  investmentProfile          ProjectInvestmentProfile?
+  landmarks                  ProjectLandmark[]
+  competitorsFrom            ProjectCompetitor[]       @relation("CompetitorFrom")
+  competitorsTo              ProjectCompetitor[]       @relation("CompetitorTo")
+  createdAt                  DateTime                  @default(now())
+  updatedAt                  DateTime                  @updatedAt
 
   @@unique([developerId, name])
   @@index([locationId])
@@ -293,45 +293,45 @@ model ProjectKnowledge {
 }
 
 model ProjectKnowledgeItem {
-  id               String         @id @default(cuid())
-  projectId        String
-  project          Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  category         String
-  content          String
-  sourceDocumentId String?
-  sourceDocument   Document?      @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
-  sourceText       String?
-  confidence       Decimal?       @db.Decimal(4, 3)
-  approvalStatus   ApprovalStatus @default(PENDING)
+  id                String         @id @default(cuid())
+  projectId         String
+  project           Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category          String
+  content           String
+  sourceDocumentId  String?
+  sourceDocument    Document?      @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+  sourceText        String?
+  confidence        Decimal?       @db.Decimal(4, 3)
+  approvalStatus    ApprovalStatus @default(PENDING)
   approvedByAdminId String?
-  approvedBy       AdminUser?     @relation(fields: [approvedByAdminId], references: [id], onDelete: SetNull)
-  approvedAt       DateTime?
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  approvedBy        AdminUser?     @relation(fields: [approvedByAdminId], references: [id], onDelete: SetNull)
+  approvedAt        DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
 
   @@index([projectId, approvalStatus, category])
 }
 
 model ProjectPhase {
-  id                     String            @id @default(cuid())
+  id                     String              @id @default(cuid())
   projectId              String
-  project                Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project                Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
   code                   String?
   name                   String
   nameAr                 String?
   nameEn                 String?
-  sortOrder              Int               @default(0)
+  sortOrder              Int                 @default(0)
   launchYear             Int?
   deliveryYear           Int?
   status                 String?
-  deliveryStatuses       String[]          @default([])
-  projectTypes           String[]          @default([])
-  constructionPercentage Decimal?          @db.Decimal(7, 4)
-  unitTypes              String[]          @default([])
-  finishingOptions       String[]          @default([])
-  customerFit            String[]          @default([])
-  minArea                Decimal?          @db.Decimal(10, 2)
-  maxArea                Decimal?          @db.Decimal(10, 2)
+  deliveryStatuses       String[]            @default([])
+  projectTypes           String[]            @default([])
+  constructionPercentage Decimal?            @db.Decimal(7, 4)
+  unitTypes              String[]            @default([])
+  finishingOptions       String[]            @default([])
+  customerFit            String[]            @default([])
+  minArea                Decimal?            @db.Decimal(10, 2)
+  maxArea                Decimal?            @db.Decimal(10, 2)
   minBedrooms            Int?
   maxBedrooms            Int?
   descriptionAr          String?
@@ -351,8 +351,8 @@ model ProjectPhase {
   marketProfiles         MarketProfile[]
   importSheets           ImportSheet[]
   aliases                ProjectPhaseAlias[]
-  createdAt              DateTime          @default(now())
-  updatedAt              DateTime          @updatedAt
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
 
   @@unique([projectId, name])
   @@index([projectId, sortOrder])
@@ -405,71 +405,71 @@ model MarketProfile {
 }
 
 model Unit {
-  id                    String             @id @default(cuid())
-  externalUnitId        String
-  developerId           String
-  developer             Developer          @relation(fields: [developerId], references: [id])
-  projectId             String
-  project               Project            @relation(fields: [projectId], references: [id])
-  phase                 String?
-  phaseId               String?
-  phaseRef              ProjectPhase?        @relation(fields: [phaseId], references: [id], onDelete: SetNull)
-  cluster               String?
-  building              String?
-  floor                 String?
-  unitType              String?
-  unitSubType           String?
-  bedrooms              Int?
-  bathrooms             Int?
-  builtUpArea           Decimal?           @db.Decimal(10, 2)
-  landArea              Decimal?           @db.Decimal(10, 2)
-  gardenArea            Decimal?           @db.Decimal(10, 2)
-  roofArea              Decimal?           @db.Decimal(10, 2)
-  terraceArea           Decimal?           @db.Decimal(10, 2)
-  price                 Decimal?           @db.Decimal(16, 2)
-  currency              String?
-  status                UnitStatus         @default(AVAILABLE)
-  isResale              Boolean            @default(false)
-  deliveryDate          DateTime?
-  deliveryYears         Decimal?           @db.Decimal(4, 1)
-  finishingType         String?
-  downPayment           Decimal?           @db.Decimal(16, 2)
-  installmentYears      Decimal?           @db.Decimal(4, 1)
-  installmentAmount     Decimal?           @db.Decimal(16, 2)
-  maintenance           Decimal?           @db.Decimal(16, 2)
-  clubFees              Decimal?           @db.Decimal(16, 2)
-  discount              Decimal?           @db.Decimal(10, 2)
-  offerText             String?
-  latitude              Decimal?           @db.Decimal(10, 7)
-  longitude             Decimal?           @db.Decimal(10, 7)
-  masterPlanX           Decimal?           @db.Decimal(7, 6)
-  masterPlanY           Decimal?           @db.Decimal(7, 6)
-  masterPlanLocationStatus String           @default("UNLOCATED")
-  masterPlanLocationSource String?
-  masterPlanConfidence  Decimal?           @db.Decimal(4, 3)
-  masterPlanConfirmedAt DateTime?
+  id                           String                   @id @default(cuid())
+  externalUnitId               String
+  developerId                  String
+  developer                    Developer                @relation(fields: [developerId], references: [id])
+  projectId                    String
+  project                      Project                  @relation(fields: [projectId], references: [id])
+  phase                        String?
+  phaseId                      String?
+  phaseRef                     ProjectPhase?            @relation(fields: [phaseId], references: [id], onDelete: SetNull)
+  cluster                      String?
+  building                     String?
+  floor                        String?
+  unitType                     String?
+  unitSubType                  String?
+  bedrooms                     Int?
+  bathrooms                    Int?
+  builtUpArea                  Decimal?                 @db.Decimal(10, 2)
+  landArea                     Decimal?                 @db.Decimal(10, 2)
+  gardenArea                   Decimal?                 @db.Decimal(10, 2)
+  roofArea                     Decimal?                 @db.Decimal(10, 2)
+  terraceArea                  Decimal?                 @db.Decimal(10, 2)
+  price                        Decimal?                 @db.Decimal(16, 2)
+  currency                     String?
+  status                       UnitStatus               @default(AVAILABLE)
+  isResale                     Boolean                  @default(false)
+  deliveryDate                 DateTime?
+  deliveryYears                Decimal?                 @db.Decimal(4, 1)
+  finishingType                String?
+  downPayment                  Decimal?                 @db.Decimal(16, 2)
+  installmentYears             Decimal?                 @db.Decimal(4, 1)
+  installmentAmount            Decimal?                 @db.Decimal(16, 2)
+  maintenance                  Decimal?                 @db.Decimal(16, 2)
+  clubFees                     Decimal?                 @db.Decimal(16, 2)
+  discount                     Decimal?                 @db.Decimal(10, 2)
+  offerText                    String?
+  latitude                     Decimal?                 @db.Decimal(10, 7)
+  longitude                    Decimal?                 @db.Decimal(10, 7)
+  masterPlanX                  Decimal?                 @db.Decimal(7, 6)
+  masterPlanY                  Decimal?                 @db.Decimal(7, 6)
+  masterPlanLocationStatus     String                   @default("UNLOCATED")
+  masterPlanLocationSource     String?
+  masterPlanConfidence         Decimal?                 @db.Decimal(4, 3)
+  masterPlanConfirmedAt        DateTime?
   masterPlanConfirmedByAdminId String?
-  masterPlanConfirmedBy AdminUser?          @relation("MasterPlanUnitConfirmation", fields: [masterPlanConfirmedByAdminId], references: [id], onDelete: SetNull)
-  internalLocationDescription String?
-  projectZoneId         String?
-  projectZone           ProjectZone?        @relation(fields: [projectZoneId], references: [id], onDelete: SetNull)
-  projectBuildingId     String?
-  projectBuilding       ProjectBuilding?    @relation(fields: [projectBuildingId], references: [id], onDelete: SetNull)
-  proximities           UnitProximity[]
-  sourceImportId        String?
-  sourceImport          DataImport?        @relation(fields: [sourceImportId], references: [id], onDelete: SetNull)
-  archivedAt            DateTime?
-  sourceMetadata        Json?
-  importChanges         ImportUnitChange[]
-  correctionChanges     ImportCorrectionChange[]
-  availabilityUpdatedAt DateTime           @default(now())
-  priceHistory          UnitPriceHistory[]
-  paymentPlans          PaymentPlan[]
-  offers                Offer[]
-  media                 Media[]
-  marketProfiles        MarketProfile[]
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
+  masterPlanConfirmedBy        AdminUser?               @relation("MasterPlanUnitConfirmation", fields: [masterPlanConfirmedByAdminId], references: [id], onDelete: SetNull)
+  internalLocationDescription  String?
+  projectZoneId                String?
+  projectZone                  ProjectZone?             @relation(fields: [projectZoneId], references: [id], onDelete: SetNull)
+  projectBuildingId            String?
+  projectBuilding              ProjectBuilding?         @relation(fields: [projectBuildingId], references: [id], onDelete: SetNull)
+  proximities                  UnitProximity[]
+  sourceImportId               String?
+  sourceImport                 DataImport?              @relation(fields: [sourceImportId], references: [id], onDelete: SetNull)
+  archivedAt                   DateTime?
+  sourceMetadata               Json?
+  importChanges                ImportUnitChange[]
+  correctionChanges            ImportCorrectionChange[]
+  availabilityUpdatedAt        DateTime                 @default(now())
+  priceHistory                 UnitPriceHistory[]
+  paymentPlans                 PaymentPlan[]
+  offers                       Offer[]
+  media                        Media[]
+  marketProfiles               MarketProfile[]
+  createdAt                    DateTime                 @default(now())
+  updatedAt                    DateTime                 @updatedAt
 
   @@unique([developerId, projectId, externalUnitId])
   @@index([projectId, status, price, bedrooms])
@@ -480,31 +480,31 @@ model Unit {
 }
 
 model ProjectGate {
-  id            String   @id @default(cuid())
-  projectId     String
-  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  phaseId       String?
-  phase         ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: SetNull)
-  code          String?
-  name          String
-  nameAr        String?
-  nameEn        String?
-  gateNumber    Int?
-  latitude      Decimal? @db.Decimal(10, 7)
-  longitude     Decimal? @db.Decimal(10, 7)
-  masterPlanX   Decimal? @db.Decimal(7, 6)
-  masterPlanY   Decimal? @db.Decimal(7, 6)
-  googlePlaceId String?
-  isMain        Boolean  @default(false)
-  isActive      Boolean  @default(true)
-  notes         String?
-  locationSource String?
-  confirmedAt   DateTime?
+  id                 String          @id @default(cuid())
+  projectId          String
+  project            Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId            String?
+  phase              ProjectPhase?   @relation(fields: [phaseId], references: [id], onDelete: SetNull)
+  code               String?
+  name               String
+  nameAr             String?
+  nameEn             String?
+  gateNumber         Int?
+  latitude           Decimal?        @db.Decimal(10, 7)
+  longitude          Decimal?        @db.Decimal(10, 7)
+  masterPlanX        Decimal?        @db.Decimal(7, 6)
+  masterPlanY        Decimal?        @db.Decimal(7, 6)
+  googlePlaceId      String?
+  isMain             Boolean         @default(false)
+  isActive           Boolean         @default(true)
+  notes              String?
+  locationSource     String?
+  confirmedAt        DateTime?
   confirmedByAdminId String?
-  confirmedBy   AdminUser? @relation("ProjectGateConfirmation", fields: [confirmedByAdminId], references: [id], onDelete: SetNull)
-  proximities   UnitProximity[]
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  confirmedBy        AdminUser?      @relation("ProjectGateConfirmation", fields: [confirmedByAdminId], references: [id], onDelete: SetNull)
+  proximities        UnitProximity[]
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
 
   @@unique([projectId, name])
   @@index([projectId, isActive])
@@ -512,21 +512,21 @@ model ProjectGate {
 }
 
 model ProjectZone {
-  id        String   @id @default(cuid())
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  phaseId   String?
-  phase     ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: SetNull)
+  id                String            @id @default(cuid())
+  projectId         String
+  project           Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId           String?
+  phase             ProjectPhase?     @relation(fields: [phaseId], references: [id], onDelete: SetNull)
   masterPlanPolygon Json?
-  code      String?
-  name      String
-  nameAr    String?
-  nameEn    String?
-  notes     String?
-  units     Unit[]
-  buildings ProjectBuilding[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  code              String?
+  name              String
+  nameAr            String?
+  nameEn            String?
+  notes             String?
+  units             Unit[]
+  buildings         ProjectBuilding[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
   @@unique([projectId, name])
   @@index([projectId])
@@ -534,30 +534,30 @@ model ProjectZone {
 }
 
 model ProjectBuilding {
-  id        String       @id @default(cuid())
-  projectId String
-  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  phaseId   String?
-  phase     ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: SetNull)
-  zoneId    String?
-  zone      ProjectZone? @relation(fields: [zoneId], references: [id], onDelete: SetNull)
-  code      String?
-  name      String
-  nameAr    String?
-  nameEn    String?
-  latitude  Decimal?     @db.Decimal(10, 7)
-  longitude Decimal?     @db.Decimal(10, 7)
-  masterPlanX Decimal?    @db.Decimal(7, 6)
-  masterPlanY Decimal?    @db.Decimal(7, 6)
-  masterPlanPolygon Json?
-  masterPlanLocationSource String?
-  masterPlanConfirmedAt DateTime?
+  id                           String        @id @default(cuid())
+  projectId                    String
+  project                      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  phaseId                      String?
+  phase                        ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: SetNull)
+  zoneId                       String?
+  zone                         ProjectZone?  @relation(fields: [zoneId], references: [id], onDelete: SetNull)
+  code                         String?
+  name                         String
+  nameAr                       String?
+  nameEn                       String?
+  latitude                     Decimal?      @db.Decimal(10, 7)
+  longitude                    Decimal?      @db.Decimal(10, 7)
+  masterPlanX                  Decimal?      @db.Decimal(7, 6)
+  masterPlanY                  Decimal?      @db.Decimal(7, 6)
+  masterPlanPolygon            Json?
+  masterPlanLocationSource     String?
+  masterPlanConfirmedAt        DateTime?
   masterPlanConfirmedByAdminId String?
-  masterPlanConfirmedBy AdminUser? @relation("MasterPlanBuildingConfirmation", fields: [masterPlanConfirmedByAdminId], references: [id], onDelete: SetNull)
-  notes     String?
-  units     Unit[]
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  masterPlanConfirmedBy        AdminUser?    @relation("MasterPlanBuildingConfirmation", fields: [masterPlanConfirmedByAdminId], references: [id], onDelete: SetNull)
+  notes                        String?
+  units                        Unit[]
+  createdAt                    DateTime      @default(now())
+  updatedAt                    DateTime      @updatedAt
 
   @@unique([projectId, name])
   @@index([projectId, zoneId])
@@ -565,24 +565,24 @@ model ProjectBuilding {
 }
 
 model UnitProximity {
-  id               String          @id @default(cuid())
-  unitId           String
-  unit             Unit            @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  targetType       String
-  gateId           String?
-  gate             ProjectGate?    @relation(fields: [gateId], references: [id], onDelete: Cascade)
-  amenityId        String?
-  amenity           Amenity?        @relation(fields: [amenityId], references: [id], onDelete: Cascade)
-  landmarkId       String?
-  landmark          ProjectLandmark? @relation(fields: [landmarkId], references: [id], onDelete: Cascade)
-  distanceMeters   Int?
-  walkingMinutes   Int?
-  drivingMinutes   Int?
-  source           String?
-  verified         Boolean         @default(false)
-  notes            String?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  id             String           @id @default(cuid())
+  unitId         String
+  unit           Unit             @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  targetType     String
+  gateId         String?
+  gate           ProjectGate?     @relation(fields: [gateId], references: [id], onDelete: Cascade)
+  amenityId      String?
+  amenity        Amenity?         @relation(fields: [amenityId], references: [id], onDelete: Cascade)
+  landmarkId     String?
+  landmark       ProjectLandmark? @relation(fields: [landmarkId], references: [id], onDelete: Cascade)
+  distanceMeters Int?
+  walkingMinutes Int?
+  drivingMinutes Int?
+  source         String?
+  verified       Boolean          @default(false)
+  notes          String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
   @@index([unitId, targetType])
   @@index([gateId])
@@ -604,46 +604,46 @@ model UnitPriceHistory {
 }
 
 model PaymentPlan {
-  id                String   @id @default(cuid())
-  phaseId           String?
-  phase             ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: Cascade)
-  unitId            String?
-  unit              Unit?    @relation(fields: [unitId], references: [id], onDelete: Cascade)
-  projectId         String?
-  project           Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name              String?
-  downPayment       Decimal? @db.Decimal(16, 2)
-  installmentYears  Decimal? @db.Decimal(4, 1)
-  installmentAmount Decimal? @db.Decimal(16, 2)
-  durationMonths    Int?
-  downPaymentAmount Decimal? @db.Decimal(16, 2)
-  downPaymentPercent Decimal? @db.Decimal(7, 4)
-  totalPrice        Decimal? @db.Decimal(16, 2)
-  totalPriceOverride Decimal? @db.Decimal(16, 2)
-  discountAmount    Decimal? @db.Decimal(16, 2)
-  discountPercent   Decimal? @db.Decimal(7, 4)
-  installmentFrequency String?
-  currency          String?
-  maintenanceAmount Decimal? @db.Decimal(16, 2)
-  maintenancePercent Decimal? @db.Decimal(7, 4)
-  planType          String   @default("INSTALLMENT")
-  reservationAmount Decimal? @db.Decimal(16, 2)
-  durationValue     Int?
-  durationUnit      String?
-  installmentEveryValue Int?
-  installmentEveryUnit String?
-  firstInstallmentTiming String?
+  id                         String        @id @default(cuid())
+  phaseId                    String?
+  phase                      ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  unitId                     String?
+  unit                       Unit?         @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  projectId                  String?
+  project                    Project?      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name                       String?
+  downPayment                Decimal?      @db.Decimal(16, 2)
+  installmentYears           Decimal?      @db.Decimal(4, 1)
+  installmentAmount          Decimal?      @db.Decimal(16, 2)
+  durationMonths             Int?
+  downPaymentAmount          Decimal?      @db.Decimal(16, 2)
+  downPaymentPercent         Decimal?      @db.Decimal(7, 4)
+  totalPrice                 Decimal?      @db.Decimal(16, 2)
+  totalPriceOverride         Decimal?      @db.Decimal(16, 2)
+  discountAmount             Decimal?      @db.Decimal(16, 2)
+  discountPercent            Decimal?      @db.Decimal(7, 4)
+  installmentFrequency       String?
+  currency                   String?
+  maintenanceAmount          Decimal?      @db.Decimal(16, 2)
+  maintenancePercent         Decimal?      @db.Decimal(7, 4)
+  planType                   String        @default("INSTALLMENT")
+  reservationAmount          Decimal?      @db.Decimal(16, 2)
+  durationValue              Int?
+  durationUnit               String?
+  installmentEveryValue      Int?
+  installmentEveryUnit       String?
+  firstInstallmentTiming     String?
   firstInstallmentAfterValue Int?
-  firstInstallmentAfterUnit String?
-  distributionMode  String   @default("EQUAL")
-  percentageSchedule Json?
-  validFrom         DateTime?
-  validTo           DateTime?
-  sourceImportId    String?
-  sourceImport      DataImport? @relation(fields: [sourceImportId], references: [id], onDelete: SetNull)
-  sourceMetadata    Json?
-  notes             String?
-  isActive          Boolean  @default(true)
+  firstInstallmentAfterUnit  String?
+  distributionMode           String        @default("EQUAL")
+  percentageSchedule         Json?
+  validFrom                  DateTime?
+  validTo                    DateTime?
+  sourceImportId             String?
+  sourceImport               DataImport?   @relation(fields: [sourceImportId], references: [id], onDelete: SetNull)
+  sourceMetadata             Json?
+  notes                      String?
+  isActive                   Boolean       @default(true)
 
   @@index([unitId, durationMonths])
   @@index([projectId, isActive])
@@ -664,29 +664,28 @@ model Offer {
 }
 
 model Media {
-  id          String     @id @default(cuid())
-  phaseId     String?
-  phase       ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: Cascade)
-  type        MediaType
-  url         String
-  altText     String?
-  altTextAr   String?
-  altTextEn   String?
-  caption     String?
-  storageKey  String?
-  isCover     Boolean    @default(false)
-  developerId String?
-  developer   Developer? @relation(fields: [developerId], references: [id])
-  projectId   String?
-  project     Project?   @relation(fields: [projectId], references: [id])
-  unitId      String?
-  unit        Unit?      @relation(fields: [unitId], references: [id])
-  sortOrder   Int        @default(0)
-  purpose     String     @default("GALLERY")
+  id              String          @id @default(cuid())
+  phaseId         String?
+  phase           ProjectPhase?   @relation(fields: [phaseId], references: [id], onDelete: Cascade)
+  type            MediaType
+  url             String
+  altText         String?
+  altTextAr       String?
+  altTextEn       String?
+  caption         String?
+  storageKey      String?
+  isCover         Boolean         @default(false)
+  developerId     String?
+  developer       Developer?      @relation(fields: [developerId], references: [id])
+  projectId       String?
+  project         Project?        @relation(fields: [projectId], references: [id])
+  unitId          String?
+  unit            Unit?           @relation(fields: [unitId], references: [id])
+  sortOrder       Int             @default(0)
+  purpose         String          @default("GALLERY")
   assignmentRules UnitMediaRule[]
-  createdAt   DateTime   @default(now())
+  createdAt       DateTime        @default(now())
 }
-
 
 model UnitMediaRule {
   id             String        @id @default(cuid())
@@ -737,83 +736,83 @@ model Document {
 }
 
 model DataImport {
-  id            String             @id @default(cuid())
-  name          String?
-  fileName      String
-  fileHash      String
-  fileUrl       String?
-  developerId   String?
-  developer     Developer?         @relation(fields: [developerId], references: [id])
-  projectId     String?
-  project       Project?           @relation(fields: [projectId], references: [id])
+  id                String             @id @default(cuid())
+  name              String?
+  fileName          String
+  fileHash          String
+  fileUrl           String?
+  developerId       String?
+  developer         Developer?         @relation(fields: [developerId], references: [id])
+  projectId         String?
+  project           Project?           @relation(fields: [projectId], references: [id])
   uploadedByAdminId String?
-  uploadedBy    AdminUser?         @relation(fields: [uploadedByAdminId], references: [id], onDelete: SetNull)
-  parentImportId String?
-  parentImport  DataImport?        @relation("ImportVersions", fields: [parentImportId], references: [id], onDelete: SetNull)
-  versions      DataImport[]        @relation("ImportVersions")
-  uploadedAt    DateTime           @default(now())
-  status        ImportStatus       @default(UPLOADED)
-  rowsDetected  Int                @default(0)
-  rowsCreated   Int                @default(0)
-  rowsUpdated   Int                @default(0)
-  rowsRejected  Int                @default(0)
-  rowsSkipped   Int                @default(0)
-  rowsFailed    Int                @default(0)
-  warnings      Json?
-  missingUnitPolicy String @default("LEAVE_UNCHANGED")
-  completedAt   DateTime?
-  cancelledAt   DateTime?
-  rolledBackAt  DateTime?
-  mappingConfig Json?
-  analysis      Json?
-  preview       Json?
-  units         Unit[]
-  priceHistory  UnitPriceHistory[]
-  issues        ImportIssue[]
-  sheets        ImportSheet[]
-  corrections   ImportCorrection[]
-  unitChanges   ImportUnitChange[]
-  paymentPlans  PaymentPlan[]
+  uploadedBy        AdminUser?         @relation(fields: [uploadedByAdminId], references: [id], onDelete: SetNull)
+  parentImportId    String?
+  parentImport      DataImport?        @relation("ImportVersions", fields: [parentImportId], references: [id], onDelete: SetNull)
+  versions          DataImport[]       @relation("ImportVersions")
+  uploadedAt        DateTime           @default(now())
+  status            ImportStatus       @default(UPLOADED)
+  rowsDetected      Int                @default(0)
+  rowsCreated       Int                @default(0)
+  rowsUpdated       Int                @default(0)
+  rowsRejected      Int                @default(0)
+  rowsSkipped       Int                @default(0)
+  rowsFailed        Int                @default(0)
+  warnings          Json?
+  missingUnitPolicy String             @default("LEAVE_UNCHANGED")
+  completedAt       DateTime?
+  cancelledAt       DateTime?
+  rolledBackAt      DateTime?
+  mappingConfig     Json?
+  analysis          Json?
+  preview           Json?
+  units             Unit[]
+  priceHistory      UnitPriceHistory[]
+  issues            ImportIssue[]
+  sheets            ImportSheet[]
+  corrections       ImportCorrection[]
+  unitChanges       ImportUnitChange[]
+  paymentPlans      PaymentPlan[]
 
   @@index([fileHash])
 }
 
 model ImportSheet {
-  id                    String      @id @default(cuid())
+  id                    String             @id @default(cuid())
   importId              String
-  import                DataImport  @relation(fields: [importId], references: [id], onDelete: Cascade)
+  import                DataImport         @relation(fields: [importId], references: [id], onDelete: Cascade)
   sheetName             String
   tableId               String?
   classification        String
-  confidence            Int         @default(0)
-  action                String      @default("IGNORE")
+  confidence            Int                @default(0)
+  action                String             @default("IGNORE")
   headerRow             Int?
   startRow              Int?
   endRow                Int?
-  rowsDetected          Int         @default(0)
-  rowsCreated           Int         @default(0)
-  rowsUpdated           Int         @default(0)
+  rowsDetected          Int                @default(0)
+  rowsCreated           Int                @default(0)
+  rowsUpdated           Int                @default(0)
   projectId             String?
-  project               Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  project               Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
   phaseId               String?
-  phase                 ProjectPhase? @relation(fields: [phaseId], references: [id], onDelete: SetNull)
+  phase                 ProjectPhase?      @relation(fields: [phaseId], references: [id], onDelete: SetNull)
   developerId           String?
-  developer             Developer?  @relation(fields: [developerId], references: [id], onDelete: SetNull)
+  developer             Developer?         @relation(fields: [developerId], references: [id], onDelete: SetNull)
   locationId            String?
-  location              Location?   @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  location              Location?          @relation(fields: [locationId], references: [id], onDelete: SetNull)
   defaultCurrency       String?
   defaultUnitType       String?
-  defaultIsResale       Boolean     @default(false)
+  defaultIsResale       Boolean            @default(false)
   columns               Json?
   mappings              Json?
   mappingSources        Json?
   sourcePreview         Json?
   normalizedPreview     Json?
-  mappingVersion        Int         @default(1)
+  mappingVersion        Int                @default(1)
   previewMappingVersion Int?
   importedAt            DateTime?
-  createdAt             DateTime    @default(now())
-  updatedAt             DateTime    @updatedAt
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
   unitChanges           ImportUnitChange[]
   corrections           ImportCorrection[]
 
@@ -824,21 +823,21 @@ model ImportSheet {
 }
 
 model ImportCorrection {
-  id                String       @id @default(cuid())
+  id                String                   @id @default(cuid())
   importId          String
-  import            DataImport   @relation(fields: [importId], references: [id], onDelete: Cascade)
+  import            DataImport               @relation(fields: [importId], references: [id], onDelete: Cascade)
   importSheetId     String
-  importSheet       ImportSheet  @relation(fields: [importSheetId], references: [id], onDelete: Cascade)
+  importSheet       ImportSheet              @relation(fields: [importSheetId], references: [id], onDelete: Cascade)
   createdByAdminId  String?
-  createdBy         AdminUser?   @relation(fields: [createdByAdminId], references: [id], onDelete: SetNull)
-  status            String       @default("DRAFT")
+  createdBy         AdminUser?               @relation(fields: [createdByAdminId], references: [id], onDelete: SetNull)
+  status            String                   @default("DRAFT")
   oldMappings       Json
   proposedMappings  Json
   preview           Json?
   conflictDecisions Json?
   confirmedAt       DateTime?
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
   changes           ImportCorrectionChange[]
 
   @@index([importId, status])
@@ -846,35 +845,35 @@ model ImportCorrection {
 }
 
 model ImportCorrectionChange {
-  id           String           @id @default(cuid())
-  correctionId String
-  correction   ImportCorrection @relation(fields: [correctionId], references: [id], onDelete: Cascade)
-  unitId       String?
-  unit         Unit?            @relation(fields: [unitId], references: [id], onDelete: SetNull)
-  beforeData   Json
+  id            String           @id @default(cuid())
+  correctionId  String
+  correction    ImportCorrection @relation(fields: [correctionId], references: [id], onDelete: Cascade)
+  unitId        String?
+  unit          Unit?            @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  beforeData    Json
   correctedData Json
-  currentData  Json
-  conflict     Boolean          @default(false)
-  decision     String?
-  appliedAt    DateTime?
+  currentData   Json
+  conflict      Boolean          @default(false)
+  decision      String?
+  appliedAt     DateTime?
 
   @@index([correctionId, conflict])
   @@index([unitId])
 }
 
 model ImportUnitChange {
-  id          String              @id @default(cuid())
-  importId    String
-  import      DataImport          @relation(fields: [importId], references: [id], onDelete: Cascade)
-  importSheetId String?
-  importSheet ImportSheet?        @relation(fields: [importSheetId], references: [id], onDelete: SetNull)
-  unitId      String?
-  unit        Unit?               @relation(fields: [unitId], references: [id], onDelete: SetNull)
-  operation   ImportUnitOperation
-  beforeData  Json?
-  afterData   Json
-  appliedAt   DateTime            @default(now())
-  revertedAt  DateTime?
+  id             String              @id @default(cuid())
+  importId       String
+  import         DataImport          @relation(fields: [importId], references: [id], onDelete: Cascade)
+  importSheetId  String?
+  importSheet    ImportSheet?        @relation(fields: [importSheetId], references: [id], onDelete: SetNull)
+  unitId         String?
+  unit           Unit?               @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  operation      ImportUnitOperation
+  beforeData     Json?
+  afterData      Json
+  appliedAt      DateTime            @default(now())
+  revertedAt     DateTime?
   conflictReason String?
 
   @@unique([importId, unitId])
@@ -935,20 +934,66 @@ model AnonymousDevice {
 }
 
 model Conversation {
-  id               String             @id @default(cuid())
+  id               String               @id @default(cuid())
   deviceId         String
-  device           AnonymousDevice    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  device           AnonymousDevice      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
   title            String?
   detectedLanguage String?
-  promptVariant    String             @default("control")
+  promptVariant    String               @default("control")
   messages         Message[]
   state            ConversationState?
   leads            Lead[]
   trustAlerts      CustomerTrustAlert[]
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
 
   @@index([deviceId, updatedAt])
+}
+
+model Customer {
+  id                String                    @id @default(cuid())
+  name              String?
+  normalizedPhone   String?                   @unique
+  normalizedEmail   String?                   @unique
+  leads             Lead[]
+  channelIdentities CustomerChannelIdentity[]
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  @@index([createdAt])
+}
+
+model CustomerChannelIdentity {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  channel    String
+  externalId String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([channel, externalId])
+  @@index([customerId, channel])
+}
+
+model AutomationActionExecution {
+  id              String    @id @default(cuid())
+  idempotencyKey  String    @unique
+  actionType      String
+  source          String
+  requestHash     String
+  requestPayload  Json
+  responsePayload Json?
+  status          String
+  errorCode       String?
+  entityType      String?
+  entityId        String?
+  createdAt       DateTime  @default(now())
+  completedAt     DateTime?
+
+  @@index([status, createdAt])
+  @@index([entityType, entityId])
 }
 
 model Message {
@@ -978,37 +1023,41 @@ model ConversationState {
 }
 
 model Lead {
-  id                           String       @id @default(cuid())
-  conversationId               String
-  conversation                 Conversation @relation(fields: [conversationId], references: [id])
-  name                         String
-  phone                        String
+  id                           String               @id @default(cuid())
+  conversationId               String?
+  conversation                 Conversation?        @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  customerId                   String?
+  customer                     Customer?            @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  name                         String?
+  phone                        String?
   intent                       LeadIntent
   intentScore                  Int
-  status                       LeadStatus   @default(NEW)
+  status                       LeadStatus           @default(NEW)
   payload                      Json
-  source                       String       @default("WEB_AI")
-  trustStatus                  String       @default("CONTACT_VALID")
-  trustScore                   Int          @default(100)
-  trustReasons                 String[]     @default([])
+  source                       String               @default("WEB_AI")
+  trustStatus                  String               @default("CONTACT_VALID")
+  trustScore                   Int                  @default(100)
+  trustReasons                 String[]             @default([])
   preferredContactChannel      String?
   preferredConfirmationChannel String?
   preferredVisitDayPart        String?
   preferredVisitTiming         String?
   contactValidatedAt           DateTime?
   assignedToAdminId            String?
-  assignedTo                   AdminUser?   @relation("LeadAssignment", fields: [assignedToAdminId], references: [id], onDelete: SetNull)
+  assignedTo                   AdminUser?           @relation("LeadAssignment", fields: [assignedToAdminId], references: [id], onDelete: SetNull)
   followUpAt                   DateTime?
   events                       LeadEvent[]
   notes                        LeadNote[]
   trustAlerts                  CustomerTrustAlert[]
-  createdAt                    DateTime     @default(now())
-  updatedAt                    DateTime     @updatedAt
+  createdAt                    DateTime             @default(now())
+  updatedAt                    DateTime             @updatedAt
 
   @@index([status, createdAt])
   @@index([assignedToAdminId, followUpAt])
   @@index([intentScore])
   @@index([trustStatus, createdAt])
+  @@index([customerId, status, updatedAt])
+  @@index([phone, status])
 }
 
 model CustomerTrustAlert {
@@ -1065,66 +1114,66 @@ model LeadNote {
 }
 
 model AdminUser {
-  id            String      @id @default(cuid())
-  email         String      @unique
-  passwordHash  String
-  name          String
-  role          String      @default("ADMIN")
-  active        Boolean     @default(true)
-  createdAt     DateTime    @default(now())
-  auditLogs     AuditLog[]
-  assignedLeads Lead[]      @relation("LeadAssignment")
-  leadNotes     LeadNote[]
-  leadEvents    LeadEvent[]
-  resolvedTrustAlerts CustomerTrustAlert[] @relation("TrustAlertResolution")
-  imports       DataImport[]
-  importCorrections ImportCorrection[]
-  approvedKnowledgeItems ProjectKnowledgeItem[]
-  verifiedLocationDistances LocationDistance[]
-  verifiedPortfolioProjects DeveloperProjectPortfolio[]
+  id                         String                      @id @default(cuid())
+  email                      String                      @unique
+  passwordHash               String
+  name                       String
+  role                       String                      @default("ADMIN")
+  active                     Boolean                     @default(true)
+  createdAt                  DateTime                    @default(now())
+  auditLogs                  AuditLog[]
+  assignedLeads              Lead[]                      @relation("LeadAssignment")
+  leadNotes                  LeadNote[]
+  leadEvents                 LeadEvent[]
+  resolvedTrustAlerts        CustomerTrustAlert[]        @relation("TrustAlertResolution")
+  imports                    DataImport[]
+  importCorrections          ImportCorrection[]
+  approvedKnowledgeItems     ProjectKnowledgeItem[]
+  verifiedLocationDistances  LocationDistance[]
+  verifiedPortfolioProjects  DeveloperProjectPortfolio[]
   verifiedInvestmentProfiles ProjectInvestmentProfile[]
-  confirmedMasterPlanUnits Unit[] @relation("MasterPlanUnitConfirmation")
-  confirmedProjectBoundaries Project[] @relation("ProjectBoundaryConfirmation")
-  confirmedProjectGates ProjectGate[] @relation("ProjectGateConfirmation")
-  confirmedProjectBuildings ProjectBuilding[] @relation("MasterPlanBuildingConfirmation")
+  confirmedMasterPlanUnits   Unit[]                      @relation("MasterPlanUnitConfirmation")
+  confirmedProjectBoundaries Project[]                   @relation("ProjectBoundaryConfirmation")
+  confirmedProjectGates      ProjectGate[]               @relation("ProjectGateConfirmation")
+  confirmedProjectBuildings  ProjectBuilding[]           @relation("MasterPlanBuildingConfirmation")
 }
 
 model DeveloperProjectPortfolio {
-  id              String    @id @default(cuid())
-  developerId     String
-  developer       Developer @relation(fields: [developerId], references: [id], onDelete: Cascade)
-  projectName     String
-  locationText    String?
-  locationId      String?
-  location        Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
-  projectType     String?
-  status          String
-  launchYear      Int?
-  deliveryYear    Int?
-  unitsCount      Int?
-  description     String?
-  source          String?
-  verifiedAt      DateTime?
+  id                String     @id @default(cuid())
+  developerId       String
+  developer         Developer  @relation(fields: [developerId], references: [id], onDelete: Cascade)
+  projectName       String
+  locationText      String?
+  locationId        String?
+  location          Location?  @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  projectType       String?
+  status            String
+  launchYear        Int?
+  deliveryYear      Int?
+  unitsCount        Int?
+  description       String?
+  source            String?
+  verifiedAt        DateTime?
   verifiedByAdminId String?
-  verifiedBy      AdminUser? @relation(fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  verifiedBy        AdminUser? @relation(fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
 
   @@index([developerId, status])
   @@index([locationId])
 }
 
 model Amenity {
-  id          String @id @default(cuid())
-  canonicalName String @unique
-  nameAr      String?
-  nameEn      String?
-  category    String?
-  description String?
-  projects    ProjectAmenity[]
+  id              String           @id @default(cuid())
+  canonicalName   String           @unique
+  nameAr          String?
+  nameEn          String?
+  category        String?
+  description     String?
+  projects        ProjectAmenity[]
   unitProximities UnitProximity[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 }
 
 model ProjectAmenity {
@@ -1140,61 +1189,61 @@ model ProjectAmenity {
 }
 
 model ProjectInvestmentProfile {
-  id                    String   @id @default(cuid())
-  projectId             String   @unique
-  project               Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  suitableForLiving     Boolean?
-  suitableForInvestment Boolean?
-  suitableForRental     Boolean?
-  resaleDemand          String?
-  rentalDemand          String?
-  expectedRentalYieldMin Decimal? @db.Decimal(7, 4)
-  expectedRentalYieldMax Decimal? @db.Decimal(7, 4)
-  strongestUnitTypes    String[]
-  targetCustomers       String[]
-  investmentAdvantages String[]
-  investmentRisks      String[]
-  notes                 String?
-  source                String?
-  verifiedAt            DateTime?
-  verifiedByAdminId     String?
-  verifiedBy            AdminUser? @relation(fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                     String     @id @default(cuid())
+  projectId              String     @unique
+  project                Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  suitableForLiving      Boolean?
+  suitableForInvestment  Boolean?
+  suitableForRental      Boolean?
+  resaleDemand           String?
+  rentalDemand           String?
+  expectedRentalYieldMin Decimal?   @db.Decimal(7, 4)
+  expectedRentalYieldMax Decimal?   @db.Decimal(7, 4)
+  strongestUnitTypes     String[]
+  targetCustomers        String[]
+  investmentAdvantages   String[]
+  investmentRisks        String[]
+  notes                  String?
+  source                 String?
+  verifiedAt             DateTime?
+  verifiedByAdminId      String?
+  verifiedBy             AdminUser? @relation(fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
 }
 
 model ProjectLandmark {
-  id              String   @id @default(cuid())
-  projectId       String
-  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name            String
-  category        String?
-  locationId      String?
-  location        Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
-  distanceKm      Decimal? @db.Decimal(8, 2)
+  id               String          @id @default(cuid())
+  projectId        String
+  project          Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name             String
+  category         String?
+  locationId       String?
+  location         Location?       @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  distanceKm       Decimal?        @db.Decimal(8, 2)
   estimatedMinutes Int?
-  distanceType    String @default("ADMIN_VERIFIED")
-  notes           String?
-  source          String?
-  verifiedAt      DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  unitProximities UnitProximity[]
+  distanceType     String          @default("ADMIN_VERIFIED")
+  notes            String?
+  source           String?
+  verifiedAt       DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  unitProximities  UnitProximity[]
 
   @@index([projectId, category])
   @@index([locationId])
 }
 
 model ProjectCompetitor {
-  projectId            String
-  project              Project @relation("CompetitorFrom", fields: [projectId], references: [id], onDelete: Cascade)
-  competitorProjectId  String
-  competitorProject    Project @relation("CompetitorTo", fields: [competitorProjectId], references: [id], onDelete: Cascade)
-  reason               String?
-  notes                String?
-  verified              Boolean @default(false)
-  source                String?
-  createdAt             DateTime @default(now())
+  projectId           String
+  project             Project  @relation("CompetitorFrom", fields: [projectId], references: [id], onDelete: Cascade)
+  competitorProjectId String
+  competitorProject   Project  @relation("CompetitorTo", fields: [competitorProjectId], references: [id], onDelete: Cascade)
+  reason              String?
+  notes               String?
+  verified            Boolean  @default(false)
+  source              String?
+  createdAt           DateTime @default(now())
 
   @@id([projectId, competitorProjectId])
 }

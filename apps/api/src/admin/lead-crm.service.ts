@@ -129,6 +129,9 @@ export class LeadCrmService {
         OR: [
           { name: { contains: search, mode: "insensitive" } },
           { phone: { contains: search } },
+          { customer: { is: { name: { contains: search, mode: "insensitive" } } } },
+          { customer: { is: { normalizedPhone: { contains: search } } } },
+          { customer: { is: { normalizedEmail: { contains: search, mode: "insensitive" } } } },
           ...projects.map(
             (item) =>
               ({
@@ -177,6 +180,7 @@ export class LeadCrmService {
         orderBy,
         include: {
           assignedTo: { select: { id: true, name: true, email: true } },
+          customer: { select: { id: true, name: true, normalizedPhone: true, normalizedEmail: true } },
           conversation: { select: { id: true, title: true } },
           events: {
             orderBy: { createdAt: "desc" },
@@ -227,8 +231,8 @@ export class LeadCrmService {
             .find(Boolean) ?? firstUnit?.project;
         return {
           id: lead.id,
-          name: lead.name,
-          phone: lead.phone,
+          name: lead.name ?? lead.customer?.name ?? null,
+          phone: lead.phone ?? lead.customer?.normalizedPhone ?? null,
           status: lead.status,
           intent: lead.intent,
           intentScore: lead.intentScore,
@@ -268,6 +272,7 @@ export class LeadCrmService {
       where: { id },
       include: {
         assignedTo: { select: { id: true, name: true, email: true } },
+        customer: { select: { id: true, name: true, normalizedPhone: true, normalizedEmail: true } },
         conversation: {
           select: {
             id: true,
@@ -319,8 +324,9 @@ export class LeadCrmService {
     ]);
     return {
       id: lead.id,
-      name: lead.name,
-      phone: lead.phone,
+      name: lead.name ?? lead.customer?.name ?? null,
+      phone: lead.phone ?? lead.customer?.normalizedPhone ?? null,
+      customer: lead.customer,
       status: lead.status,
       intent: lead.intent,
       intentScore: lead.intentScore,
@@ -567,6 +573,8 @@ export class LeadCrmService {
                 OR: [
                   { name: { contains: query.search, mode: "insensitive" } },
                   { phone: { contains: query.search } },
+                  { customer: { is: { name: { contains: query.search, mode: "insensitive" } } } },
+                  { customer: { is: { normalizedPhone: { contains: query.search } } } },
                 ],
               },
             },
@@ -643,6 +651,7 @@ export class LeadCrmService {
             intentScore: true,
             status: true,
             createdAt: true,
+            customer: { select: { name: true, normalizedPhone: true } },
           },
         },
         messages: {
@@ -651,7 +660,15 @@ export class LeadCrmService {
         },
       },
     });
-    const file = createConversationExport(records, query.format, {
+    const exportRecords = records.map((record) => ({
+      ...record,
+      leads: record.leads.map(({ customer, ...lead }) => ({
+        ...lead,
+        name: lead.name ?? customer?.name ?? "",
+        phone: lead.phone ?? customer?.normalizedPhone ?? "",
+      })),
+    }));
+    const file = createConversationExport(exportRecords, query.format, {
       ...(query.search ? { search: query.search } : {}),
       ...(query.intent ? { intent: query.intent } : {}),
     });
@@ -681,7 +698,7 @@ export class LeadCrmService {
           select: { summary: true, searchContext: true, intentScore: true },
         },
         leads: {
-          select: { id: true, name: true, status: true, intentScore: true },
+          select: { id: true, name: true, status: true, intentScore: true, customer: { select: { name: true } } },
         },
         messages: {
           orderBy: { createdAt: "asc" },
@@ -690,6 +707,9 @@ export class LeadCrmService {
       },
     });
     if (!item) throw new NotFoundException("Conversation not found");
-    return item;
+    return {
+      ...item,
+      leads: item.leads.map(({ customer, ...lead }) => ({ ...lead, name: lead.name ?? customer?.name ?? null })),
+    };
   }
 }

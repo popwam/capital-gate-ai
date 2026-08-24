@@ -1,0 +1,28 @@
+{
+  "name": "@maqar/automation-api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start:dev": "nest start --watch",
+    "build": "nest build",
+    "start": "node dist/main",
+    "test": "node --test dist/security/automation-secret.guard.spec.js dist/customers/customer-identity.service.spec.js dist/leads/leads.service.spec.js dist/http.spec.js"
+  },
+  "dependencies": {
+    "@nestjs/common": "latest",
+    "@nestjs/core": "latest",
+    "@nestjs/platform-express": "latest",
+    "@prisma/client": "6.19.3",
+    "class-transformer": "0.5.1",
+    "class-validator": "0.15.1",
+    "helmet": "^8.1.0",
+    "libphonenumber-js": "^1.12.15",
+    "reflect-metadata": "latest",
+    "rxjs": "latest"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "11.0.24",
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}

@@ -69,8 +69,8 @@ export class LeadHandoffService {
     let trustTrace: Record<string, unknown> | undefined;
 
     if (existingLead) {
-      state.contactName ||= existingLead.name;
-      state.contactPhone ||= existingLead.phone;
+      if (existingLead.name) state.contactName ||= existingLead.name;
+      if (existingLead.phone) state.contactPhone ||= existingLead.phone;
       state.preferredContactChannel ||= (existingLead.preferredContactChannel as StructuredIntent["preferredContactChannel"]) ?? undefined;
       state.preferredConfirmationChannel ||= (existingLead.preferredConfirmationChannel as StructuredIntent["preferredConfirmationChannel"]) ?? undefined;
       state.preferredVisitDayPart ||= (existingLead.preferredVisitDayPart as StructuredIntent["preferredVisitDayPart"]) ?? undefined;
@@ -173,8 +173,10 @@ export class LeadHandoffService {
           if (!assessment.normalizedPhone) delete state.contactPhone;
           if (assessment.reasons.some((reason) => ["placeholder_name", "unit_code_as_name", "implausible_name", "repeated_name_token", "missing_name"].includes(reason))) delete state.contactName;
         } else {
-          state.contactName = existingLead.name;
-          state.contactPhone = existingLead.phone;
+          if (existingLead.name) state.contactName = existingLead.name;
+          else delete state.contactName;
+          if (existingLead.phone) state.contactPhone = existingLead.phone;
+          else delete state.contactPhone;
         }
         state.presentation = nextPresentation(state.presentation ?? priorPresentation, {
           lastOfferedAction: "CONTACT_REQUEST",

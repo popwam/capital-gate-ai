@@ -99,19 +99,21 @@ export default function LeadDetail({
               Lead details
             </p>
             <h1 className="mt-2 text-[27px] font-bold tracking-[-.04em]" dir="auto">
-              {lead.name}
+              {lead.name || "Unnamed customer"}
             </h1>
             <p className="mt-1 flex items-center gap-2 text-[10px] text-[#6e7a75]">
               <Phone size={12} />
-              {lead.phone} · {lead.intentScore} / 100 · {trustLabel(lead.trustStatus)}
+              {lead.phone || "No phone provided"} · {lead.intentScore} / 100 · {trustLabel(lead.trustStatus)}
             </p>
           </div>
-          <a
-            href={`/admin/conversations/${lead.conversation.id}`}
-            className="flex h-10 items-center gap-2 rounded-xl bg-forest px-4 text-[9px] font-bold text-white"
-          >
-            <MessageSquareText size={14} /> View conversation
-          </a>
+          {lead.conversation && (
+            <a
+              href={`/admin/conversations/${lead.conversation.id}`}
+              className="flex h-10 items-center gap-2 rounded-xl bg-forest px-4 text-[9px] font-bold text-white"
+            >
+              <MessageSquareText size={14} /> View conversation
+            </a>
+          )}
         </div>
         <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_340px]">
           <div className="space-y-5">

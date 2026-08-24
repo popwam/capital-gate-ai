@@ -5,8 +5,8 @@ import { adminApi } from "@/lib/api";
 
 type Lead = {
   id: string;
-  name: string;
-  phone: string;
+  name: string | null;
+  phone: string | null;
   status: string;
   intent: string;
   intentScore: number;
@@ -248,8 +248,8 @@ export default function LeadsPage() {
                 className="grid gap-3 border-b px-4 py-4 transition last:border-0 hover:bg-[#fbfaf7] sm:grid-cols-2 xl:grid-cols-[1.2fr_1fr_.8fr_.8fr_.9fr_1fr_1fr_.9fr_1fr_26px] xl:items-center"
               >
                 <Cell label="Customer">
-                  <b className="block text-[10px]">{lead.name}</b>
-                  <span className="text-[8px] text-[#74817b]">{lead.phone}</span>
+                  <b className="block text-[10px]">{lead.name || "Unnamed customer"}</b>
+                  <span className="text-[8px] text-[#74817b]">{lead.phone || "No phone provided"}</span>
                   <div className="mt-1"><TrustStatus value={lead.trustStatus}/></div>
                 </Cell>
                 <Cell label="Status">
