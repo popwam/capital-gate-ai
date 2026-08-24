@@ -7,11 +7,14 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UseGuards,
 } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
+import type { Response } from "express";
 import { AdminAuthGuard } from "../auth/admin-auth.guard";
 import {
+  AdminConversationExportQueryDto,
   AdminConversationListQueryDto,
   CreateLeadNoteDto,
   LeadListQueryDto,
@@ -77,8 +80,23 @@ export class LeadCrmController {
 @Controller("admin/conversations")
 export class AdminConversationsController {
   constructor(private readonly crm: LeadCrmService) {}
+  private admin(req: any) {
+    return req.admin.id as string;
+  }
   @Get() list(@Query() query: AdminConversationListQueryDto) {
     return this.crm.conversations(query);
+  }
+  @Get("export") async export(
+    @Query() query: AdminConversationExportQueryDto,
+    @Req() req: any,
+    @Res() response: Response,
+  ) {
+    const file = await this.crm.exportConversations(query, this.admin(req));
+    response.setHeader("Content-Type", file.contentType);
+    response.setHeader("Content-Disposition", `attachment; filename="${file.fileName}"`);
+    response.setHeader("Content-Length", file.body.length);
+    response.setHeader("Cache-Control", "private, no-store");
+    response.send(file.body);
   }
   @Get(":id") detail(@Param("id") id: string) {
     return this.crm.conversation(id);

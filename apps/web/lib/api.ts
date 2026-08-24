@@ -99,6 +99,32 @@ async function request<T>(path: string, init: RequestInit = {}, device = true): 
   }
 }
 
+export function downloadFileName(disposition: string | null, fallback: string) {
+  if (!disposition) return fallback;
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try { return decodeURIComponent(encoded); } catch { return fallback; }
+  }
+  return disposition.match(/filename="([^"]+)"/i)?.[1] || fallback;
+}
+
+async function downloadRequest(path: string, fallbackFileName: string) {
+  const requestId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+  const response = await fetch(`${API_URL}/v1/admin${path}`, {
+    credentials: "include",
+    headers: { "x-request-id": requestId },
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const message = Array.isArray(body.message) ? body.message[0] : body.message || `Request failed (${response.status})`;
+    throw new ApiRequestError(message, response.status, body.code, body.requestId || response.headers.get("x-request-id") || undefined);
+  }
+  return {
+    blob: await response.blob(),
+    fileName: downloadFileName(response.headers.get("content-disposition"), fallbackFileName),
+  };
+}
+
 export const conversationsApi = {
   list: () => request<ApiConversation[]>("/conversations"),
   create: (title: string) => request<ApiConversation>("/conversations", { method: "POST", body: JSON.stringify({ title }) }),
@@ -125,5 +151,6 @@ export const adminApi = {
   post: <T>(path: string, body?: unknown) => request<T>(`/admin${path}`, { method: "POST", body: JSON.stringify(body ?? {}) }, false),
   patch: <T>(path: string, body?: unknown) => request<T>(`/admin${path}`, { method: "PATCH", body: JSON.stringify(body ?? {}) }, false),
   delete: <T>(path: string, body?: unknown) => request<T>(`/admin${path}`, { method: "DELETE", body: JSON.stringify(body ?? {}) }, false),
-  upload: async <T>(path: string, form: FormData) => request<T>(`/admin${path}`, { method: "POST", body: form }, false)
+  upload: async <T>(path: string, form: FormData) => request<T>(`/admin${path}`, { method: "POST", body: form }, false),
+  download: (path: string, fallbackFileName: string) => downloadRequest(path, fallbackFileName),
 };

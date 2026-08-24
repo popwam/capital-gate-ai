@@ -12,6 +12,9 @@ import {
   Min,
 } from "class-validator";
 
+export const CONVERSATION_EXPORT_FORMATS = ["md", "json", "xlsx", "csv"] as const;
+export type ConversationExportFormat = (typeof CONVERSATION_EXPORT_FORMATS)[number];
+
 export class LeadListQueryDto {
   @Type(() => Number) @IsInt() @Min(1) @IsOptional() page = 1;
   @Type(() => Number) @IsInt() @Min(1) @Max(100) @IsOptional() limit = 20;
@@ -59,6 +62,12 @@ export class AdminConversationListQueryDto {
   @Type(() => Number) @IsInt() @Min(1) @Max(100) @IsOptional() limit = 20;
   @IsString() @MaxLength(120) @IsOptional() search?: string;
   @IsEnum(LeadIntent) @IsOptional() intent?: LeadIntent;
+}
+
+export class AdminConversationExportQueryDto {
+  @IsString() @MaxLength(120) @IsOptional() search?: string;
+  @IsEnum(LeadIntent) @IsOptional() intent?: LeadIntent;
+  @IsIn(CONVERSATION_EXPORT_FORMATS) format: ConversationExportFormat = "xlsx";
 }
 
 export class TrustAlertFeedbackDto {

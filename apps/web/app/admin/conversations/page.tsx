@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight, MessageSquareText, Search, UserRound } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, MessageSquareText, Search, UserRound } from "lucide-react";
 import { adminApi, adminErrorMessage } from "@/lib/api";
 
 type Item = {
@@ -13,24 +13,52 @@ type Item = {
   leads: { id: string; name: string; status: string; intentScore: number }[];
 };
 type Data = { items: Item[]; page: number; total: number; totalPages: number; limit: number };
+type ExportFormat = "xlsx" | "csv" | "json" | "md";
 
 const fmtDate = (value: string) => new Intl.DateTimeFormat("ar-EG", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 
 export default function Conversations() {
   const [data, setData] = useState<Data>({ items: [], page: 1, total: 0, totalPages: 1, limit: 20 });
   const [search, setSearch] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("xlsx");
+  const [exporting, setExporting] = useState(false);
+  const [exportNotice, setExportNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function load(page = 1) {
+  async function load(page = 1, searchValue = appliedSearch) {
     setLoading(true); setError("");
     try {
-      setData(await adminApi.get<Data>(`/conversations?page=${page}&limit=20&search=${encodeURIComponent(search)}`));
+      setData(await adminApi.get<Data>(`/conversations?page=${page}&limit=20&search=${encodeURIComponent(searchValue)}`));
+      setAppliedSearch(searchValue);
     } catch (e) { setError(adminErrorMessage(e)); }
     finally { setLoading(false); }
   }
-  useEffect(() => { void load(); }, []);
-  function submit(e: FormEvent) { e.preventDefault(); void load(1); }
+  useEffect(() => { void load(1, ""); }, []);
+  function submit(e: FormEvent) { e.preventDefault(); void load(1, search); }
+
+  async function exportConversations() {
+    setExporting(true); setError(""); setExportNotice("");
+    try {
+      const query = new URLSearchParams({ format: exportFormat });
+      if (appliedSearch) query.set("search", appliedSearch);
+      const result = await adminApi.download(
+        `/conversations/export?${query.toString()}`,
+        `conversations.${exportFormat}`,
+      );
+      const url = URL.createObjectURL(result.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = result.fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setExportNotice(`تم تنزيل ${data.total.toLocaleString("ar-EG")} محادثة بصيغة ${exportFormat.toUpperCase()}.`);
+    } catch (e) { setError(adminErrorMessage(e)); }
+    finally { setExporting(false); }
+  }
 
   return (
     <main className="mx-auto max-w-[1480px] p-4 sm:p-6 lg:p-8" dir="rtl">
@@ -41,11 +69,40 @@ export default function Conversations() {
             <h2 className="mt-2 text-[24px] font-bold sm:text-[28px]">المحادثات</h2>
             <p className="mt-1 text-[13px] text-[#74817b]">راجع ما طلبه العميل، الردود، وأي فرصة بيع مرتبطة بالمحادثة.</p>
           </div>
-          <form onSubmit={submit} className="relative w-full lg:max-w-[420px]">
-            <Search size={17} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#8a9690]"/>
-            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="ابحث بعنوان المحادثة أو اسم العميل" className="h-12 w-full rounded-xl border border-[#dce1dd] bg-[#fafbf9] pr-10 pl-3 text-[14px] outline-none focus:border-[#8eaa9f]"/>
-          </form>
+          <div className="flex w-full flex-col gap-2 sm:flex-row lg:max-w-[660px]">
+            <form onSubmit={submit} className="relative min-w-0 flex-1">
+              <label htmlFor="conversation-search" className="sr-only">ابحث في المحادثات</label>
+              <Search size={17} aria-hidden="true" className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#8a9690]"/>
+              <input id="conversation-search" value={search} onChange={e=>setSearch(e.target.value)} placeholder="ابحث بعنوان المحادثة أو اسم العميل" className="h-12 w-full rounded-xl border border-[#dce1dd] bg-[#fafbf9] pr-10 pl-3 text-[14px] outline-none focus:border-[#8eaa9f]"/>
+            </form>
+            <div className="flex shrink-0 gap-2">
+              <label htmlFor="conversation-export-format" className="sr-only">صيغة التصدير</label>
+              <select
+                id="conversation-export-format"
+                value={exportFormat}
+                onChange={event=>setExportFormat(event.target.value as ExportFormat)}
+                className="h-12 min-w-24 rounded-xl border border-[#dce1dd] bg-[#fafbf9] px-3 text-[13px] font-bold text-[#40554e]"
+                disabled={exporting}
+              >
+                <option value="xlsx">Excel</option>
+                <option value="csv">CSV</option>
+                <option value="json">JSON</option>
+                <option value="md">Markdown</option>
+              </select>
+              <button
+                type="button"
+                onClick={()=>void exportConversations()}
+                disabled={exporting || loading || data.total === 0}
+                title="تصدير كل المحادثات المطابقة للبحث الحالي"
+                className="inline-flex h-12 min-w-28 items-center justify-center gap-2 rounded-xl bg-[#173f3b] px-4 text-[13px] font-bold text-white transition hover:bg-[#24564f] disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                <Download size={16} aria-hidden="true"/>
+                {exporting ? "جارٍ التصدير…" : "تصدير"}
+              </button>
+            </div>
+          </div>
         </div>
+        {exportNotice ? <p className="mt-3 text-[12px] text-[#55756a]" aria-live="polite">{exportNotice}</p> : null}
       </section>
 
       {error && <div className="mt-4 rounded-2xl border border-red-100 bg-red-50 p-4 text-[13px] text-red-800">{error}</div>}
@@ -73,9 +130,9 @@ export default function Conversations() {
       </section>
 
       <div className="mt-4 flex items-center justify-between gap-3 text-[12px]">
-        <button disabled={data.page<=1 || loading} onClick={()=>load(data.page-1)} className="flex h-10 items-center gap-1 rounded-xl border bg-white px-4 font-bold disabled:opacity-40"><ChevronRight size={15}/> السابق</button>
+        <button disabled={data.page<=1 || loading} onClick={()=>load(data.page-1, appliedSearch)} className="flex h-10 items-center gap-1 rounded-xl border bg-white px-4 font-bold disabled:opacity-40"><ChevronRight size={15}/> السابق</button>
         <span className="text-[#728079]">صفحة {data.page} من {Math.max(1,data.totalPages)} · {data.total} محادثة</span>
-        <button disabled={data.page>=data.totalPages || loading} onClick={()=>load(data.page+1)} className="flex h-10 items-center gap-1 rounded-xl border bg-white px-4 font-bold disabled:opacity-40">التالي <ChevronLeft size={15}/></button>
+        <button disabled={data.page>=data.totalPages || loading} onClick={()=>load(data.page+1, appliedSearch)} className="flex h-10 items-center gap-1 rounded-xl border bg-white px-4 font-bold disabled:opacity-40">التالي <ChevronLeft size={15}/></button>
       </div>
     </main>
   );

@@ -4,8 +4,14 @@ import { GUARDS_METADATA } from "@nestjs/common/constants";
 import { LeadStatus } from "@prisma/client";
 import { AdminAuthGuard } from "../auth/admin-auth.guard";
 import { leadPersistenceAction } from "../chat.service";
-import { LeadCrmController } from "./lead-crm.controller";
-import { LeadListQueryDto } from "./lead-crm.dto";
+import {
+  AdminConversationsController,
+  LeadCrmController,
+} from "./lead-crm.controller";
+import {
+  AdminConversationExportQueryDto,
+  LeadListQueryDto,
+} from "./lead-crm.dto";
 import { LeadCrmService } from "./lead-crm.service";
 
 function fixture() {
@@ -87,6 +93,27 @@ function fixture() {
             }
           : { id: "lead-1" },
     },
+    conversation: {
+      count: async (args: any) => {
+        calls.push(["conversation.count", args]);
+        return 1;
+      },
+      findMany: async (args: any) => {
+        calls.push(["conversation.findMany", args]);
+        return [
+          {
+            id: "conversation-1",
+            title: "Home search",
+            detectedLanguage: "ar",
+            createdAt: new Date("2026-08-23T09:00:00.000Z"),
+            updatedAt: new Date("2026-08-24T09:00:00.000Z"),
+            state: { summary: {}, searchContext: {}, intentScore: 91 },
+            leads: [],
+            messages: [],
+          },
+        ];
+      },
+    },
     $transaction: async (arg: any) =>
       typeof arg === "function" ? arg(tx) : Promise.all(arg),
   };
@@ -145,6 +172,27 @@ test("Admin lead controller is protected by AdminAuthGuard", () => {
     LeadCrmController,
   ) as unknown[];
   assert.ok(guards.includes(AdminAuthGuard));
+  const conversationGuards = Reflect.getMetadata(
+    GUARDS_METADATA,
+    AdminConversationsController,
+  ) as unknown[];
+  assert.ok(conversationGuards.includes(AdminAuthGuard));
+});
+
+test("conversation export reuses search filters, returns the requested file, and audits access", async () => {
+  const { service, calls } = fixture();
+  const query = Object.assign(new AdminConversationExportQueryDto(), {
+    format: "json" as const,
+    search: "Home",
+  });
+  const result = await service.exportConversations(query, "admin-1");
+  assert.equal(result.contentType, "application/json; charset=utf-8");
+  assert.equal(JSON.parse(result.body.toString("utf8")).count, 1);
+  const find = calls.find(([name]) => name === "conversation.findMany")[1];
+  assert.equal(find.where.AND[0].OR[0].title.contains, "Home");
+  const audit = calls.find(([name]) => name === "audit")[1];
+  assert.equal(audit[1], "CONVERSATIONS_EXPORTED");
+  assert.equal(audit[4].format, "json");
 });
 
 test("AdminAuthGuard rejects unauthorized lead access", async () => {

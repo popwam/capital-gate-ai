@@ -3,21 +3,24 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { LeadStatus, Prisma } from "@prisma/client";
+import { LeadIntent, LeadStatus, Prisma } from "@prisma/client";
 import { AuditService } from "../audit.service";
 import { PrismaService } from "../database/prisma.service";
 import {
+  AdminConversationExportQueryDto,
   AdminConversationListQueryDto,
   CreateLeadNoteDto,
   LeadListQueryDto,
   UpdateLeadDto,
   TrustAlertFeedbackDto,
 } from "./lead-crm.dto";
+import { createConversationExport } from "./conversation-export";
 
 type JsonObject = Record<string, any>;
 
 @Injectable()
 export class LeadCrmService {
+  private static readonly MAX_CONVERSATION_EXPORT = 2_000;
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -552,7 +555,7 @@ export class LeadCrmService {
     return { newLeads, highIntent, followUpsDue, thisWeek, trustAlertsOpen };
   }
 
-  async conversations(query: AdminConversationListQueryDto) {
+  private conversationWhere(query: { search?: string; intent?: LeadIntent }) {
     const AND: Prisma.ConversationWhereInput[] = [];
     if (query.search)
       AND.push({
@@ -571,7 +574,11 @@ export class LeadCrmService {
         ],
       });
     if (query.intent) AND.push({ leads: { some: { intent: query.intent } } });
-    const where: Prisma.ConversationWhereInput = AND.length ? { AND } : {};
+    return AND.length ? { AND } : {};
+  }
+
+  async conversations(query: AdminConversationListQueryDto) {
+    const where = this.conversationWhere(query);
     const [total, items] = await this.prisma.$transaction([
       this.prisma.conversation.count({ where }),
       this.prisma.conversation.findMany({
@@ -601,6 +608,65 @@ export class LeadCrmService {
       total,
       totalPages: Math.max(1, Math.ceil(total / query.limit)),
     };
+  }
+
+  async exportConversations(
+    query: AdminConversationExportQueryDto,
+    adminUserId: string,
+  ) {
+    const where = this.conversationWhere(query);
+    const total = await this.prisma.conversation.count({ where });
+    if (total > LeadCrmService.MAX_CONVERSATION_EXPORT) {
+      throw new BadRequestException(
+        `Conversation export is limited to ${LeadCrmService.MAX_CONVERSATION_EXPORT.toLocaleString("en-US")} records. Narrow the search and try again.`,
+      );
+    }
+    const records = await this.prisma.conversation.findMany({
+      where,
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        title: true,
+        detectedLanguage: true,
+        createdAt: true,
+        updatedAt: true,
+        state: {
+          select: { summary: true, searchContext: true, intentScore: true },
+        },
+        leads: {
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            intent: true,
+            intentScore: true,
+            status: true,
+            createdAt: true,
+          },
+        },
+        messages: {
+          orderBy: { createdAt: "asc" },
+          select: { id: true, role: true, content: true, createdAt: true },
+        },
+      },
+    });
+    const file = createConversationExport(records, query.format, {
+      ...(query.search ? { search: query.search } : {}),
+      ...(query.intent ? { intent: query.intent } : {}),
+    });
+    await this.audit.record(
+      adminUserId,
+      "CONVERSATIONS_EXPORTED",
+      "Conversation",
+      undefined,
+      {
+        format: query.format,
+        count: records.length,
+        filters: { searchApplied: Boolean(query.search), intent: query.intent },
+      },
+    );
+    return file;
   }
   async conversation(id: string) {
     const item = await this.prisma.conversation.findUnique({

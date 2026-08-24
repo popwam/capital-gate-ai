@@ -37,7 +37,7 @@ async function bootstrap() {
   app.use((request: any, response: any, next: () => void) => { request.requestId = request.headers["x-request-id"] || randomUUID(); response.setHeader("x-request-id", request.requestId); next(); });
   app.setGlobalPrefix("v1");
   const origins = (process.env.WEB_ORIGIN ?? "http://localhost:3000").split(",").map(x => x.trim()).filter(Boolean);
-  app.enableCors({ origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => !origin || origins.includes(origin) ? callback(null, true) : callback(new Error("Origin not allowed"), false), credentials: true, allowedHeaders: ["content-type", "x-device-token", "x-request-id"], methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"] });
+  app.enableCors({ origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => !origin || origins.includes(origin) ? callback(null, true) : callback(new Error("Origin not allowed"), false), credentials: true, allowedHeaders: ["content-type", "x-device-token", "x-request-id"], exposedHeaders: ["content-disposition", "x-request-id"], methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"] });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, stopAtFirstError: true }));
   app.useGlobalFilters(new SafeHttpExceptionFilter());
   app.enableShutdownHooks();
