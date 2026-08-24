@@ -1,0 +1,53 @@
+[33m41c2775[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m vt.1
+[33m5ec6f24[m v1.0.7.2.1
+[33m3cb9551[m v1.0.7.2
+[33m70c529f[m v1.0.7.1
+[33m2b43705[m v1.0.7
+[33mb148ad2[m v1.0.6.2
+[33m200fe30[m v1.0.6.1
+[33m2a57c99[m v1.0.6
+[33m8663259[m v1.0.5
+[33m5ae7f7a[m v1.0.5.2
+[33m2c3deeb[m v1.0.5.1
+[33mc26ad96[m v1.0.5
+[33md1ab47c[m v1.0.4.2
+[33mc8ac860[m v1.0.4.1
+[33mb31b77e[m v1.0.4
+[33mf81af25[m v1.0.5.2
+[33m190f4d5[m v1.0.3.2
+[33mc0a87a1[m v1.3.1
+[33m6681122[m v1.2
+[33ma63f466[m v1.0.6
+[33m6a6ffb7[m fix max 32
+[33mf9f5bce[m v1.0.5
+[33m7d28b79[m fix div
+[33m15163af[m v1.0.4
+[33m518c19f[m v1.0.3.4
+[33mdec953d[m v1.0.3.3
+[33m5eac515[m v1.0.3.3
+[33md9eedcd[m v1.0.3.1
+[33m79b7f0d[m v1.0.3
+[33me4738c2[m v1.0.3
+[33m8c84f1c[m feat: add payment calculator and spatial ranking features
+[33m570581e[m v1.0.2.1
+[33m1320552[m Refactor AdminSectionNav component for improved route handling and readability
+[33m21f323e[m feat: implement preview generation and refresh logic in import workflow
+[33md919bb2[m feat: enhance import workflow with detailed readiness metrics and blocking reasons
+[33m17b3a04[m feat: add multi-sheet import functionality and project payment plans
+[33mdc66a5e[m feat(api): add customer turn planner and associated tests
+[33mac0246c[m feat: Enhance AI provider context handling and compaction logic
+[33mac566eb[m feat: add project details page with CRUD functionality for real estate projects
+[33ma98e816[m refactor: remove AdminSectionNav from various admin pages and adjust layout structure
+[33m1f45198[m v1.0.2
+[33m7190151[m v1.0.1.1
+[33m3c53bd2[m v1.0.1
+[33m29c0bdb[m feat: add Gemini AI health check and model listing scripts
+[33m5feaee1[m feat: enhance text direction handling and support for Arabic content
+[33mb9f5628[m feat: implement internal CRM for lead management
+[33ma47e596[m Add production integration smoke coverage
+[33mdd18e81[m Protect the admin index route
+[33m7e6aa76[m Hoist Nest validation runtime dependencies
+[33mcc7d45f[m Fix CommonJS cookie parser startup
+[33mf288a0b[m Hoist Nest HTTP adapter for Railway runtime
+[33m37220f4[m Prepare production Railway deployment
+[33me859c62[m first commit
