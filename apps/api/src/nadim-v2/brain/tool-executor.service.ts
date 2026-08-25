@@ -66,6 +66,9 @@ function searchIntent(search: NadimSearchState, locale: string): StructuredInten
     currency: search.currency,
     maxDownPayment: search.downPaymentMax,
     preferredPaymentDurationMonths: search.installmentMonths,
+    softPreferences: search.installmentPreference === "LONG_TERM"
+      ? ["LONG_TERM_INSTALLMENTS"]
+      : search.installmentPreference === "INSTALLMENTS" ? ["INSTALLMENTS"] : undefined,
     deliveryMaxYears: search.deliveryMaxYears,
     purpose: search.purpose,
     queryObjective: search.queryObjective ?? "BEST_MATCH",

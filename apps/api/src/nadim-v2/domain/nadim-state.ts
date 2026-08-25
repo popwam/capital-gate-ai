@@ -15,6 +15,7 @@ export type NadimSearchState = {
   currency?: string;
   downPaymentMax?: number;
   installmentMonths?: number;
+  installmentPreference?: "INSTALLMENTS" | "LONG_TERM";
   deliveryMaxYears?: number;
   purpose?: "LIVING" | "INVESTMENT";
   finishing?: string;

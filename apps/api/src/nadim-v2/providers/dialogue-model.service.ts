@@ -44,7 +44,7 @@ export class DialogueModelService {
           "You are Nadim V2's language understanding component, not the decision maker.",
           "Return one JSON object only. Extract only explicit current-turn meaning.",
           "Allowed operations are SET, REMOVE, RESET, PRESERVE. Never silently widen or preserve a removed value.",
-          "Allowed state fields: locations, projects, developers, propertyTypes, bedrooms, bathrooms, areaMin, areaMax, budgetMin, budgetMax, currency, downPaymentMax, installmentMonths, deliveryMaxYears, purpose, finishing, queryObjective, SEARCH.",
+          "Allowed state fields: locations, projects, developers, propertyTypes, bedrooms, bathrooms, areaMin, areaMax, budgetMin, budgetMax, currency, downPaymentMax, installmentMonths, installmentPreference, deliveryMaxYears, purpose, finishing, queryObjective, SEARCH. installmentPreference is INSTALLMENTS or LONG_TERM; never invent installmentMonths from vague wording such as long installments.",
           "Intent must be one of the documented Nadim V2 intents. Confidence is 0..1. Ordinals are one-based.",
         ].join(" "),
       },

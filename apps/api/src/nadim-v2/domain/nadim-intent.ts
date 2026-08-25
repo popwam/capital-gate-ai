@@ -11,7 +11,7 @@ export type NadimIntentType = (typeof NADIM_INTENTS)[number];
 export const STATE_FIELDS = [
   "locations", "projects", "developers", "propertyTypes", "bedrooms", "bathrooms",
   "areaMin", "areaMax", "budgetMin", "budgetMax", "currency", "downPaymentMax",
-  "installmentMonths", "deliveryMaxYears", "purpose", "finishing", "queryObjective",
+  "installmentMonths", "installmentPreference", "deliveryMaxYears", "purpose", "finishing", "queryObjective",
 ] as const;
 export type StateField = (typeof STATE_FIELDS)[number];
 export type StateOperation = { operation: "SET" | "REMOVE" | "RESET" | "PRESERVE"; field?: StateField | "SEARCH"; value?: unknown };

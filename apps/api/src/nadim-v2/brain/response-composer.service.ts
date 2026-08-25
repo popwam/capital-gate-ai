@@ -36,7 +36,8 @@ export class ResponseComposerService {
     const fallback = this.deterministic(input);
     const values = dataOf(input.toolResults);
     const factual = input.plan.steps.length > 0;
-    if (factual || !this.dialogue.available()) return { reply: fallback };
+    const searchTruthRequired = input.plan.goal === "PROPERTY_SEARCH";
+    if (factual || searchTruthRequired || !this.dialogue.available()) return { reply: fallback };
     try {
       const model = await this.dialogue.compose({
         userMessage: input.userMessage,
@@ -47,6 +48,7 @@ export class ResponseComposerService {
         deterministicFallback: fallback,
       }, input.trace);
       if (!this.safeActionClaims(model.value, input.executedActions)) return { reply: fallback };
+      if (!this.safeInventoryClaims(model.value, input.toolResults)) return { reply: fallback };
       return { reply: model.value, model: { provider: model.provider, model: model.model, fallbackUsed: model.fallbackUsed, latencyMs: model.latencyMs } };
     } catch {
       return { reply: fallback };
@@ -64,7 +66,11 @@ export class ResponseComposerService {
     if (input.understanding.intent === "GREETING") return ar ? "أهلًا، أنا نديم. قولّي بتدور على إيه وأنا أبدأ بالمعلومات المتاحة." : "Hi, I’m Nadim. Tell me what you’re looking for and I’ll start with the available data.";
     if (input.understanding.intent === "RESET_SEARCH") return ar ? "بدأت بحث جديد ومسحت شروط البحث السابقة." : "I started a new search and cleared the previous search constraints.";
     if (input.plan.goal === "PROPERTY_SEARCH") {
-      if (!values.length) {
+      const searchResult = input.toolResults.find((result) => result.tool === "PROPERTY_SEARCH");
+      if (!searchResult) return ar ? "البحث لم يتم تنفيذه لسه، لذلك مقدرش أحدد إذا كانت فيه نتائج متاحة." : "The search has not run yet, so I cannot determine whether results are available.";
+      if (!searchResult.ok || !Array.isArray(searchResult.data)) return ar ? "تعذر تنفيذ البحث في البيانات الموثقة حاليًا، لذلك مش هفترض حالة المخزون." : "The verified search could not run, so I will not infer inventory status.";
+      const searchValues = searchResult.data as any[];
+      if (!searchValues.length) {
         const blocker = input.state.search.budgetMax != null
           ? (ar ? `الميزانية القصوى ${money(input.state.search.budgetMax, input.state.search.currency, input.state.locale)}` : `the maximum budget of ${money(input.state.search.budgetMax, input.state.search.currency, input.state.locale)}`)
           : input.state.search.locations.length ? (ar ? `الموقع ${input.state.search.locations.join("، ")}` : `the location ${input.state.search.locations.join(", ")}`) : undefined;
@@ -72,12 +78,12 @@ export class ResponseComposerService {
           ? `ملقتش تطابق دقيق بالشروط الحالية${blocker ? `، وأقرب قيد محتمل هو ${blocker}` : ""}. أقدر أغيّر قيد واحد، لكن مش هوسّع البحث من غير موافقتك.`
           : `I found no exact match under the current constraints${blocker ? `; a likely blocker is ${blocker}` : ""}. I can relax one constraint, but I will not widen the search without your approval.`;
       }
-      const lines = values.slice(0, 5).map((unit, index) => {
+      const lines = searchValues.slice(0, 5).map((unit, index) => {
         const price = money(unit.price, unit.currency ?? "EGP", input.state.locale);
         const project = unit.project?.name;
         return `${index + 1}. ${[unit.externalUnitId ?? unit.id, unit.unitType, price, project].filter(Boolean).join(" · ")}`;
       });
-      return [ar ? `لقيت ${values.length} اختيارات مطابقة من البيانات الموثقة:` : `I found ${values.length} matches in the verified inventory:`, ...lines].join("\n");
+      return [ar ? `لقيت ${searchValues.length} اختيارات مطابقة من البيانات الموثقة:` : `I found ${searchValues.length} matches in the verified inventory:`, ...lines].join("\n");
     }
     if (input.plan.goal === "COMPARISON") {
       if (!values.length) return ar ? "بيانات المقارنة مش متاحة حاليًا." : "Comparison data is unavailable right now.";
@@ -114,5 +120,12 @@ export class ResponseComposerService {
   private safeActionClaims(reply: string, actions: ExecutedAction[]) {
     if (actions.some((action) => action.status === "SUCCEEDED")) return true;
     return !/(?:تم\s+(?:الحجز|التسجيل|الإرسال|تأكيد|تنفيذ)|booked|reserved|successfully\s+(?:created|sent|scheduled|completed))/iu.test(reply);
+  }
+
+  private safeInventoryClaims(reply: string, toolResults: NadimToolResult[]) {
+    const claimsZeroInventory = /(?:ملقتش|مفيش\s+(?:نتائج|وحدات)|لا\s+توجد\s+(?:نتائج|وحدات)|no\s+(?:results|available\s+units|inventory)|nothing\s+matched)/iu.test(reply);
+    if (!claimsZeroInventory) return true;
+    const search = toolResults.find((result) => result.tool === "PROPERTY_SEARCH");
+    return Boolean(search?.ok && Array.isArray(search.data) && search.data.length === 0);
   }
 }

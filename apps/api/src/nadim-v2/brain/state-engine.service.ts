@@ -72,6 +72,8 @@ export class StateEngineService {
       search.purpose = operation.value as NadimSearchState["purpose"];
     } else if (field === "queryObjective" && ["BEST_MATCH", "CHEAPEST", "MOST_EXPENSIVE"].includes(String(operation.value))) {
       search.queryObjective = operation.value as NadimSearchState["queryObjective"];
+    } else if (field === "installmentPreference" && ["INSTALLMENTS", "LONG_TERM"].includes(String(operation.value))) {
+      search.installmentPreference = operation.value as NadimSearchState["installmentPreference"];
     } else if (["currency", "finishing"].includes(field) && typeof operation.value === "string" && operation.value.trim()) {
       (search as Record<string, unknown>)[field] = operation.value.trim().slice(0, 80);
     }

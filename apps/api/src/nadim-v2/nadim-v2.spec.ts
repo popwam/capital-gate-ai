@@ -7,6 +7,7 @@ import { ActionPolicyService } from "./brain/action-policy.service";
 import { PlannerService } from "./brain/planner.service";
 import { ResponseComposerService } from "./brain/response-composer.service";
 import { StateEngineService } from "./brain/state-engine.service";
+import { ToolExecutorService } from "./brain/tool-executor.service";
 import { UnderstandingService } from "./brain/understanding.service";
 import { NadimUnderstanding } from "./domain/nadim-intent";
 import { initialNadimState, NadimState } from "./domain/nadim-state";
@@ -67,6 +68,55 @@ test("5 combined location budget and bedrooms remain independent", async () => {
   assert.deepEqual({ locations: next.search.locations, bedrooms: next.search.bedrooms, budgetMax: next.search.budgetMax }, { locations: ["زايد"], bedrooms: 4, budgetMax: 12_000_000 });
 });
 
+test("compound Arabic search dominates installment wording and executes property search", async () => {
+  const intent = await understand("عايز شقة 3 غرف في التجمع بحد أقصى 8 مليون وتقسيط طويل");
+  const current = stateEngine.apply(state(), intent, { channel: "WEB" });
+  const plan = planner.plan(intent, current);
+  let searches = 0;
+  let trustedIntent: any;
+  const executor = new ToolExecutorService({
+    searchProperties: async (input: any) => { searches += 1; trustedIntent = input; return []; },
+  } as any, {} as any);
+  const results = await executor.execute(plan, current);
+  assert.equal(intent.intent, "PROPERTY_SEARCH");
+  assert.equal(plan.steps[0].tool, "PROPERTY_SEARCH");
+  assert.equal(searches, 1);
+  assert.equal(results[0].tool, "PROPERTY_SEARCH");
+  assert.equal(current.search.budgetMax, 8_000_000);
+  assert.equal(current.search.installmentPreference, "LONG_TERM");
+  assert.equal(current.search.installmentMonths, undefined);
+  assert.deepEqual(trustedIntent.softPreferences, ["LONG_TERM_INSTALLMENTS"]);
+});
+
+test("installment preference remains a new property search when requesting a property", async () => {
+  for (const message of ["عايز شقة بالتقسيط في زايد", "عايز شقة وتقسيط طويل"]) {
+    const intent = await understand(message);
+    const current = stateEngine.apply(state(), intent, { channel: "WEB" });
+    assert.equal(intent.intent, "PROPERTY_SEARCH", message);
+    assert.equal(planner.plan(intent, current).steps[0].tool, "PROPERTY_SEARCH", message);
+  }
+});
+
+test("payment-plan questions remain questions about a selected unit", async () => {
+  assert.equal((await understand("نظام التقسيط بتاع الوحدة دي إيه؟")).intent, "PAYMENT_PLAN_QUESTION");
+  const selected = state({ selectedUnitId: "unit-1" });
+  const intent = await understand("المقدم كام والتقسيط على كام سنة؟", selected);
+  assert.equal(intent.intent, "PAYMENT_PLAN_QUESTION");
+  assert.equal(planner.plan(intent, selected).steps[0].tool, "GET_PAYMENT_PLAN");
+});
+
+test("only active search state turns installment changes into MODIFY_SEARCH", async () => {
+  const freshIntent = await understand("عايز شقة وتقسيط طويل");
+  assert.equal(freshIntent.intent, "PROPERTY_SEARCH");
+  const previous = state({ search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"] } });
+  const modification = await understand("خليها بالتقسيط على مدة أطول", previous);
+  const current = stateEngine.apply(previous, modification, { channel: "WEB" });
+  assert.equal(modification.intent, "MODIFY_SEARCH");
+  assert.equal(current.search.installmentPreference, "LONG_TERM");
+  assert.deepEqual(current.search.locations, ["التجمع"]);
+  assert.equal(planner.plan(modification, current).steps[0].tool, "PROPERTY_SEARCH");
+});
+
 test("6 budget modification preserves location and bedrooms", async () => {
   const firstIntent = await understand("عايز شقة في التجمع 3 غرف تحت 8 مليون");
   const first = stateEngine.apply(state(), firstIntent, { channel: "WEB" });
@@ -104,9 +154,28 @@ test("9 no exact match is stated honestly", async () => {
 
 test("10 no-match does not mutate or widen constraints", async () => {
   const current = state({ search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: [], bedrooms: 3, budgetMax: 5_000_000 } });
-  await composer.compose({ userMessage: "x", understanding: { intent: "PROPERTY_SEARCH", confidence: 1, operations: [], ordinalReferences: [], actionRequested: false }, state: current, plan: { goal: "PROPERTY_SEARCH", steps: [] }, toolResults: [], proposedActions: [], executedActions: [] });
+  const reply = await composer.compose({ userMessage: "x", understanding: { intent: "PROPERTY_SEARCH", confidence: 1, operations: [], ordinalReferences: [], actionRequested: false }, state: current, plan: { goal: "PROPERTY_SEARCH", steps: [] }, toolResults: [], proposedActions: [], executedActions: [] });
   assert.equal(current.search.budgetMax, 5_000_000);
   assert.deepEqual(current.search.locations, ["التجمع"]);
+  assert.doesNotMatch(reply.reply, /(?:ملقتش|مفيش\s+(?:نتائج|وحدات)|no results|nothing matched)/iu);
+});
+
+test("model composition cannot claim zero inventory when PROPERTY_SEARCH did not run", async () => {
+  const unsafeModel: any = {
+    available: () => true,
+    compose: async () => ({ value: "مفيش وحدات متاحة", provider: "test", model: "test", fallbackUsed: false, latencyMs: 1 }),
+  };
+  const guardedComposer = new ResponseComposerService(unsafeModel);
+  const reply = await guardedComposer.compose({
+    userMessage: "ساعدني",
+    understanding: { intent: "SMALL_TALK", confidence: 1, operations: [], ordinalReferences: [], actionRequested: false },
+    state: state(),
+    plan: { goal: "SMALL_TALK", steps: [] },
+    toolResults: [],
+    proposedActions: [],
+    executedActions: [],
+  });
+  assert.doesNotMatch(reply.reply, /(?:ملقتش|مفيش\s+(?:نتائج|وحدات)|no results|nothing matched)/iu);
 });
 
 test("11 ordinal reference resolves the second persisted result", async () => {

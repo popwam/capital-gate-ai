@@ -42,7 +42,17 @@ function ordinals(text: string) {
   return [...new Set(found)];
 }
 
-function explicitUnderstanding(message: string): NadimUnderstanding {
+function hasActiveSearch(state: NadimState) {
+  const search = state.search;
+  return search.locations.length > 0
+    || search.projects.length > 0
+    || search.developers.length > 0
+    || search.propertyTypes.length > 0
+    || Object.entries(search).some(([field, value]) => !["locations", "projects", "developers", "propertyTypes"].includes(field) && value !== undefined)
+    || state.lastResultIds.length > 0;
+}
+
+function explicitUnderstanding(message: string, state: NadimState): NadimUnderstanding {
   const text = normalizedText(message);
   const lower = text.toLowerCase();
   const operations: StateOperation[] = [];
@@ -60,7 +70,7 @@ function explicitUnderstanding(message: string): NadimUnderstanding {
   const bathroom = text.match(/(\d{1,2})\s*(?:حمام|bathrooms?)/iu);
   if (bathroom) operations.push({ operation: "SET", field: "bathrooms", value: Number(bathroom[1]) });
 
-  const maxBudget = text.match(/(?:تحت|لحد|حد أقصى|حد اقصى|الميزانية|ميزانية|budget(?:\s+(?:is|max))?|up to|under)\s*(\d[\d,.]*)\s*(مليون|million|m)?/iu);
+  const maxBudget = text.match(/(?:تحت|لحد|ب?حد أقصى|ب?حد اقصى|الميزانية|ميزانية|budget(?:\s+(?:is|max))?|up to|under)\s*(\d[\d,.]*)\s*(مليون|million|m)?/iu);
   if (maxBudget) {
     const value = amount(maxBudget[1], maxBudget[2], /(?:الميزانية|ميزانية)/u.test(maxBudget[0]));
     if (value !== undefined) operations.push({ operation: "SET", field: "budgetMax", value });
@@ -86,15 +96,24 @@ function explicitUnderstanding(message: string): NadimUnderstanding {
   const references = ordinals(text);
   const unitReference = text.match(/\b(?:unit|وحدة)\s*[:#-]?\s*([\p{L}\d][\p{L}\d_\-/ ]{1,40})/iu)?.[1]?.trim();
   const hasSearch = /(?:عايز|عاوز|بدور|دورلي|وريني|ابحث|find|show me|looking for|search)/iu.test(text);
+  const modifyingSearch = /(?:خليها|خليه|نفس المواصفات|غي[ّ]?ر|عد[ّ]?ل|بدل|make it|change|instead)/iu.test(text);
+  const paymentPreferenceContext = hasSearch || (hasActiveSearch(state) && modifyingSearch);
+  if (paymentPreferenceContext && /(?:تقسيط طويل|مدة أطول|مدة اطول|long(?:er)? installments?)/iu.test(text)) {
+    operations.push({ operation: "SET", field: "installmentPreference", value: "LONG_TERM" });
+  } else if (paymentPreferenceContext && /(?:بالتقسيط|تقسيط|installments?)/iu.test(text)) {
+    operations.push({ operation: "SET", field: "installmentPreference", value: "INSTALLMENTS" });
+  }
   const hasMutation = operations.some((operation) => operation.operation !== "PRESERVE") && !reset;
+  const activeSearch = hasActiveSearch(state);
+  const paymentQuestion = /(?:نظام التقسيط|خطة السداد|خطط السداد|المقدم\s+كام|التقسيط\s+على\s+كام\s*(?:سنة|سنين|شهر)?|payment plan|down payment|how (?:many|long).*(?:installment|year|month))/iu.test(text);
   let intent: NadimUnderstanding["intent"] = "UNKNOWN";
   if (/^(?:اهلا|أهلا|السلام عليكم|صباح الخير|مساء الخير|hi|hello|hey)(?=\s|$|[،,.!?])/iu.test(text)) intent = "GREETING";
   if (hasSearch) intent = "PROPERTY_SEARCH";
-  else if (hasMutation) intent = "MODIFY_SEARCH";
+  else if (hasMutation) intent = activeSearch ? "MODIFY_SEARCH" : "PROPERTY_SEARCH";
   if (reset) intent = "RESET_SEARCH";
   if (/(?:قارن|مقارنة|compare)/iu.test(text)) intent = "COMPARISON";
   else if (/(?:صور|صورة|photos?|images?|media)/iu.test(text)) intent = "MEDIA_REQUEST";
-  else if (/(?:خطة السداد|خطط السداد|تقسيط|installments?|payment plan)/iu.test(text)) intent = "PAYMENT_PLAN_QUESTION";
+  else if (paymentQuestion && !["PROPERTY_SEARCH", "MODIFY_SEARCH"].includes(intent)) intent = "PAYMENT_PLAN_QUESTION";
   else if (/(?:السعر|سعرها|سعره|price|how much)/iu.test(text)) intent = "PRICE_QUESTION";
   else if (/(?:متاح|متاحة|availability|available)/iu.test(text)) intent = "AVAILABILITY_QUESTION";
   else if (/(?:الموقع|فين|location|where is)/iu.test(text) && !hasSearch) intent = "LOCATION_QUESTION";
@@ -120,7 +139,7 @@ export class UnderstandingService {
   constructor(private readonly dialogue: DialogueModelService) {}
 
   async understand(message: string, state: NadimState, trace: { conversationId?: string; requestId?: string } = {}): Promise<UnderstandingResult> {
-    const deterministic = explicitUnderstanding(message);
+    const deterministic = explicitUnderstanding(message, state);
     if (!this.dialogue.available()) return { understanding: deterministic };
     try {
       const result = await this.dialogue.understand(message, state, trace);
