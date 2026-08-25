@@ -16,6 +16,8 @@ WEB | WHATSAPP | PHONE | N8N
 Understand -> State -> Plan -> Tools -> Action Policy -> Compose -> Persist
 ```
 
+The first arrow always starts with an inbound customer turn. Nadim does not initiate conversations, send an automatic opening, or expose an opening endpoint. A greeting-only first message may receive a short introduction; a first message that already contains a property request goes directly to useful work.
+
 `NADIM_V2_ENABLED=true` is required to process a turn. The endpoint is service-to-service protected by `x-nadim-gateway-secret`; it is not public-user authentication and must be kept on Railway private networking for n8n/provider gateways.
 
 ## Pipeline
@@ -27,6 +29,48 @@ Understand -> State -> Plan -> Tools -> Action Policy -> Compose -> Persist
 5. **Action policy** permits proposals only for explicit customer requests and checks prerequisites. Execution goes through the private automation API, never directly from model output.
 6. **Compose** receives verified tool/action results. Deterministic responses are used for property truth and action status; the dialogue model is limited to non-factual natural language composition.
 7. **Persist** writes updated state and a complete turn trace transactionally.
+
+## Personality and adaptive language
+
+Nadim has one stable personality: an intelligent, calm, warm, confident, concise, commercially aware, trustworthy, polished and practical real-estate advisor. He is helpful without being pushy and human without becoming over-familiar. This identity does not change with language; only its expression changes.
+
+Language style is detected before understanding and remains isolated from intent, search constraints, tool execution and action policy. The supported response styles are:
+
+- `AR_EGYPTIAN`: polished, natural Egyptian Arabic;
+- `AR_GULF`: neutral Gulf Arabic without Egyptian fillers;
+- `AR_FORMAL`: clear modern Arabic without bureaucratic phrasing;
+- `EN_US`: conversational American English;
+- `FRANCO_ARABIC`: readable Arabizi using Latin script;
+- `MIXED_AR_EN`: restrained mirroring of Arabic/English code-switching;
+- `UNKNOWN`: resolved from conversation preference or locale fallback.
+
+Resolution priority is an explicit current language instruction, an existing explicit preference, the latest confidently detected customer wording, recent conversation style, persisted preference, then locale. Instructions such as `كمل مصري`, `كلمني خليجي`, `رد بالعربي`, `رد بالإنجليزي`, `continue in English`, and `كلمني فرانكو` persist until another explicit language instruction changes them. Automatic detection uses conservative dialect markers and does not guess a Gulf country.
+
+The style state is persisted inside the existing `NadimConversation.state` JSON, separately from `search`:
+
+```json
+{
+  "languageStyle": {
+    "detected": "AR_EGYPTIAN",
+    "confidence": 0.95,
+    "preferredResponseStyle": "AR_EGYPTIAN",
+    "explicitOverride": false,
+    "changedThisTurn": false
+  }
+}
+```
+
+Changing language cannot reset locations, budget, bedrooms, selected results, or any other search state. For example, an Egyptian search can switch to `Explain the payment plan in English` and later `كمل مصري` while retaining the same unit and constraints.
+
+Greeting behavior is contextual:
+
+- `السلام عليكم` on the first inbound turn can receive `وعليكم السلام، أنا نديم. قولّي بتدور على إيه وأنا أساعدك.`
+- `Hi` can receive `Hey, I’m Nadim. What are you looking for?`
+- `عايز شقة 3 غرف في التجمع` skips the introduction and answers the request directly.
+
+Deterministic user-visible responses are styled through the same response-style service, including clarification, no-match, unknown facts, provider failure, reset, constraint changes, result presentation and action status. Typical equivalents include `مش ظاهر عندي نظام تقسيط موثّق للوحدة دي، فمش هخمن.`, `ما عندي خطة دفع موثقة للوحدة هذي، فما راح أخمن.`, `I don’t have a verified payment plan for that unit, so I won’t guess.`, and `mesh zaher 3andy payment plan mota2aked lel wa7da di, fa mesh hakhamen.`
+
+Personality remains presentation-only. Result IDs, ordering, selection, price, rooms, area, availability, payment terms and action outcomes come from trusted deterministic results. Factual turns use deterministic rendering. The model receives the selected style, stable personality and verified context for eligible natural composition, but hard inventory and action-claim guards remain authoritative.
 
 ## Trusted and untrusted data
 

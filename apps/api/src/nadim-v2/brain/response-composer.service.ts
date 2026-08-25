@@ -1,8 +1,10 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { ExecutedAction, ProposedAction } from "../domain/nadim-action";
 import { NadimUnderstanding } from "../domain/nadim-intent";
 import { NadimPlan, NadimToolResult } from "../domain/nadim-plan";
 import { NadimState } from "../domain/nadim-state";
+import { NADIM_CORE_PERSONALITY } from "../personality/nadim-personality";
+import { ResponseStyleService } from "../personality/response-style.service";
 import { DialogueModelService } from "../providers/dialogue-model.service";
 
 export type CompositionResult = {
@@ -10,40 +12,51 @@ export type CompositionResult = {
   model?: { provider: string; model: string; fallbackUsed: boolean; latencyMs: number };
 };
 
-function money(value: unknown, currency = "EGP", locale = "ar-EG") {
-  const number = Number(value);
-  return Number.isFinite(number) ? new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(number) + ` ${currency}` : undefined;
-}
+type CompositionInput = {
+  userMessage: string;
+  understanding: NadimUnderstanding;
+  state: NadimState;
+  plan: NadimPlan;
+  toolResults: NadimToolResult[];
+  proposedActions: ProposedAction[];
+  executedActions: ExecutedAction[];
+  trace?: { conversationId?: string; requestId?: string };
+};
 
-function dataOf(results: NadimToolResult[]) {
-  return results.filter((result) => result.ok).flatMap((result) => Array.isArray(result.data) ? result.data : result.data == null ? [] : [result.data]) as any[];
+function dataOf(result?: NadimToolResult) {
+  if (!result?.ok || result.data == null) return [];
+  return Array.isArray(result.data) ? result.data : [result.data];
 }
 
 @Injectable()
 export class ResponseComposerService {
-  constructor(private readonly dialogue: DialogueModelService) {}
+  private readonly responseStyle: ResponseStyleService;
 
-  async compose(input: {
-    userMessage: string;
-    understanding: NadimUnderstanding;
-    state: NadimState;
-    plan: NadimPlan;
-    toolResults: NadimToolResult[];
-    proposedActions: ProposedAction[];
-    executedActions: ExecutedAction[];
-    trace?: { conversationId?: string; requestId?: string };
-  }): Promise<CompositionResult> {
+  constructor(
+    private readonly dialogue: DialogueModelService,
+    @Optional() responseStyle?: ResponseStyleService,
+  ) {
+    this.responseStyle = responseStyle ?? new ResponseStyleService();
+  }
+
+  async compose(input: CompositionInput): Promise<CompositionResult> {
     const fallback = this.deterministic(input);
-    const values = dataOf(input.toolResults);
-    const factual = input.plan.steps.length > 0;
-    const searchTruthRequired = input.plan.goal === "PROPERTY_SEARCH";
-    if (factual || searchTruthRequired || !this.dialogue.available()) return { reply: fallback };
+    const deterministicRequired = input.plan.steps.length > 0
+      || input.plan.goal === "PROPERTY_SEARCH"
+      || Boolean(input.plan.clarification)
+      || input.proposedActions.length > 0
+      || input.executedActions.length > 0
+      || input.state.languageStyle?.changedThisTurn
+      || ["GREETING", "RESET_SEARCH"].includes(input.understanding.intent);
+    if (deterministicRequired || !this.dialogue.available()) return { reply: fallback };
     try {
       const model = await this.dialogue.compose({
         userMessage: input.userMessage,
         intent: input.understanding,
         state: input.state,
-        verifiedFacts: values,
+        selectedLanguageStyle: input.state.languageStyle,
+        personality: NADIM_CORE_PERSONALITY,
+        verifiedFacts: input.toolResults.filter((result) => result.ok).map((result) => ({ tool: result.tool, data: result.data })),
         actionResults: input.executedActions,
         deterministicFallback: fallback,
       }, input.trace);
@@ -55,75 +68,63 @@ export class ResponseComposerService {
     }
   }
 
-  private deterministic(input: Parameters<ResponseComposerService["compose"]>[0]) {
-    const ar = input.state.locale.toLowerCase().startsWith("ar");
-    const values = dataOf(input.toolResults);
-    const failedTool = input.toolResults.some((result) => !result.ok);
-    if (input.plan.clarification === "RESULT_REFERENCE_NOT_FOUND") return ar ? "مش قادر أحدد الاختيار المقصود من النتائج الحالية. قولّي رقم الاختيار الظاهر عندك." : "I cannot resolve that reference from the current results. Tell me the visible option number.";
-    if (input.plan.clarification === "COMPARISON_SELECTION_REQUIRED") return ar ? "اختار وحدتين على الأقل من النتائج الحالية عشان أقارنهم." : "Select at least two units from the current results to compare them.";
-    if (input.plan.clarification === "UNIT_SELECTION_REQUIRED") return ar ? "حدد الوحدة المقصودة من النتائج، مثل: التانية." : "Select the unit you mean, for example: the second one.";
-    if (input.executedActions.length) return this.actionReply(input.executedActions, ar);
-    if (input.understanding.intent === "GREETING") return ar ? "أهلًا، أنا نديم. قولّي بتدور على إيه وأنا أبدأ بالمعلومات المتاحة." : "Hi, I’m Nadim. Tell me what you’re looking for and I’ll start with the available data.";
-    if (input.understanding.intent === "RESET_SEARCH") return ar ? "بدأت بحث جديد ومسحت شروط البحث السابقة." : "I started a new search and cleared the previous search constraints.";
+  private deterministic(input: CompositionInput) {
+    const style = this.responseStyle.style(input.state);
+    if (input.plan.clarification) return this.responseStyle.clarification(style, input.plan.clarification);
+    if (input.executedActions.length) return this.responseStyle.actionResult(style, input.executedActions[0]);
+    if (input.proposedActions.length) return this.responseStyle.proposedAction(style, input.proposedActions[0]);
+    if (input.understanding.intent === "GREETING") return this.responseStyle.greeting(style, input.state.revision <= 1, input.userMessage);
+    if (input.state.languageStyle?.changedThisTurn && ["UNKNOWN", "SMALL_TALK"].includes(input.understanding.intent)) return this.responseStyle.languageChanged(style);
+    if (input.understanding.intent === "RESET_SEARCH") return this.responseStyle.reset(style);
+
     if (input.plan.goal === "PROPERTY_SEARCH") {
-      const searchResult = input.toolResults.find((result) => result.tool === "PROPERTY_SEARCH");
-      if (!searchResult) return ar ? "البحث لم يتم تنفيذه لسه، لذلك مقدرش أحدد إذا كانت فيه نتائج متاحة." : "The search has not run yet, so I cannot determine whether results are available.";
-      if (!searchResult.ok || !Array.isArray(searchResult.data)) return ar ? "تعذر تنفيذ البحث في البيانات الموثقة حاليًا، لذلك مش هفترض حالة المخزون." : "The verified search could not run, so I will not infer inventory status.";
-      const searchValues = searchResult.data as any[];
-      if (!searchValues.length) {
-        const blocker = input.state.search.budgetMax != null
-          ? (ar ? `الميزانية القصوى ${money(input.state.search.budgetMax, input.state.search.currency, input.state.locale)}` : `the maximum budget of ${money(input.state.search.budgetMax, input.state.search.currency, input.state.locale)}`)
-          : input.state.search.locations.length ? (ar ? `الموقع ${input.state.search.locations.join("، ")}` : `the location ${input.state.search.locations.join(", ")}`) : undefined;
-        return ar
-          ? `ملقتش تطابق دقيق بالشروط الحالية${blocker ? `، وأقرب قيد محتمل هو ${blocker}` : ""}. أقدر أغيّر قيد واحد، لكن مش هوسّع البحث من غير موافقتك.`
-          : `I found no exact match under the current constraints${blocker ? `; a likely blocker is ${blocker}` : ""}. I can relax one constraint, but I will not widen the search without your approval.`;
-      }
-      const lines = searchValues.slice(0, 5).map((unit, index) => {
-        const price = money(unit.price, unit.currency ?? "EGP", input.state.locale);
-        const project = unit.project?.name;
-        return `${index + 1}. ${[unit.externalUnitId ?? unit.id, unit.unitType, price, project].filter(Boolean).join(" · ")}`;
-      });
-      return [ar ? `لقيت ${searchValues.length} اختيارات مطابقة من البيانات الموثقة:` : `I found ${searchValues.length} matches in the verified inventory:`, ...lines].join("\n");
+      const result = input.toolResults.find((item) => item.tool === "PROPERTY_SEARCH");
+      if (!result) return this.responseStyle.searchNotRun(style);
+      if (!result.ok || !Array.isArray(result.data)) return this.responseStyle.searchFailed(style);
+      const change = input.understanding.intent === "MODIFY_SEARCH"
+        ? this.responseStyle.operationSummary(style, input.state.lastOperations, input.state)
+        : undefined;
+      return result.data.length
+        ? this.responseStyle.searchResults(style, result.data, change)
+        : this.responseStyle.noMatch(style, this.responseStyle.searchBlocker(style, input.state), change);
     }
+
     if (input.plan.goal === "COMPARISON") {
-      if (!values.length) return ar ? "بيانات المقارنة مش متاحة حاليًا." : "Comparison data is unavailable right now.";
-      return [ar ? "مقارنة الوحدات الموثقة:" : "Verified unit comparison:", ...values.map((unit) => `- ${unit.externalUnitId ?? unit.id}: ${[unit.unitType, money(unit.price, unit.currency, input.state.locale), unit.bedrooms != null ? `${unit.bedrooms} ${ar ? "غرف" : "bedrooms"}` : null].filter(Boolean).join(" · ")}`)].join("\n");
+      const result = input.toolResults.find((item) => item.tool === "COMPARE_PROPERTIES");
+      return this.responseStyle.comparison(style, dataOf(result));
     }
     if (input.understanding.intent === "MEDIA_REQUEST") {
-      const media = values.flatMap((value) => value.media ?? []);
-      return media.length ? (ar ? `لقيت ${media.length} ملفات وسائط موثقة للوحدة.` : `I found ${media.length} verified media items for the unit.`) : (ar ? "مفيش صور موثقة متاحة للوحدة حاليًا." : "No verified media is available for this unit right now.");
+      const result = input.toolResults.find((item) => item.tool === "GET_MEDIA");
+      const media = result?.ok && result.data && !Array.isArray(result.data) ? ((result.data as any).media ?? []) : [];
+      return this.responseStyle.media(style, media.length, Boolean(result?.ok));
     }
-    if (input.understanding.intent === "PAYMENT_PLAN_QUESTION") return values.length ? (ar ? `لقيت ${values.length} خطط سداد مفعلة في البيانات الموثقة.` : `I found ${values.length} active verified payment plans.`) : (ar ? "مفيش خطة سداد مفعلة للوحدة في البيانات الحالية." : "No active payment plan is recorded for this unit.");
+    if (input.understanding.intent === "PAYMENT_PLAN_QUESTION") {
+      const result = input.toolResults.find((item) => item.tool === "GET_PAYMENT_PLAN");
+      return this.responseStyle.paymentPlans(style, dataOf(result), Boolean(result?.ok));
+    }
     if (input.understanding.intent === "PRICE_QUESTION") {
-      const unit = values[0];
-      return unit?.price != null ? (ar ? `السعر المسجل للوحدة ${unit.externalUnitId ?? ""} هو ${money(unit.price, unit.currency, input.state.locale)}.` : `The recorded price for unit ${unit.externalUnitId ?? ""} is ${money(unit.price, unit.currency, input.state.locale)}.`) : (ar ? "السعر مش متاح في البيانات الموثقة." : "The price is unavailable in the verified data.");
+      const result = input.toolResults.find((item) => item.tool === "GET_UNIT_FACTS");
+      return this.responseStyle.price(style, dataOf(result)[0]);
     }
     if (input.understanding.intent === "AVAILABILITY_QUESTION") {
-      const availability = values[0];
-      return availability ? (ar ? `حالة الوحدة ${availability.externalUnitId ?? ""}: ${availability.status}.` : `Unit ${availability.externalUnitId ?? ""} status: ${availability.status}.`) : (ar ? "حالة الإتاحة غير معروفة حاليًا." : "Availability is currently unknown.");
+      const result = input.toolResults.find((item) => item.tool === "GET_AVAILABILITY");
+      return this.responseStyle.availability(style, dataOf(result)[0]);
     }
-    if (failedTool) return ar ? "تعذر الوصول للبيانات الموثقة المطلوبة حاليًا، ومش هخمن الإجابة." : "The requested verified data is currently unavailable, so I won’t guess.";
-    return ar ? "محتاج تفاصيل أكتر بسيطة عشان أساعدك بشكل دقيق." : "I need one more detail to help accurately.";
-  }
-
-  private actionReply(actions: ExecutedAction[], ar: boolean) {
-    const succeeded = actions.find((action) => action.status === "SUCCEEDED");
-    if (succeeded) {
-      if (succeeded.type === "CREATE_VIEWING_REQUEST") return ar ? "تم تسجيل طلب المعاينة بنجاح، والفريق يقدر يتابعه الآن." : "The viewing request was recorded successfully and is available to the team.";
-      if (succeeded.type === "CREATE_RESERVATION_REQUEST") return ar ? "تم تسجيل طلب الحجز بنجاح. ده طلب متابعة وليس تأكيد حجز للوحدة." : "The reservation request was recorded successfully. This is a follow-up request, not confirmation that the unit is reserved.";
-      return ar ? "تم تسجيل طلب التواصل بنجاح." : "Your contact request was recorded successfully.";
+    if (["PROPERTY_QUESTION", "LOCATION_QUESTION"].includes(input.understanding.intent)) {
+      const result = input.toolResults.find((item) => item.tool === "GET_UNIT_FACTS" || item.tool === "GET_LOCATION");
+      return result?.ok ? this.responseStyle.comparison(style, dataOf(result)) : this.responseStyle.unknown(style);
     }
-    const failed = actions[0];
-    return ar ? `الطلب لم يتم تنفيذه حاليًا (${failed.errorCode ?? "غير متاح"}).` : `The request was not completed (${failed.errorCode ?? "unavailable"}).`;
+    if (input.toolResults.some((result) => !result.ok)) return this.responseStyle.unknown(style);
+    return this.responseStyle.safeFallback(style);
   }
 
   private safeActionClaims(reply: string, actions: ExecutedAction[]) {
     if (actions.some((action) => action.status === "SUCCEEDED")) return true;
-    return !/(?:تم\s+(?:الحجز|التسجيل|الإرسال|تأكيد|تنفيذ)|booked|reserved|successfully\s+(?:created|sent|scheduled|completed))/iu.test(reply);
+    return !/(?:تم\s+(?:الحجز|التسجيل|الإرسال|تأكيد|تنفيذ)|اتسجل|تسجل|booked|reserved|successfully\s+(?:created|sent|scheduled|completed)|request\s+is\s+recorded)/iu.test(reply);
   }
 
   private safeInventoryClaims(reply: string, toolResults: NadimToolResult[]) {
-    const claimsZeroInventory = /(?:ملقتش|مفيش\s+(?:نتائج|وحدات)|لا\s+توجد\s+(?:نتائج|وحدات)|no\s+(?:results|available\s+units|inventory)|nothing\s+matched)/iu.test(reply);
+    const claimsZeroInventory = /(?:ملقتش|ما\s+لقيت|مفيش\s+(?:نتائج|وحدات)|لا\s+توجد\s+(?:نتائج|وحدات)|mala2etsh|no\s+(?:results|available\s+units|inventory)|nothing\s+matched|didn[’']t\s+find\s+an?\s+exact\s+match)/iu.test(reply);
     if (!claimsZeroInventory) return true;
     const search = toolResults.find((result) => result.tool === "PROPERTY_SEARCH");
     return Boolean(search?.ok && Array.isArray(search.data) && search.data.length === 0);

@@ -149,7 +149,7 @@ test("9 no exact match is stated honestly", async () => {
   const current = stateEngine.apply(state(), intent, { channel: "WEB" });
   const plan = planner.plan(intent, current);
   const reply = await composer.compose({ userMessage: "x", understanding: intent, state: current, plan, toolResults: [{ tool: "PROPERTY_SEARCH", ok: true, data: [], latencyMs: 1 }], proposedActions: [], executedActions: [] });
-  assert.match(reply.reply, /ملقتش تطابق دقيق/u);
+  assert.match(reply.reply, /ملقتش حاجة مطابقة 100%/u);
 });
 
 test("10 no-match does not mutate or widen constraints", async () => {
@@ -203,7 +203,7 @@ test("13 media request uses the selected ordinal result", async () => {
 test("14 verified price reply uses only tool data", async () => {
   const intent: NadimUnderstanding = { intent: "PRICE_QUESTION", confidence: 1, operations: [], ordinalReferences: [], actionRequested: false };
   const reply = await composer.compose({ userMessage: "price", understanding: intent, state: state({ selectedUnitId: "u1" }), plan: planner.plan(intent, state({ selectedUnitId: "u1" })), toolResults: [{ tool: "GET_UNIT_FACTS", ok: true, data: { id: "u1", externalUnitId: "A-1", price: 7_000_000, currency: "EGP" }, latencyMs: 1 }], proposedActions: [], executedActions: [] });
-  assert.match(reply.reply, /[٧7]٬[٠0]{3}٬[٠0]{3} EGP/u);
+  assert.match(reply.reply, /7,000,000 EGP/u);
 });
 
 test("15 payment-plan question is backed by the payment tool", async () => {
@@ -220,7 +220,7 @@ test("16 availability question is backed by availability tool", async () => {
 test("17 unknown fact does not hallucinate", async () => {
   const intent: NadimUnderstanding = { intent: "PRICE_QUESTION", confidence: 1, operations: [], ordinalReferences: [], actionRequested: false };
   const reply = await composer.compose({ userMessage: "price", understanding: intent, state: state({ selectedUnitId: "u1" }), plan: { goal: "PRICE_QUESTION", steps: [{ tool: "GET_UNIT_FACTS", arguments: { unitId: "u1" } }] }, toolResults: [{ tool: "GET_UNIT_FACTS", ok: false, errorCode: "VERIFIED_DATA_NOT_FOUND", latencyMs: 1 }], proposedActions: [], executedActions: [] });
-  assert.match(reply.reply, /مش متاح|تعذر/u);
+  assert.match(reply.reply, /مش موثقة/u);
   assert.doesNotMatch(reply.reply, /مليون/u);
 });
 
@@ -242,7 +242,7 @@ test("20 reservation request proposes a reservation action", async () => {
 test("21 action failure never produces a success claim", async () => {
   const intent = await understand("عايز معاينة");
   const reply = await composer.compose({ userMessage: "x", understanding: intent, state: state({ selectedUnitId: "u1" }), plan: { goal: "VIEWING_REQUEST", steps: [] }, toolResults: [], proposedActions: [], executedActions: [{ type: "CREATE_VIEWING_REQUEST", status: "FAILED", errorCode: "ACTION_LAYER_UNAVAILABLE" }] });
-  assert.match(reply.reply, /لم يتم تنفيذه/u);
+  assert.match(reply.reply, /محصلش تأكيد/u);
   assert.doesNotMatch(reply.reply, /تم تسجيل طلب المعاينة بنجاح/u);
 });
 

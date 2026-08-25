@@ -1,4 +1,4 @@
-import { Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
+import { Injectable, Logger, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { ActionPolicyService } from "./brain/action-policy.service";
 import { PlannerService } from "./brain/planner.service";
@@ -8,11 +8,13 @@ import { ToolExecutorService } from "./brain/tool-executor.service";
 import { UnderstandingService } from "./brain/understanding.service";
 import { NadimTurnResult } from "./domain/nadim-result";
 import { NadimTurnDto } from "./dto/nadim-turn.dto";
+import { LanguageStyleDetectorService } from "./personality/language-style-detector.service";
 import { nadimTurnRequestHash, NadimConversationService } from "./persistence/nadim-conversation.service";
 
 @Injectable()
 export class NadimV2Service {
   private readonly logger = new Logger(NadimV2Service.name);
+  private readonly languageStyles: LanguageStyleDetectorService;
 
   constructor(
     private readonly conversations: NadimConversationService,
@@ -22,7 +24,10 @@ export class NadimV2Service {
     private readonly tools: ToolExecutorService,
     private readonly actionPolicy: ActionPolicyService,
     private readonly composer: ResponseComposerService,
-  ) {}
+    @Optional() languageStyles?: LanguageStyleDetectorService,
+  ) {
+    this.languageStyles = languageStyles ?? new LanguageStyleDetectorService();
+  }
 
   async turn(input: NadimTurnDto, requestId: string = randomUUID(), idempotencyKey?: string): Promise<NadimTurnResult> {
     if (process.env.NADIM_V2_ENABLED !== "true") {
@@ -50,8 +55,9 @@ export class NadimV2Service {
     }
     try {
     const trace = { requestId, conversationId: resolved.conversation.id };
-    const understood = await this.understanding.understand(input.message, resolved.state, trace);
-    let state = this.stateEngine.apply(resolved.state, understood.understanding, {
+    const styledPrevious = this.languageStyles.apply(resolved.state, input.message, input.locale);
+    const understood = await this.understanding.understand(input.message, styledPrevious, trace);
+    let state = this.stateEngine.apply(styledPrevious, understood.understanding, {
       channel: input.channel,
       customerId: resolved.customerId,
       externalUserId: input.externalUserId,
@@ -127,7 +133,7 @@ export class NadimV2Service {
       claimedTurnId,
       response,
     });
-    this.logger.log(`NadimV2Turn ${JSON.stringify({ requestId, conversationId: resolved.conversation.id, customerId: state.customerId ?? null, channel: input.channel, brainVersion: "v2", intent: understood.understanding.intent, tools: plan.steps.map((step) => step.tool), modelProvider: model?.provider ?? "deterministic", model: model?.model ?? null, fallbackUsed, toolLatencyMs: toolResults.reduce((sum, result) => sum + result.latencyMs, 0), proposedActions: proposedActions.map((action) => action.type), actionResults: executedActions.map((action) => ({ type: action.type, status: action.status, errorCode: action.errorCode })), success: true, latencyMs })}`);
+    this.logger.log(`NadimV2Turn ${JSON.stringify({ requestId, conversationId: resolved.conversation.id, customerId: state.customerId ?? null, channel: input.channel, brainVersion: "v2", intent: understood.understanding.intent, languageStyle: state.languageStyle.preferredResponseStyle, tools: plan.steps.map((step) => step.tool), modelProvider: model?.provider ?? "deterministic", model: model?.model ?? null, fallbackUsed, toolLatencyMs: toolResults.reduce((sum, result) => sum + result.latencyMs, 0), proposedActions: proposedActions.map((action) => action.type), actionResults: executedActions.map((action) => ({ type: action.type, status: action.status, errorCode: action.errorCode })), success: true, latencyMs })}`);
     return response;
     } catch (error) {
       if (claimedTurnId) {

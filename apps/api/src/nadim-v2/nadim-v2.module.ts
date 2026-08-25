@@ -13,6 +13,8 @@ import { UnderstandingService } from "./brain/understanding.service";
 import { NadimV2Controller } from "./nadim-v2.controller";
 import { NadimV2Service } from "./nadim-v2.service";
 import { NadimConversationService } from "./persistence/nadim-conversation.service";
+import { LanguageStyleDetectorService } from "./personality/language-style-detector.service";
+import { ResponseStyleService } from "./personality/response-style.service";
 import { BedrockGlmProvider } from "./providers/bedrock-glm.provider";
 import { DialogueModelService } from "./providers/dialogue-model.service";
 import { GroqDialogueProvider } from "./providers/groq-dialogue.provider";
@@ -35,6 +37,8 @@ import { NadimGatewayGuard } from "./security/nadim-gateway.guard";
     AutomationActionClient,
     ActionPolicyService,
     ResponseComposerService,
+    LanguageStyleDetectorService,
+    ResponseStyleService,
     NadimConversationService,
     NadimGatewayGuard,
     NadimV2Service,

@@ -106,6 +106,9 @@ function explicitUnderstanding(message: string, state: NadimState): NadimUnderst
   const hasMutation = operations.some((operation) => operation.operation !== "PRESERVE") && !reset;
   const activeSearch = hasActiveSearch(state);
   const paymentQuestion = /(?:نظام التقسيط|خطة السداد|خطط السداد|المقدم\s+كام|التقسيط\s+على\s+كام\s*(?:سنة|سنين|شهر)?|payment plan|down payment|how (?:many|long).*(?:installment|year|month))/iu.test(text);
+  const languageOnly = Boolean(state.languageStyle?.changedThisTurn)
+    && !hasMutation
+    && !/(?:شقة|فيلا|وحدة|مشروع|سعر|ميزانية|تقسيط|مقدم|غرف|حمام|مساحة|متاح|صور|معاينة|حجز|apartment|villa|unit|project|price|budget|payment|bedroom|bathroom|area|available|media|viewing|reservation)/iu.test(text);
   let intent: NadimUnderstanding["intent"] = "UNKNOWN";
   if (/^(?:اهلا|أهلا|السلام عليكم|صباح الخير|مساء الخير|hi|hello|hey)(?=\s|$|[،,.!?])/iu.test(text)) intent = "GREETING";
   if (hasSearch) intent = "PROPERTY_SEARCH";
@@ -119,9 +122,10 @@ function explicitUnderstanding(message: string, state: NadimState): NadimUnderst
   else if (/(?:الموقع|فين|location|where is)/iu.test(text) && !hasSearch) intent = "LOCATION_QUESTION";
   if (/(?:احجز|حجز|reservation|reserve)/iu.test(text)) intent = "RESERVATION_REQUEST";
   else if (/(?:معاينة|viewing|visit)/iu.test(text)) intent = "VIEWING_REQUEST";
-  else if (/(?:كلمني|اتصل بي|اتصلوا|callback|call me)/iu.test(text)) intent = "CALLBACK_REQUEST";
+  else if (!languageOnly && /(?:كلمني|اتصل بي|اتصلوا|callback|call me)/iu.test(text)) intent = "CALLBACK_REQUEST";
   else if (/(?:موظف|حد من المبيعات|human|sales agent|representative)/iu.test(text)) intent = "HUMAN_HANDOFF";
   else if (/(?:سيب بياناتي|مهتم|contact me|lead)/iu.test(text)) intent = "LEAD_REQUEST";
+  if (languageOnly) intent = "SMALL_TALK";
 
   return {
     intent,

@@ -2,6 +2,7 @@ import { Injectable, Optional } from "@nestjs/common";
 import { AIUsageService } from "../../providers/ai-usage.service";
 import { NadimUnderstanding } from "../domain/nadim-intent";
 import { NadimState } from "../domain/nadim-state";
+import { NADIM_PERSONALITY_PROMPT } from "../personality/nadim-personality";
 import { BedrockGlmProvider } from "./bedrock-glm.provider";
 import { DialogueMessage, DialogueProvider, DialogueProviderError, DialogueStreamInterruptedError } from "./dialogue-provider";
 import { GroqDialogueProvider } from "./groq-dialogue.provider";
@@ -57,7 +58,7 @@ export class DialogueModelService {
     const messages: DialogueMessage[] = [
       {
         role: "system",
-        content: "You are Nadim, a concise Egyptian real-estate assistant. Compose only from the supplied trusted context. Never invent names, IDs, prices, availability, payment plans, discounts, messages, calls, bookings, or action success. Ask at most one useful clarification. If an action did not SUCCEED, describe it as not completed. Do not alter state.",
+        content: `${NADIM_PERSONALITY_PROMPT} Follow selectedLanguageStyle exactly: AR_EGYPTIAN is polished Egyptian Arabic; AR_GULF is neutral Gulf Arabic with no Egyptian vocabulary; AR_FORMAL is natural Modern Standard Arabic; EN_US is conversational American English; FRANCO_ARABIC is readable Arabizi in Latin script; MIXED_AR_EN mirrors restrained code-switching. Compose only from supplied trusted context. Never invent names, IDs, prices, availability, payment plans, discounts, messages, calls, bookings, or action success. If an action did not SUCCEED, describe it as not completed. Do not alter state.`,
       },
       { role: "user", content: JSON.stringify(input) },
     ];
@@ -66,7 +67,7 @@ export class DialogueModelService {
 
   async *composeStream(input: Record<string, unknown>): AsyncIterable<{ chunk: string; provider: string; model: string; fallbackUsed: boolean }> {
     const messages: DialogueMessage[] = [
-      { role: "system", content: "Compose a concise response using only supplied verified facts. Never claim unconfirmed actions." },
+      { role: "system", content: `${NADIM_PERSONALITY_PROMPT} Follow selectedLanguageStyle exactly. Compose a concise response using only supplied verified facts. Never alter facts, claim unknown inventory, or claim an unconfirmed action.` },
       { role: "user", content: JSON.stringify(input) },
     ];
     const providers = this.providers();

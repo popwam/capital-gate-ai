@@ -1,4 +1,5 @@
 import type { NadimChannel } from "../dto/nadim-turn.dto";
+import { styleFromLocale, type NadimLanguageStyleState } from "../personality/language-style.types";
 import type { NadimIntentType, StateField, StateOperation } from "./nadim-intent";
 
 export type NadimSearchState = {
@@ -29,6 +30,7 @@ export type NadimState = {
   customerId?: string;
   externalUserId?: string;
   locale: string;
+  languageStyle: NadimLanguageStyleState;
   goal?: NadimIntentType;
   search: NadimSearchState;
   selectedUnitId?: string;
@@ -45,13 +47,17 @@ export function initialNadimState(input: {
   externalUserId?: string;
   locale?: string;
 }): NadimState {
+  const locale = input.locale ?? "ar-EG";
+  const localeStyle = styleFromLocale(locale);
+  const preferredResponseStyle = localeStyle === "UNKNOWN" ? "AR_FORMAL" : localeStyle;
   return {
     version: 2,
     revision: 0,
     channel: input.channel,
     customerId: input.customerId,
     externalUserId: input.externalUserId,
-    locale: input.locale ?? "ar-EG",
+    locale,
+    languageStyle: { detected: "UNKNOWN", confidence: 0, preferredResponseStyle, explicitOverride: false, changedThisTurn: false },
     search: { locations: [], projects: [], developers: [], propertyTypes: [] },
     comparisonUnitIds: [],
     lastResultIds: [],
