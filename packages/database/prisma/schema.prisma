@@ -951,14 +951,15 @@ model Conversation {
 }
 
 model Customer {
-  id                String                    @id @default(cuid())
-  name              String?
-  normalizedPhone   String?                   @unique
-  normalizedEmail   String?                   @unique
-  leads             Lead[]
-  channelIdentities CustomerChannelIdentity[]
-  createdAt         DateTime                  @default(now())
-  updatedAt         DateTime                  @updatedAt
+  id                 String                    @id @default(cuid())
+  name               String?
+  normalizedPhone    String?                   @unique
+  normalizedEmail    String?                   @unique
+  leads              Lead[]
+  channelIdentities  CustomerChannelIdentity[]
+  nadimConversations NadimConversation[]
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
 
   @@index([createdAt])
 }
@@ -994,6 +995,51 @@ model AutomationActionExecution {
 
   @@index([status, createdAt])
   @@index([entityType, entityId])
+}
+
+model NadimConversation {
+  id             String      @id @default(cuid())
+  customerId     String?
+  customer       Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  channel        String
+  externalUserId String?
+  locale         String?
+  state          Json
+  turns          NadimTurn[]
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([customerId, updatedAt])
+  @@index([channel, externalUserId, updatedAt])
+}
+
+model NadimTurn {
+  id              String            @id @default(cuid())
+  conversationId  String
+  conversation    NadimConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  requestId       String?
+  channel         String
+  idempotencyKey  String?
+  requestHash     String?
+  responsePayload Json?
+  userMessage     String
+  assistantReply  String
+  intent          Json
+  plan            Json
+  toolResults     Json
+  proposedActions Json
+  executedActions Json
+  modelProvider   String?
+  model           String?
+  fallbackUsed    Boolean           @default(false)
+  success         Boolean           @default(true)
+  latencyMs       Int
+  errorCode       String?
+  createdAt       DateTime          @default(now())
+
+  @@unique([channel, idempotencyKey])
+  @@index([conversationId, createdAt])
+  @@index([requestId])
 }
 
 model Message {

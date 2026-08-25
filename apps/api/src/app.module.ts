@@ -46,12 +46,14 @@ import {
   PaymentPresenterService,
   PropertyPresenterService,
 } from "./conversation";
+import { NadimV2Module } from "./nadim-v2/nadim-v2.module";
 
 @Module({
   imports: [
     DatabaseModule,
     AuthModule,
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
+    NadimV2Module,
   ],
   controllers: [
     HealthController,

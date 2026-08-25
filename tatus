@@ -1,0 +1,77 @@
+warning: in the working copy of 'packages/database/prisma/schema.prisma', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/packages/database/prisma/schema.prisma b/packages/database/prisma/schema.prisma[m
+[1mindex 5c64dba..e611d04 100644[m
+[1m--- a/packages/database/prisma/schema.prisma[m
+[1m+++ b/packages/database/prisma/schema.prisma[m
+[36m@@ -951,14 +951,15 @@[m [mmodel Conversation {[m
+ }[m
+ [m
+ model Customer {[m
+[31m-  id                String                    @id @default(cuid())[m
+[31m-  name              String?[m
+[31m-  normalizedPhone   String?                   @unique[m
+[31m-  normalizedEmail   String?                   @unique[m
+[31m-  leads             Lead[][m
+[31m-  channelIdentities CustomerChannelIdentity[][m
+[31m-  createdAt         DateTime                  @default(now())[m
+[31m-  updatedAt         DateTime                  @updatedAt[m
+[32m+[m[32m  id                 String                    @id @default(cuid())[m
+[32m+[m[32m  name               String?[m
+[32m+[m[32m  normalizedPhone    String?                   @unique[m
+[32m+[m[32m  normalizedEmail    String?                   @unique[m
+[32m+[m[32m  leads              Lead[][m
+[32m+[m[32m  channelIdentities  CustomerChannelIdentity[][m
+[32m+[m[32m  nadimConversations NadimConversation[][m
+[32m+[m[32m  createdAt          DateTime                  @default(now())[m
+[32m+[m[32m  updatedAt          DateTime                  @updatedAt[m
+ [m
+   @@index([createdAt])[m
+ }[m
+[36m@@ -996,6 +997,47 @@[m [mmodel AutomationActionExecution {[m
+   @@index([entityType, entityId])[m
+ }[m
+ [m
+[32m+[m[32mmodel NadimConversation {[m
+[32m+[m[32m  id             String      @id @default(cuid())[m
+[32m+[m[32m  customerId     String?[m
+[32m+[m[32m  customer       Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)[m
+[32m+[m[32m  channel        String[m
+[32m+[m[32m  externalUserId String?[m
+[32m+[m[32m  locale         String?[m
+[32m+[m[32m  state          Json[m
+[32m+[m[32m  turns          NadimTurn[][m
+[32m+[m[32m  createdAt      DateTime    @default(now())[m
+[32m+[m[32m  updatedAt      DateTime    @updatedAt[m
+[32m+[m
+[32m+[m[32m  @@index([customerId, updatedAt])[m
+[32m+[m[32m  @@index([channel, externalUserId, updatedAt])[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mmodel NadimTurn {[m
+[32m+[m[32m  id              String            @id @default(cuid())[m
+[32m+[m[32m  conversationId  String[m
+[32m+[m[32m  conversation    NadimConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)[m
+[32m+[m[32m  requestId       String?[m
+[32m+[m[32m  channel         String[m
+[32m+[m[32m  userMessage     String[m
+[32m+[m[32m  assistantReply  String[m
+[32m+[m[32m  intent          Json[m
+[32m+[m[32m  plan            Json[m
+[32m+[m[32m  toolResults     Json[m
+[32m+[m[32m  proposedActions Json[m
+[32m+[m[32m  executedActions Json[m
+[32m+[m[32m  modelProvider   String?[m
+[32m+[m[32m  model           String?[m
+[32m+[m[32m  fallbackUsed    Boolean           @default(false)[m
+[32m+[m[32m  success         Boolean           @default(true)[m
+[32m+[m[32m  latencyMs       Int[m
+[32m+[m[32m  errorCode       String?[m
+[32m+[m[32m  createdAt       DateTime          @default(now())[m
+[32m+[m
+[32m+[m[32m  @@index([conversationId, createdAt])[m
+[32m+[m[32m  @@index([requestId])[m
+[32m+[m[32m}[m
+[32m+[m
+ model Message {[m
+   id             String       @id @default(cuid())[m
+   conversationId String[m

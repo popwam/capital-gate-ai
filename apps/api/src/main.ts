@@ -1,7 +1,7 @@
 import "./load-root-env";
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
-import { ValidationPipe } from "@nestjs/common";
+import { RequestMethod, ValidationPipe } from "@nestjs/common";
 import helmet from "helmet";
 import cookieParser = require("cookie-parser");
 import { json, urlencoded } from "express";
@@ -35,9 +35,9 @@ async function bootstrap() {
   app.use(cookieParser());
   app.use(json({ limit: "1mb" }), urlencoded({ extended: true, limit: "1mb" }));
   app.use((request: any, response: any, next: () => void) => { request.requestId = request.headers["x-request-id"] || randomUUID(); response.setHeader("x-request-id", request.requestId); next(); });
-  app.setGlobalPrefix("v1");
+  app.setGlobalPrefix("v1", { exclude: [{ path: "v2/nadim/turn", method: RequestMethod.POST }] });
   const origins = (process.env.WEB_ORIGIN ?? "http://localhost:3000").split(",").map(x => x.trim()).filter(Boolean);
-  app.enableCors({ origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => !origin || origins.includes(origin) ? callback(null, true) : callback(new Error("Origin not allowed"), false), credentials: true, allowedHeaders: ["content-type", "x-device-token", "x-request-id"], exposedHeaders: ["content-disposition", "x-request-id"], methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"] });
+  app.enableCors({ origin: (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => !origin || origins.includes(origin) ? callback(null, true) : callback(new Error("Origin not allowed"), false), credentials: true, allowedHeaders: ["content-type", "x-device-token", "x-request-id", "x-nadim-gateway-secret", "x-idempotency-key"], exposedHeaders: ["content-disposition", "x-request-id"], methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"] });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, stopAtFirstError: true }));
   app.useGlobalFilters(new SafeHttpExceptionFilter());
   app.enableShutdownHooks();
