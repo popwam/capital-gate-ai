@@ -61,11 +61,11 @@ async function compose(input: {
 
 test("language detector identifies all supported automatic customer styles", () => {
   const cases: Array<[string, NadimLanguageStyle]> = [
-    ["عايز شقة في التجمع", "AR_EGYPTIAN"],
-    ["أبي شقة وودي أعرف الأسعار", "AR_GULF"],
+    ["عايز شقة 3 غرف في التجمع تحت 8 مليون", "AR_EGYPTIAN"],
+    ["أبي شقة 3 غرف وودي تكون بالتقسيط", "AR_GULF"],
     ["أرغب في معرفة الوحدات المتاحة", "AR_FORMAL"],
-    ["I need a 3-bedroom in New Cairo", "EN_US"],
-    ["3ayz sho2a fel tagamo3", "FRANCO_ARABIC"],
+    ["I need a 3-bedroom apartment in New Cairo under 8 million EGP", "EN_US"],
+    ["3ayz sho2a 3 rooms fel tagamo3 ta7t 8 million", "FRANCO_ARABIC"],
     ["عايز apartment 3 bedrooms في التجمع", "MIXED_AR_EN"],
   ];
   for (const [message, expected] of cases) {

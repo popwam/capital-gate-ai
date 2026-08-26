@@ -6,13 +6,13 @@ import {
   MapPin, Menu, MessageSquareText,
   MoreHorizontal, Plus, Search, ShieldCheck, Trash2, X
 } from "lucide-react";
-import { ApiMessage, conversationsApi } from "@/lib/api";
+import { ApiMessage, conversationsApi, nadimWebApi } from "@/lib/api";
 import { appendUniqueMessage, mergeConversationIndex, shouldLoadConversationHistory } from "@/lib/chat-state";
 import { textDirection } from "@/lib/text-direction";
 
 type MessageKind = "text" | "properties" | "media" | "documents" | "map" | "lead_prompt" | "lead_created" | "conversation_closed";
 type Message = { id: string; role: "user" | "assistant"; text: string; kind?: MessageKind; payload?: any };
-type Conversation = { id: string; title: string; updatedAt: string; messages: Message[]; closed?: boolean };
+type Conversation = { id: string; title: string; updatedAt: string; messages: Message[]; nadimConversationId?: string; closed?: boolean };
 type ActionSend = (value: string, displayValue?: string) => void;
 
 const starters = [
@@ -22,7 +22,7 @@ const starters = [
 ];
 
 const uid = () => Math.random().toString(36).slice(2, 10);
-const normalizeMessage = (message: ApiMessage): Message => { const assistant = message.role === "ASSISTANT"; const text = String(message.content ?? "").trim() || (assistant ? "الرد ده ما اكتملش وقتها. ابعتلي نفس السؤال تاني وأنا أكمله معاك." : ""); return { id: message.id, role: assistant ? "assistant" : "user", text, kind: (message.toolPayload?.type as MessageKind) || "text", payload: message.toolPayload }; };
+const normalizeMessage = (message: ApiMessage): Message => { const assistant = message.role === "ASSISTANT"; const raw = String(message.content ?? ""); const text = raw.trim() ? raw : (assistant ? "الرد ده ما اكتملش وقتها. ابعتلي نفس السؤال تاني وأنا أكمله معاك." : ""); return { id: message.id, role: assistant ? "assistant" : "user", text, kind: (message.toolPayload?.type as MessageKind) || "text", payload: message.toolPayload }; };
 
 export default function ChatApp() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -32,7 +32,6 @@ export default function ChatApp() {
   const [generating, setGenerating] = useState(false);
   const [lang, setLang] = useState<"EN" | "AR">("AR");
   const [hydrated, setHydrated] = useState(false);
-  const [streamingText, setStreamingText] = useState("");
   const [connectionError, setConnectionError] = useState("");
   const [freshMessages, setFreshMessages] = useState<Message[]>([]);
   const [freshTitle, setFreshTitle] = useState("");
@@ -48,7 +47,7 @@ export default function ChatApp() {
     const saved = localStorage.getItem("cgai-conversations");
     if (saved) try { setConversations(JSON.parse(saved)); } catch { /* cache is optional */ }
     conversationsApi.list().then(items => {
-      const incoming = items.map(c => ({ id: c.id, title: c.title || "New conversation", updatedAt: new Date(c.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }), messages: [] as Message[], closed: Boolean(c.closed) }));
+      const incoming = items.map(c => ({ id: c.id, title: c.title || "New conversation", updatedAt: new Date(c.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }), messages: [] as Message[], nadimConversationId: c.nadimConversationId ?? undefined, closed: Boolean(c.closed) }));
       setConversations(current => mergeConversationIndex(current, incoming, locallyCreatedIdsRef.current));
       const savedActiveId = localStorage.getItem("cgai-active-conversation");
       if (savedActiveId && incoming.some(conversation => conversation.id === savedActiveId)) setActiveId(savedActiveId);
@@ -77,7 +76,7 @@ export default function ChatApp() {
 
   const active = useMemo(() => conversations.find(c => c.id === activeId), [conversations, activeId]);
   const messages = active?.messages ?? (activeId === "fresh" ? freshMessages : []);
-  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, generating, streamingText]);
+  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, generating]);
 
   useEffect(() => {
     if (!shouldLoadConversationHistory(activeId, skipHistoryOnceRef.current)) return;
@@ -99,12 +98,13 @@ export default function ChatApp() {
     const visible = (displayValue ?? value).trim();
     if (!clean || generating || active?.closed) return;
     let id = activeId;
-    const userMessage = { id: uid(), role: "user" as const, text: visible };
+    const eventId = crypto.randomUUID();
+    const userMessage = { id: eventId, role: "user" as const, text: visible };
     const firstMessage = id === "fresh";
     const title = clean.length > 50 ? clean.slice(0, 50) + "…" : clean;
     if (firstMessage) { setFreshMessages([userMessage]); setFreshTitle(title); }
     else append(id, userMessage);
-    setInput(""); setGenerating(true); setStreamingText(""); setConnectionError("");
+    setInput(""); setGenerating(true); setConnectionError("");
     try {
       if (firstMessage) {
         const created = await conversationsApi.create(title);
@@ -116,14 +116,20 @@ export default function ChatApp() {
         setFreshMessages([]);
         setFreshTitle("");
       }
-      let completed: any;
-      await conversationsApi.stream(id, clean, { token: text => setStreamingText(current => current + text), complete: data => { completed = data; } }, visible !== clean ? visible : undefined);
-      if (completed?.message) append(id, normalizeMessage(completed.message));
-      if (String(completed?.state?.language ?? "").startsWith("en")) setLang("EN");
-      else if (String(completed?.state?.language ?? "").startsWith("ar")) setLang("AR");
-      const closed = Boolean(completed?.state?.presentation?.conversationClosed) || completed?.message?.toolPayload?.type === "conversation_closed";
-      if (closed) setConversations(prev => prev.map(c => c.id === id ? { ...c, closed: true } : c));
-      setStreamingText("");
+      const currentNadimConversationId = firstMessage ? undefined : active?.nadimConversationId;
+      const completed = await nadimWebApi.turn({
+        legacyConversationId: id,
+        conversationId: currentNadimConversationId,
+        message: clean,
+        ...(visible !== clean ? { displayMessage: visible } : {}),
+        locale: lang === "AR" ? "ar" : "en-US",
+        eventId,
+      });
+      append(id, normalizeMessage(completed.message));
+      setConversations(prev => prev.map(c => c.id === id ? { ...c, nadimConversationId: completed.conversationId } : c));
+      const responseStyle = String(completed.state?.languageStyle?.preferredResponseStyle ?? "");
+      if (responseStyle === "EN_US" || responseStyle === "FRANCO_ARABIC") setLang("EN");
+      else if (responseStyle.startsWith("AR_")) setLang("AR");
     } catch (error) {
       const failure = { id: uid(), role: "assistant" as const, text: isArabic ? "تعذر الاتصال بالمستشار حالياً. حاول مرة أخرى بعد قليل." : "I couldn’t reach the property service. Please try again shortly." };
       setConnectionError(error instanceof Error ? error.message : "Connection failed");
@@ -165,7 +171,7 @@ export default function ChatApp() {
           {messages.length === 0 ? <Welcome isArabic={isArabic} onSelect={setInput}/> : (
             <div className="mx-auto w-full max-w-[820px] px-4 pb-32 pt-6 sm:px-7 sm:pt-9" role="log" aria-live="polite" aria-atomic="false" aria-label={isArabic ? "سجل المحادثة" : "Conversation log"}>
               {messages.map((m, i) => <MessageView key={m.id} message={m} onAction={send} isLast={i === messages.length - 1} isArabic={isArabic}/>) }
-              {generating && <div className="message-rise mb-6 flex gap-2.5"><AssistantAvatar/>{streamingText ? <div className="message-assistant chat-copy max-w-[92%] pt-0.5 sm:max-w-[88%]" dir={textDirection(streamingText)}><><RichChatText text={streamingText}/><span className="ms-1 inline-block h-4 w-0.5 animate-pulse" style={{ background: 'var(--accent)' }}/></></div> : <div className="mt-1 flex h-8 items-center gap-2 px-1" role="status" aria-live="polite" aria-atomic="true"><div className="flex gap-1"><span className="typing-dot h-1 w-1 rounded-full"/><span className="typing-dot h-1 w-1 rounded-full"/><span className="typing-dot h-1 w-1 rounded-full"/></div><span className="text-[11px] font-medium" style={{ color: 'var(--ink-tertiary)' }}>Cg {isArabic ? 'بيفكر' : 'thinking'}</span></div>}</div>}
+              {generating && <div className="message-rise mb-6 flex gap-2.5"><AssistantAvatar isArabic={isArabic}/><div className="mt-1 flex h-8 items-center gap-2 px-1" role="status" aria-live="polite" aria-atomic="true"><div className="flex gap-1"><span className="typing-dot h-1 w-1 rounded-full"/><span className="typing-dot h-1 w-1 rounded-full"/><span className="typing-dot h-1 w-1 rounded-full"/></div><span className="text-[11px] font-medium" style={{ color: 'var(--ink-tertiary)' }}>{isArabic ? 'نديم بيفكر' : 'Nadim is thinking'}</span></div></div>}
             </div>
           )}
         </div>
@@ -193,7 +199,7 @@ function Welcome({ onSelect, isArabic }: { onSelect:(v:string)=>void; isArabic:b
   </div>;
 }
 
-function AssistantAvatar() { return <div className="avatar-assistant grid h-7 w-7 shrink-0 place-items-center rounded-lg" aria-hidden="true"><span className="text-[10px] font-black">Cg</span></div>; }
+function AssistantAvatar({ isArabic }: { isArabic: boolean }) { return <div className="avatar-assistant grid h-7 min-w-7 shrink-0 place-items-center rounded-lg px-2" aria-label={isArabic ? "نديم" : "Nadim"}><span className="text-[10px] font-black">{isArabic ? "نديم" : "Nadim"}</span></div>; }
 
 function MessageView({ message, onAction, isLast, isArabic }: { message:Message;onAction:ActionSend;isLast:boolean;isArabic:boolean }) {
   const assistant = message.role === "assistant";
@@ -208,7 +214,7 @@ function MessageView({ message, onAction, isLast, isArabic }: { message:Message;
   const closedAction = actions.find((action:any) => action.type === "CONVERSATION_CLOSED");
   const contact = Boolean(contactAction);
   return <div className={`message-rise mb-6 flex gap-2.5 ${assistant ? "justify-start" : "justify-end"}`}>
-    {assistant && <AssistantAvatar/>}
+    {assistant && <AssistantAvatar isArabic={isArabic}/>}
     <div className={assistant ? "max-w-[94%] sm:max-w-[86%]" : "max-w-[88%] sm:max-w-[78%]"}>
       <div dir={textDirection(message.text)} className={assistant ? "chat-copy message-assistant pt-0.5 text-start text-[15px] leading-[1.85] sm:text-[16px]" : "chat-copy message-user rounded-[10px] px-3.5 py-2.5 text-start text-[14px] leading-[1.75] sm:text-[15px]"}><RichChatText text={message.text}/></div>
       {!!cards.length && <PropertyResults properties={cards} onAction={onAction} isArabic={isArabic}/>}

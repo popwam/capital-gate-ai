@@ -940,6 +940,8 @@ model Conversation {
   title            String?
   detectedLanguage String?
   promptVariant    String               @default("control")
+  nadimConversationId String?           @unique
+  nadimConversation   NadimConversation? @relation(fields: [nadimConversationId], references: [id], onDelete: SetNull)
   messages         Message[]
   state            ConversationState?
   leads            Lead[]
@@ -1006,6 +1008,7 @@ model NadimConversation {
   locale         String?
   state          Json
   turns          NadimTurn[]
+  webConversation Conversation?
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 

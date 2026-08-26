@@ -47,6 +47,9 @@ import {
   PropertyPresenterService,
 } from "./conversation";
 import { NadimV2Module } from "./nadim-v2/nadim-v2.module";
+import { NadimGatewayGuard } from "./nadim-v2/security/nadim-gateway.guard";
+import { WebChatPersistenceController } from "./web-chat-persistence.controller";
+import { WebChatPersistenceService } from "./web-chat-persistence.service";
 
 @Module({
   imports: [
@@ -70,6 +73,7 @@ import { NadimV2Module } from "./nadim-v2/nadim-v2.module";
     RealEstateController,
     ProjectStructureController,
     AIAnalyticsController,
+    WebChatPersistenceController,
   ],
   providers: [
     ChatService,
@@ -96,6 +100,8 @@ import { NadimV2Module } from "./nadim-v2/nadim-v2.module";
     HybridAIProvider,
     AIUsageService,
     PromptABTestingService,
+    NadimGatewayGuard,
+    WebChatPersistenceService,
     {
       provide: "AI_PROVIDER",
       inject: [HybridAIProvider, DemoAIProvider],

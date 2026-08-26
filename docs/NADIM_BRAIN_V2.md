@@ -185,6 +185,12 @@ Response:
 
 n8n/provider gateways should pass the immutable inbound provider event ID through `x-idempotency-key`. They must not generate a new UUID for each retry. The key is trimmed and limited to 200 characters. For compatibility, `metadata.eventId` is used only when the header is absent.
 
+### Customer web adapter
+
+The public browser posts to the same-origin Next.js route `POST /api/nadim/turn`. Only that server route reads `NADIM_GATEWAY_SECRET`; the secret and `x-nadim-gateway-secret` never enter the client bundle. Configure the web runtime with server-only `NADIM_API_URL` (prefer the private API URL) and `NADIM_GATEWAY_SECRET`. `NEXT_PUBLIC_API_URL` remains the fallback API location, not a credential.
+
+The adapter posts a non-streaming WEB turn to `/v2/nadim/turn`, forwards the submitted event UUID as both `metadata.eventId` and `x-idempotency-key`, and persists the returned Nadim conversation ID on the existing web conversation shell. The existing history endpoints continue to supply refresh/list/delete behavior, but customer replies come only from Nadim V2. The legacy message and streaming endpoints remain available for rollback/admin comparison and are not called by the customer web component.
+
 ## Observability and health
 
 Each persisted turn stores intent, plan, tool results, proposals, executions, model identity, fallback use, latency and error status. A compact structured log contains request/conversation/customer/channel, brain version, tools, model and action outcomes; prompts, messages, credentials and auth headers are not logged.
@@ -196,9 +202,9 @@ The admin-authenticated endpoint `GET /v1/admin/system/nadim-v2-ai-health` repor
 1. Review and apply the additive Prisma migration in the target environment.
 2. Deploy the API with V2 disabled and verify provider health.
 3. Enable V2 on a private instance and run n8n/QA traffic with action execution disabled.
-4. Compare V2 outputs and telemetry with the untouched legacy web flow.
+4. Compare V2 outputs and telemetry with the isolated legacy flow.
 5. Enable private action execution, then migrate one channel/cohort at a time.
-6. Route web traffic only after parity and rollback criteria are met.
+6. Deploy the web adapter variables and apply the additive web-conversation mapping migration before routing production web traffic.
 7. Remove legacy orchestration only after an agreed observation window and data migration plan.
 
 The migration is additive and this implementation does not apply it automatically.

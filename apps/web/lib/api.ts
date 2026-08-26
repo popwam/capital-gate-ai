@@ -1,7 +1,8 @@
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000").replace(/\/$/, "");
 
-export type ApiConversation = { id: string; title: string | null; detectedLanguage?: string | null; createdAt: string; updatedAt: string; closed?: boolean; _count?: { messages: number } };
+export type ApiConversation = { id: string; title: string | null; detectedLanguage?: string | null; nadimConversationId?: string | null; createdAt: string; updatedAt: string; closed?: boolean; _count?: { messages: number } };
 export type ApiMessage = { id: string; role: "USER" | "ASSISTANT"; content: string; toolPayload?: Record<string, unknown> | null; createdAt: string };
+export type NadimWebTurnResponse = { conversationId: string; reply: string; message: ApiMessage; state?: { languageStyle?: { preferredResponseStyle?: string } } };
 
 export type AdminMutationState = "saving" | "saved" | "error";
 export type AdminMutationDetail = { id: string; state: AdminMutationState; method: string; path: string; message?: string; requestId?: string };
@@ -131,16 +132,20 @@ export const conversationsApi = {
   messages: (id: string) => request<ApiMessage[]>(`/conversations/${id}/messages`),
   rename: (id: string, title: string) => request<ApiConversation>(`/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   remove: (id: string) => request<{ deleted: true }>(`/conversations/${id}`, { method: "DELETE" }),
-  async stream(id: string, content: string, handlers: { token: (text: string) => void; complete: (data: any) => void }, displayContent?: string) {
-    const response = await fetch(`${API_URL}/v1/conversations/${id}/messages/stream`, { method: "POST", headers: { "content-type": "application/json", "x-device-token": getDeviceToken() }, credentials: "include", body: JSON.stringify({ content, ...(displayContent ? { displayContent } : {}) }) });
-    if (!response.ok || !response.body) throw new Error((await response.json().catch(() => null))?.message || "Unable to start response stream");
-    const reader = response.body.getReader(); const decoder = new TextDecoder("utf-8", { fatal: true }); let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read(); if (done) { buffer += decoder.decode(); break; } buffer += decoder.decode(value, { stream: true });
-      const events = buffer.split("\n\n"); buffer = events.pop() ?? "";
-      for (const event of events) { const name = event.split("\n").find(x => x.startsWith("event:"))?.slice(6).trim(); const raw = event.split("\n").find(x => x.startsWith("data:"))?.slice(5).trim(); if (!raw) continue; const data = JSON.parse(raw); if (name === "token") handlers.token(data.text); else if (name === "complete") handlers.complete(data); else if (name === "error") throw new Error(data.message || "Streaming failed"); }
-    }
-  }
+};
+
+export const nadimWebApi = {
+  async turn(input: { legacyConversationId: string; conversationId?: string; message: string; displayMessage?: string; locale?: string; eventId: string }): Promise<NadimWebTurnResponse> {
+    const response = await fetch("/api/nadim/turn", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ ...input, deviceToken: getDeviceToken() }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new ApiRequestError(body.message || "Unable to reach Nadim", response.status, body.code, body.requestId);
+    return body as NadimWebTurnResponse;
+  },
 };
 
 export const adminApi = {
