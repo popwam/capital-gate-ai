@@ -103,42 +103,42 @@ export class ResponseStyleService {
 
   searchNotRun(style: NadimLanguageStyle) {
     return this.pick(style, {
-      AR_EGYPTIAN: "لسه مدورتش في المخزون، فمقدرش أحكم على الاختيارات.",
-      AR_GULF: "ما بحثت في المخزون إلى الآن، فما أقدر أحكم على الخيارات.",
-      AR_FORMAL: "لم يُنفذ البحث بعد، لذلك لا يمكنني الحكم على الخيارات.",
-      EN_US: "I haven’t run the inventory search yet, so I can’t judge the options.",
-      FRANCO_ARABIC: "lessa ma 3amaltsh search fel inventory, fa mesh ha7kom 3al options.",
-      MIXED_AR_EN: "لسه ما عملتش search في الـinventory، فمقدرش أحكم على الـoptions.",
+      AR_EGYPTIAN: "لسه ما دورتش فعليًا، فمش هقولك إن في اختيارات.",
+      AR_GULF: "لسه ما بحثت فعليًا، فما أقدر أحكم على الخيارات.",
+      AR_FORMAL: "لم أبحث فعليًا بعد، لذلك لا يمكنني الحكم على الخيارات.",
+      EN_US: "I haven’t checked the listings yet, so I can’t judge the options.",
+      FRANCO_ARABIC: "lessa ma dawartsh fe3lan, fa msh ha7kom 3al options.",
+      MIXED_AR_EN: "لسه ما عملتش search فعلي، فمقدرش أحكم على الـoptions.",
     });
   }
 
   searchFailed(style: NadimLanguageStyle) {
     return this.pick(style, {
-      AR_EGYPTIAN: "البحث في البيانات الموثقة متعطل دلوقتي، فمش هفترض حالة المخزون.",
-      AR_GULF: "البحث في البيانات الموثقة متعطل حاليًا، فما راح أفترض حالة المخزون.",
-      AR_FORMAL: "تعذر البحث في البيانات الموثقة حاليًا، لذلك لن أفترض حالة المخزون.",
-      EN_US: "The verified inventory search is unavailable right now, so I won’t infer inventory status.",
-      FRANCO_ARABIC: "el verified search mesh shaghala delwa2ti, fa mesh haftared 7alet el inventory.",
-      MIXED_AR_EN: "الـverified search متعطل دلوقتي، فمش هفترض حالة الـinventory.",
+      AR_EGYPTIAN: "في مشكلة في البحث دلوقتي، فمش هفترض إن في اختيارات أو لأ.",
+      AR_GULF: "في مشكلة في البحث حاليًا، فما راح أفترض إن فيه خيارات.",
+      AR_FORMAL: "تعذر البحث حاليًا، لذلك لن أفترض وجود خيارات.",
+      EN_US: "The search isn’t working right now, so I won’t guess what’s available.",
+      FRANCO_ARABIC: "el search msh shaghala delwa2ty, fa msh haftared en fe options.",
+      MIXED_AR_EN: "في مشكلة في الـsearch دلوقتي، فمش هفترض إن في options.",
     });
   }
 
   noMatch(style: NadimLanguageStyle, context: { change?: string; previousAssistantWording?: string } = {}) {
     const primary = this.pick(style, {
-      AR_EGYPTIAN: "مش ظاهر معايا حاجة مناسبة بالمواصفات دي دلوقتي. ممكن نجرب نزود الميزانية شوية أو نغيّر حاجة بسيطة في الطلب.",
-      AR_GULF: "ما ظهر لي شيء مناسب بالمواصفات هذي حاليًا. نقدر نوسّع أحد الخيارات شوي ونشوف.",
-      AR_FORMAL: "لا تظهر لدي حاليًا وحدة مناسبة بهذه المواصفات. يمكننا تعديل الميزانية قليلًا أو تغيير إحدى المواصفات ثم البحث مجددًا.",
-      EN_US: "Nothing suitable is showing up with those preferences right now. We could bump the budget a little or adjust one preference.",
-      FRANCO_ARABIC: "Msh zaherly 7aga monaseba bel specs di delwa2ty. Momken nwassa3 el budget shwaya aw nghayar tafseela baseeta.",
-      MIXED_AR_EN: "مش ظاهر معايا option مناسب بالـpreferences دي دلوقتي. ممكن نوسّع الـbudget شوية أو نعدّل detail بسيطة.",
+      AR_EGYPTIAN: "مش شايف حاجة مناسبة داخلة في الطلب ده دلوقتي.",
+      AR_GULF: "ما ظهر لي شيء مناسب للطلب هذا حاليًا.",
+      AR_FORMAL: "لا يظهر خيار مناسب لهذا الطلب حاليًا.",
+      EN_US: "Nothing useful is showing up with that setup yet.",
+      FRANCO_ARABIC: "msh shayef 7aga monaseba lel talab da delwa2ty.",
+      MIXED_AR_EN: "مش ظاهر option مناسب للطلب ده دلوقتي.",
     });
     const alternate = this.pick(style, {
-      AR_EGYPTIAN: "لحد دلوقتي مفيش اختيار مناسب للطلب ده. نقدر نجرب مساحة أوسع شوية في الميزانية أو المواصفات.",
-      AR_GULF: "حاليًا ما عندي خيار مناسب للطلب هذا. ممكن نوسّع الميزانية أو نخفف إحدى المواصفات شوي.",
-      AR_FORMAL: "لا يوجد حاليًا خيار مناسب للطلب. يمكننا توسيع الميزانية أو تخفيف إحدى المواصفات قليلًا.",
-      EN_US: "I’m not seeing a suitable option for that request right now. We can widen the budget or relax one preference a little.",
-      FRANCO_ARABIC: "Delwa2ty msh shayef option monaseb lel talab da. Momken nwassa3 el budget aw n5afef tafseela shwaya.",
-      MIXED_AR_EN: "حاليًا مش شايف option مناسب للطلب ده. نقدر نوسّع الـbudget أو نخفف preference بسيطة.",
+      AR_EGYPTIAN: "لحد دلوقتي مفيش حاجة مناسبة ظاهرة قدامي.",
+      AR_GULF: "إلى الآن ما عندي خيار مناسب ظاهر.",
+      AR_FORMAL: "لم يظهر خيار مناسب حتى الآن.",
+      EN_US: "I’m not seeing a solid option for it right now.",
+      FRANCO_ARABIC: "le7ad delwa2ty msh zaher option monaseb.",
+      MIXED_AR_EN: "لحد دلوقتي مفيش option مناسب ظاهر.",
     });
     const response = context.previousAssistantWording?.includes(primary.split(/[.!؟]/u)[0]) ? alternate : primary;
     return [context.change, response].filter(Boolean).join(" ");
@@ -226,7 +226,7 @@ export class ResponseStyleService {
         FRANCO_ARABIC: `${plan.durationMonths} months`,
         MIXED_AR_EN: `${plan.durationMonths} months`,
       });
-      const facts = [plan.name, plan.downPaymentPercent != null ? `${plan.downPaymentPercent}%` : this.money(plan.downPaymentAmount, plan.currency), duration, this.money(plan.installmentAmount, plan.currency)].filter(Boolean);
+      const facts = [plan.name, plan.downPaymentPercent != null ? `${plan.downPaymentPercent}%` : this.money(plan.downPaymentAmount, plan.currency, style), duration, this.money(plan.installmentAmount, plan.currency, style)].filter(Boolean);
       return `${index + 1}. ${facts.join(" · ")}`;
     });
     return [intro, ...lines].join("\n");
@@ -235,7 +235,7 @@ export class ResponseStyleService {
   price(style: NadimLanguageStyle, unit?: any) {
     if (unit?.price == null) return this.unknown(style);
     const id = unit.externalUnitId ?? unit.id ?? "";
-    const price = this.money(unit.price, unit.currency);
+    const price = this.money(unit.price, unit.currency, style);
     return this.pick(style, {
       AR_EGYPTIAN: `سعر الوحدة ${id} هو ${price}.`,
       AR_GULF: `سعر الوحدة ${id} هو ${price}.`,
@@ -294,25 +294,25 @@ export class ResponseStyleService {
 
   preservedSearch(style: NadimLanguageStyle) {
     return this.pick(style, {
-      AR_EGYPTIAN: "تمام، هنفضل على نفس المواصفات من غير ما أغيّر حاجة.",
-      AR_GULF: "تمام، نخلي المواصفات مثل ما هي بدون تغيير.",
-      AR_FORMAL: "حسنًا، سأُبقي مواصفات البحث كما هي دون تغيير.",
-      EN_US: "Got it — I’ll keep the search as it is.",
-      FRANCO_ARABIC: "tamam, han5ally el search zay ma howa mn gheir taghyeer.",
-      MIXED_AR_EN: "تمام، هنفضل على نفس الـpreferences من غير أي change.",
+      AR_EGYPTIAN: "تمام، نخليها زي ما هي.",
+      AR_GULF: "تمام، نخليها مثل ما هي.",
+      AR_FORMAL: "حسنًا، نبقيها كما هي.",
+      EN_US: "Got it — we’ll keep it as is.",
+      FRANCO_ARABIC: "tamam, nkhalyha zay ma heya.",
+      MIXED_AR_EN: "تمام، نخليها as is.",
     });
   }
 
   currentSearch(style: NadimLanguageStyle, state: NadimState, target: CurrentSearchQueryTarget = "SEARCH") {
     if (target === "budgetMax") {
-      const value = this.money(state.search.budgetMax, state.search.currency);
+      const value = this.money(state.search.budgetMax, state.search.currency, style, style === "EN_US" || style === "MIXED_AR_EN");
       return value ? this.pick(style, {
-        AR_EGYPTIAN: `الميزانية المحددة دلوقتي لحد ${value}.`,
-        AR_GULF: `الميزانية المحددة حاليًا إلى ${value}.`,
-        AR_FORMAL: `الحد الأقصى للميزانية حاليًا هو ${value}.`,
-        EN_US: `The current maximum budget is ${value}.`,
-        FRANCO_ARABIC: `el max budget delwa2ty ${value}.`,
-        MIXED_AR_EN: `الـmaximum budget دلوقتي ${value}.`,
+        AR_EGYPTIAN: `${value}.`,
+        AR_GULF: `${value}.`,
+        AR_FORMAL: `${value}.`,
+        EN_US: `You’re at ${value} right now.`,
+        FRANCO_ARABIC: `${value}.`,
+        MIXED_AR_EN: `إحنا على ${value} دلوقتي.`,
       }) : this.pick(style, {
         AR_EGYPTIAN: "لسه ما حددناش ميزانية.",
         AR_GULF: "ما حددنا ميزانية إلى الآن.",
@@ -325,12 +325,12 @@ export class ResponseStyleService {
     if (target === "bedrooms") {
       const value = state.search.bedrooms;
       return value !== undefined ? this.pick(style, {
-        AR_EGYPTIAN: `إنت طالب ${value} غرف.`,
-        AR_GULF: `أنت طالب ${value} غرف.`,
-        AR_FORMAL: `طلبك الحالي يتضمن ${value} غرف.`,
-        EN_US: `You currently have ${value} bedrooms in the search.`,
-        FRANCO_ARABIC: `enta taleb ${value} rooms.`,
-        MIXED_AR_EN: `إنت طالب ${value} bedrooms.`,
+        AR_EGYPTIAN: `${value} غرف.`,
+        AR_GULF: `${value} غرف.`,
+        AR_FORMAL: `${value} غرف.`,
+        EN_US: `${value} bedrooms.`,
+        FRANCO_ARABIC: `${value} rooms.`,
+        MIXED_AR_EN: `${value} bedrooms.`,
       }) : this.pick(style, {
         AR_EGYPTIAN: "لسه ما حددناش عدد الغرف.", AR_GULF: "ما حددنا عدد الغرف إلى الآن.", AR_FORMAL: "لم نحدد عدد الغرف بعد.", EN_US: "We haven’t set the bedroom count yet.", FRANCO_ARABIC: "lessa ma 7adadnash 3adad el rooms.", MIXED_AR_EN: "لسه ما حددناش عدد الـbedrooms.",
       });
@@ -344,19 +344,14 @@ export class ResponseStyleService {
       });
     }
 
-    const details = [
-      state.search.propertyTypes.length ? state.search.propertyTypes.join(", ") : undefined,
-      state.search.locations.length ? state.search.locations.join("، ") : undefined,
-      state.search.bedrooms !== undefined ? `${state.search.bedrooms} ${style === "EN_US" || style === "FRANCO_ARABIC" ? "bedrooms" : "غرف"}` : undefined,
-      this.money(state.search.budgetMax, state.search.currency),
-    ].filter(Boolean);
-    if (!details.length) return this.pick(style, {
+    const hasDetails = state.search.propertyTypes.length > 0
+      || state.search.locations.length > 0
+      || state.search.bedrooms !== undefined
+      || state.search.budgetMax !== undefined;
+    if (!hasDetails) return this.pick(style, {
       AR_EGYPTIAN: "لسه ما حددناش مواصفات للبحث.", AR_GULF: "ما حددنا مواصفات للبحث إلى الآن.", AR_FORMAL: "لم نحدد مواصفات للبحث بعد.", EN_US: "We haven’t set any search preferences yet.", FRANCO_ARABIC: "lessa ma 7adadnash search specs.", MIXED_AR_EN: "لسه ما حددناش search preferences.",
     });
-    const joined = details.join(" · ");
-    return this.pick(style, {
-      AR_EGYPTIAN: `إحنا بندور على: ${joined}.`, AR_GULF: `ندور حاليًا على: ${joined}.`, AR_FORMAL: `مواصفات البحث الحالية: ${joined}.`, EN_US: `Your current search is: ${joined}.`, FRANCO_ARABIC: `el search delwa2ty: ${joined}.`, MIXED_AR_EN: `الـcurrent search: ${joined}.`,
-    });
+    return this.searchSummary(style, state);
   }
 
   proposedAction(style: NadimLanguageStyle, action: ProposedAction) {
@@ -397,28 +392,91 @@ export class ResponseStyleService {
 
   operationSummary(style: NadimLanguageStyle, operations: StateOperation[], state: NadimState) {
     const budget = operations.find((operation) => operation.operation === "SET" && operation.field === "budgetMax");
-    if (budget) return this.pick(style, {
-      AR_EGYPTIAN: `خليت الميزانية لحد ${this.money(state.search.budgetMax, state.search.currency)}.`,
-      AR_GULF: `خليت الميزانية إلى ${this.money(state.search.budgetMax, state.search.currency)}.`,
-      AR_FORMAL: `أصبحت الميزانية حتى ${this.money(state.search.budgetMax, state.search.currency)}.`,
-      EN_US: `The budget is now ${this.money(state.search.budgetMax, state.search.currency)}.`,
-      FRANCO_ARABIC: `5alet el budget le7ad ${this.money(state.search.budgetMax, state.search.currency)}.`,
-      MIXED_AR_EN: `خليت الـbudget لحد ${this.money(state.search.budgetMax, state.search.currency)}.`,
-    });
+    if (budget) {
+      const value = this.money(state.search.budgetMax, state.search.currency, style, style === "EN_US" || style === "MIXED_AR_EN");
+      return this.pick(style, {
+        AR_EGYPTIAN: `تمام، نخليها لحد ${value}.`,
+        AR_GULF: `تمام، نخليها إلى ${value}.`,
+        AR_FORMAL: `حسنًا، نجعلها حتى ${value}.`,
+        EN_US: `Got it — we’ll make it ${value}.`,
+        FRANCO_ARABIC: `tamam, nkhalyha ${value}.`,
+        MIXED_AR_EN: `تمام، نخلي الـbudget ${value}.`,
+      });
+    }
     if (operations.some((operation) => operation.operation === "REMOVE" && operation.field === "locations")) return this.pick(style, {
-      AR_EGYPTIAN: "تمام، شلت المكان من الطلب.",
-      AR_GULF: "تمام، شلت الموقع من الطلب.",
-      AR_FORMAL: "أزلت الموقع من الطلب.",
-      EN_US: "I removed the location from the search.",
-      FRANCO_ARABIC: "tamam, shelt el location mn el talab.",
-      MIXED_AR_EN: "تمام، شلت الـlocation من الطلب.",
+      AR_EGYPTIAN: "تمام، نخلي المكان مفتوح.",
+      AR_GULF: "تمام، نخلي الموقع مفتوح.",
+      AR_FORMAL: "حسنًا، نترك الموقع مفتوحًا.",
+      EN_US: "Got it — we’ll keep the location open.",
+      FRANCO_ARABIC: "tamam, nkhaly el location maftoo7.",
+      MIXED_AR_EN: "تمام، نخلي الـlocation مفتوح.",
     });
     return undefined;
   }
 
-  money(value: unknown, currency = "EGP") {
+  money(value: unknown, currency = "EGP", style: NadimLanguageStyle = "EN_US", includeCurrency = true) {
     const number = Number(value);
-    return Number.isFinite(number) ? `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(number)} ${currency ?? "EGP"}` : undefined;
+    if (!Number.isFinite(number)) return undefined;
+    const currencyCode = currency ?? "EGP";
+    if (number >= 1_000_000) {
+      const millions = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(number / 1_000_000);
+      if (style === "EN_US" || style === "MIXED_AR_EN") return `${millions}M${includeCurrency ? ` ${currencyCode}` : ""}`;
+      if (style === "FRANCO_ARABIC") return `${millions} million${includeCurrency ? ` ${currencyCode}` : ""}`;
+      const label = currencyCode === "EGP" ? "جنيه" : currencyCode === "AED" ? "درهم" : currencyCode === "USD" ? "دولار" : currencyCode;
+      return `${millions} مليون${includeCurrency ? ` ${label}` : ""}`;
+    }
+    const amount = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(number);
+    if (!includeCurrency) return amount;
+    if (["AR_EGYPTIAN", "AR_GULF", "AR_FORMAL"].includes(style)) {
+      const label = currencyCode === "EGP" ? "جنيه" : currencyCode === "AED" ? "درهم" : currencyCode === "USD" ? "دولار" : currencyCode;
+      return `${amount} ${label}`;
+    }
+    return `${amount} ${currencyCode}`;
+  }
+
+  private searchSummary(style: NadimLanguageStyle, state: NadimState) {
+    const separator = style === "EN_US" || style === "FRANCO_ARABIC" ? " or " : " أو ";
+    const property = state.search.propertyTypes.map((value) => this.propertyLabel(style, value)).join(separator);
+    const bedrooms = state.search.bedrooms;
+    const subject = style === "EN_US"
+      ? [bedrooms !== undefined ? `${bedrooms}-bedroom` : undefined, property].filter(Boolean).join(" ")
+      : [property || undefined, bedrooms !== undefined ? `${bedrooms} ${style === "FRANCO_ARABIC" ? "rooms" : style === "MIXED_AR_EN" ? "bedrooms" : "غرف"}` : undefined].filter(Boolean).join(" ");
+    const location = state.search.locations.join(style === "EN_US" || style === "FRANCO_ARABIC" ? ", " : "، ");
+    const budget = this.money(state.search.budgetMax, state.search.currency, style, style === "EN_US" || style === "MIXED_AR_EN");
+
+    if (style === "EN_US") {
+      const first = [subject || undefined, location ? `in ${location}` : undefined].filter(Boolean).join(" ");
+      const budgetPart = budget ? `up to ${budget}` : undefined;
+      return `${[first || undefined, budgetPart].filter(Boolean).join(", ")}.${location ? "" : " Location is open."}`;
+    }
+    if (style === "FRANCO_ARABIC") {
+      const first = [subject || undefined, location ? `fe ${location}` : undefined].filter(Boolean).join(" ");
+      const budgetPart = budget ? `le7ad ${budget}` : undefined;
+      return `${[first || undefined, budgetPart].filter(Boolean).join(", ")}.${location ? "" : " wel location maftoo7."}`;
+    }
+    if (style === "MIXED_AR_EN") {
+      const first = [subject || undefined, location ? `في ${location}` : undefined].filter(Boolean).join(" ");
+      const budgetPart = budget ? `والـbudget لحد ${budget}` : undefined;
+      return `${[first || undefined, budgetPart].filter(Boolean).join("، ")}.${location ? "" : " والـlocation مفتوح."}`;
+    }
+    const first = [subject || undefined, location ? `في ${location}` : undefined].filter(Boolean).join(" ");
+    const budgetPart = budget ? `${style === "AR_FORMAL" ? "والميزانية حتى" : "والميزانية لحد"} ${budget}` : undefined;
+    const openLocation = location ? "" : style === "AR_FORMAL" ? " والموقع مفتوح." : " والمكان مفتوح.";
+    return `${[first || undefined, budgetPart].filter(Boolean).join("، ")}.${openLocation}`;
+  }
+
+  private propertyLabel(style: NadimLanguageStyle, value: string) {
+    const key = value.toLowerCase().replace(/[\s_-]/gu, "");
+    const arabic: Record<string, string> = {
+      apartment: "شقة", flat: "شقة", villa: "فيلا", townhouse: "تاون هاوس", twinhouse: "توين هاوس",
+      duplex: "دوبلكس", penthouse: "بنتهاوس", chalet: "شاليه", studio: "استوديو", office: "مكتب", retail: "محل", clinic: "عيادة", land: "أرض",
+    };
+    const english: Record<string, string> = {
+      apartment: "apartment", flat: "apartment", villa: "villa", townhouse: "townhouse", twinhouse: "twin house",
+      duplex: "duplex", penthouse: "penthouse", chalet: "chalet", studio: "studio", office: "office", retail: "retail space", clinic: "clinic", land: "land",
+    };
+    if (["AR_EGYPTIAN", "AR_GULF", "AR_FORMAL"].includes(style)) return arabic[key] ?? "عقار";
+    return english[key] ?? (style === "FRANCO_ARABIC" ? "property" : "property");
   }
 
   private unitLine(style: NadimLanguageStyle, unit: any, index: number) {
@@ -426,11 +484,11 @@ export class ResponseStyleService {
     const isEnglish = style === "EN_US";
     const isFranco = style === "FRANCO_ARABIC";
     const facts = [
-      unit.unitType,
+      unit.unitType ? this.propertyLabel(style, unit.unitType) : undefined,
       unit.bedrooms != null ? `${unit.bedrooms} ${isEnglish ? "bedrooms" : isFranco ? "rooms" : "غرف"}` : undefined,
       unit.bathrooms != null ? `${unit.bathrooms} ${isEnglish ? "bathrooms" : isFranco ? "bathrooms" : "حمام"}` : undefined,
       unit.builtUpArea != null ? `${unit.builtUpArea} m²` : undefined,
-      this.money(unit.price, unit.currency),
+      this.money(unit.price, unit.currency, style),
       unit.project?.name,
     ].filter(Boolean);
     const label = style === "EN_US" || style === "FRANCO_ARABIC" ? `Option ${index + 1}` : style === "MIXED_AR_EN" ? `Option ${index + 1}` : `الاختيار ${index + 1}`;

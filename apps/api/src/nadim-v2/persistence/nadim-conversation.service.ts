@@ -127,7 +127,12 @@ export class NadimConversationService {
     const state = validState(conversation.state)
       ? conversation.state
       : initialNadimState({ channel: input.channel, customerId, externalUserId: input.externalUserId, locale: input.locale });
-    return { conversation, state, customerId };
+    const previousTurn = await this.prisma.nadimTurn.findFirst({
+      where: { conversationId: conversation.id, success: true, assistantReply: { not: "" } },
+      orderBy: { createdAt: "desc" },
+      select: { userMessage: true, assistantReply: true },
+    });
+    return { conversation, state, customerId, previousTurn: previousTurn ?? undefined };
   }
 
   persist(input: {

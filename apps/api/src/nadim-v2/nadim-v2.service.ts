@@ -86,6 +86,7 @@ export class NadimV2Service {
       toolResults,
       proposedActions,
       executedActions,
+      previousTurn: resolved.previousTurn,
       trace,
     });
     state = this.stateEngine.withAssistantWording(state, composed.reply);

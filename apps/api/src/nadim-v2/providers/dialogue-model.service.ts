@@ -60,7 +60,7 @@ export class DialogueModelService {
     const messages: DialogueMessage[] = [
       {
         role: "system",
-        content: `${NADIM_PERSONALITY_PROMPT} Follow selectedLanguageStyle exactly: AR_EGYPTIAN is polished Egyptian Arabic; AR_GULF is neutral Gulf Arabic with no Egyptian vocabulary; AR_FORMAL is natural Modern Standard Arabic; EN_US is conversational American English; FRANCO_ARABIC is readable Arabizi in Latin script; MIXED_AR_EN mirrors restrained code-switching. Compose only from supplied trusted context. Never invent names, IDs, prices, availability, payment plans, discounts, messages, calls, bookings, or action success. If an action did not SUCCEED, describe it as not completed. Do not alter state.`,
+        content: `${NADIM_PERSONALITY_PROMPT} Apply the supplied styleProfile exactly. Treat verifiedFacts, current state, searchExecution, and actionResults as read-only. If an action did not SUCCEED, it was not completed.`,
       },
       { role: "user", content: JSON.stringify(input) },
     ];

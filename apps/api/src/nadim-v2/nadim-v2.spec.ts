@@ -366,7 +366,7 @@ test("9 verified no-match is stated honestly without robotic or causal claims", 
   const current = stateEngine.apply(state(), intent, { channel: "WEB" });
   const plan = planner.plan(intent, current);
   const reply = await composer.compose({ userMessage: "x", understanding: intent, state: current, plan, toolResults: [{ tool: "PROPERTY_SEARCH", ok: true, data: [], latencyMs: 1 }], proposedActions: [], executedActions: [] });
-  assert.match(reply.reply, /(?:مش ظاهر|مفيش اختيار)/u);
+  assert.match(reply.reply, /(?:مش شايف|مش ظاهر|مفيش حاجة)/u);
   assert.doesNotMatch(reply.reply, /(?:مطابقة 100%|القيد|الميزانية.{0,20}(?:السبب|مقلل|مانع))/u);
 });
 
@@ -421,7 +421,8 @@ test("13 media request uses the selected ordinal result", async () => {
 test("14 verified price reply uses only tool data", async () => {
   const intent: NadimUnderstanding = { intent: "PRICE_QUESTION", confidence: 1, operations: [], ordinalReferences: [], actionRequested: false };
   const reply = await composer.compose({ userMessage: "price", understanding: intent, state: state({ selectedUnitId: "u1" }), plan: planner.plan(intent, state({ selectedUnitId: "u1" })), toolResults: [{ tool: "GET_UNIT_FACTS", ok: true, data: { id: "u1", externalUnitId: "A-1", price: 7_000_000, currency: "EGP" }, latencyMs: 1 }], proposedActions: [], executedActions: [] });
-  assert.match(reply.reply, /7,000,000 EGP/u);
+  assert.match(reply.reply, /7\s*مليون\s*جنيه/u);
+  assert.doesNotMatch(reply.reply, /7,000,000 EGP/u);
 });
 
 test("15 payment-plan question is backed by the payment tool", async () => {
@@ -485,10 +486,12 @@ test("24 explicit existing conversation continues persisted V2 state", async () 
     customer: { findUnique: async () => null },
     customerChannelIdentity: { findUnique: async () => null },
     nadimConversation: { findUnique: async () => ({ id: "c1", customerId: null, state: stored, channel: "WEB" }) },
+    nadimTurn: { findFirst: async () => ({ userMessage: "عايز شقة", assistantReply: "مش ظاهر حاجة مناسبة." }) },
   };
   const result = await new NadimConversationService(prisma).resolve({ channel: "WEB", conversationId: "c1", message: "كمل" });
   assert.equal(result.state.revision, 4);
   assert.deepEqual(result.state.lastResultIds, ["u1"]);
+  assert.deepEqual(result.previousTurn, { userMessage: "عايز شقة", assistantReply: "مش ظاهر حاجة مناسبة." });
 });
 
 class FakeProvider {

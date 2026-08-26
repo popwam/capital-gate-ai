@@ -20,6 +20,7 @@ type CompositionInput = {
   toolResults: NadimToolResult[];
   proposedActions: ProposedAction[];
   executedActions: ExecutedAction[];
+  previousTurn?: { userMessage: string; assistantReply: string };
   trace?: { conversationId?: string; requestId?: string };
 };
 
@@ -42,6 +43,7 @@ export class ResponseComposerService {
   async compose(input: CompositionInput): Promise<CompositionResult> {
     const fallback = this.deterministic(input);
     const verifiedEmptySearch = this.verifiedEmptySearch(input);
+    const searchResult = input.toolResults.find((result) => result.tool === "PROPERTY_SEARCH");
     const deterministicRequired = (!verifiedEmptySearch && input.plan.steps.length > 0)
       || (!verifiedEmptySearch && input.plan.goal === "PROPERTY_SEARCH")
       || Boolean(input.plan.clarification)
@@ -63,7 +65,16 @@ export class ResponseComposerService {
         verifiedFacts: input.toolResults.filter((result) => result.ok).map((result) => ({ tool: result.tool, data: result.data })),
         currentStateOperations: input.state.lastOperations,
         previousAssistantWording: input.state.recentAssistantWording,
+        previousTurnSummary: input.previousTurn ? {
+          user: input.previousTurn.userMessage.slice(0, 500),
+          assistant: input.previousTurn.assistantReply.slice(0, 1_000),
+        } : undefined,
         responseGoal: verifiedEmptySearch ? "VERIFIED_EMPTY_SEARCH" : input.plan.goal,
+        searchExecution: {
+          executed: Boolean(searchResult),
+          succeeded: searchResult?.ok === true,
+          verifiedResultCount: searchResult?.ok && Array.isArray(searchResult.data) ? searchResult.data.length : undefined,
+        },
         actionResults: input.executedActions,
         deterministicFallback: fallback,
       }, input.trace);
@@ -142,7 +153,7 @@ export class ResponseComposerService {
   }
 
   private safeInventoryClaims(reply: string, toolResults: NadimToolResult[]) {
-    const claimsZeroInventory = /(?:مش\s+(?:ظاهر|شايف)|ما\s+(?:ظهر|لقيت)|ملقتش|مفيش\s+(?:اختيار|نتائج|وحدات)|لا\s+(?:تظهر|يوجد|توجد)|لم\s+أجد|m(?:e)?sh\s+(?:zaher|shayef)|mala2etsh|ma\s+la2etsh|not\s+seeing|nothing\s+suitable|no\s+(?:suitable|results|available\s+units|inventory)|didn[’']t\s+find)/iu.test(reply);
+    const claimsZeroInventory = /(?:مش\s+(?:ظاهر|شايف)|ما\s+(?:ظهر|لقيت)|ملقتش|مفيش\s+(?:اختيار|نتائج|وحدات)|لا\s+(?:تظهر|يوجد|توجد)|لم\s+أجد|m(?:e)?sh\s+(?:zaher|shayef)|mala2etsh|ma\s+la2etsh|not\s+seeing|nothing\s+(?:suitable|useful)|no\s+(?:suitable|useful|results|available\s+units|inventory)|didn[’']t\s+find)/iu.test(reply);
     if (!claimsZeroInventory) return true;
     const search = toolResults.find((result) => result.tool === "PROPERTY_SEARCH");
     return Boolean(search?.ok && Array.isArray(search.data) && search.data.length === 0);
@@ -154,7 +165,7 @@ export class ResponseComposerService {
   }
 
   private safeNoMatchComposition(reply: string) {
-    const statesNoMatch = /(?:مش\s+(?:ظاهر|شايف)|ما\s+(?:ظهر|لقيت)|ملقتش|مفيش\s+(?:اختيار|حاجة|نتيجة|وحدة)|لا\s+(?:تظهر|يوجد|توجد)|لم\s+أجد|m(?:e)?sh\s+(?:zaher|shayef)|mala2etsh|ma\s+la2etsh|not\s+seeing|nothing\s+suitable|no\s+suitable|didn[’']t\s+find)/iu.test(reply);
+    const statesNoMatch = /(?:مش\s+(?:ظاهر|شايف)|ما\s+(?:ظهر|لقيت)|ملقتش|مفيش\s+(?:اختيار|حاجة|نتيجة|وحدة)|لا\s+(?:تظهر|يوجد|توجد)|لم\s+أجد|m(?:e)?sh\s+(?:zaher|shayef)|mala2etsh|ma\s+la2etsh|not\s+seeing|nothing\s+(?:suitable|useful)|no\s+(?:suitable|useful)|didn[’']t\s+find)/iu.test(reply);
     const inventsCause = /(?:main blocker|100%\s*match|exact match|your specified criteria|based on the current parameters|(?:budget|location|bedrooms?).{0,35}(?:too low|is the (?:issue|reason)|prevent|limit|block)|القيد (?:الرئيسي|الأبرز)|مطابقة 100%|المعايير المحددة|الشروط المحددة|(?:الميزانية|الموقع|المكان|الغرف).{0,35}(?:هي السبب|هو السبب|مقلل|مانع|المشكلة))/iu.test(reply);
     const inventsInventoryFact = /(?:\b(?:EGP|USD|AED)\b|\d[\d,.]*\s*(?:million|m|مليون)|(?:unit|project|compound)\s+(?:id|code|[A-Z][\w-]{2,})|(?:بسعر|سعرها|متاحة في مشروع))/iu.test(reply);
     return statesNoMatch && !inventsCause && !inventsInventoryFact;

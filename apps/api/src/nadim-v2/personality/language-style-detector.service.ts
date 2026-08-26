@@ -106,7 +106,11 @@ export class LanguageStyleDetectorService {
     const francoTokens = lower.match(/(?:3ay[ez]|sho2a|tagamo3|btedor|khalini|khalyha|khalyhom|ashoof|mala2etsh|ta2seet|msa7|a7san|ar5as|\bfel\b|\b3ala\b)/gu) ?? [];
     const digitWords = lower.match(/[a-z]+[235789][a-z]+|[235789][a-z]{2,}/gu) ?? [];
     if (francoTokens.length >= 1 && (francoTokens.length + digitWords.length >= 2 || /\d/u.test(lower))) return { style: "FRANCO_ARABIC", confidence: 0.94, explicit: false };
-    if (latinWords.length) return { style: "EN_US", confidence: 0.9, explicit: false };
+    const englishSignals = latinWords.filter((word) => /^(?:i|i'm|im|we|you|need|want|looking|find|show|make|change|keep|what|how|where|which|is|are|it|the|in|under|million|hello|hey|hi|please|thanks|explain|english|apartment|bedrooms?|rooms?|budget|payment|plan|price|unit|villa|compound|project|compare|available)$/iu.test(word));
+    const meaningfulEnglish = englishRealEstate.length > 0
+      || englishSignals.length >= 2
+      || (englishSignals.length === 1 && /^(?:hello|hey|hi|thanks)$/iu.test(englishSignals[0]));
+    if (meaningfulEnglish) return { style: "EN_US", confidence: 0.9, explicit: false };
     return { style: "UNKNOWN", confidence: 0.2, explicit: false };
   }
 
