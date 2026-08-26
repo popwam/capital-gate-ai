@@ -14,6 +14,7 @@ import { initialNadimState, NadimState } from "./domain/nadim-state";
 import { NadimV2Controller } from "./nadim-v2.controller";
 import { NadimV2Service } from "./nadim-v2.service";
 import { NadimConversationService } from "./persistence/nadim-conversation.service";
+import { LanguageStyleDetectorService } from "./personality/language-style-detector.service";
 import { BedrockGlmProvider } from "./providers/bedrock-glm.provider";
 import { DialogueModelService } from "./providers/dialogue-model.service";
 import { DialogueProviderError, DialogueStreamInterruptedError } from "./providers/dialogue-provider";
@@ -24,6 +25,7 @@ const noModel: any = { available: () => false };
 const understandingService = new UnderstandingService(noModel);
 const planner = new PlannerService();
 const composer = new ResponseComposerService(noModel);
+const languageStyles = new LanguageStyleDetectorService();
 
 function state(overrides: Partial<NadimState> = {}) {
   return { ...initialNadimState({ channel: "WEB", locale: "ar-EG" }), ...overrides };
@@ -132,6 +134,221 @@ test("7 removing location changes only that constraint", async () => {
   assert.deepEqual(next.search.locations, []);
   assert.equal(next.search.bedrooms, 3);
   assert.equal(next.search.budgetMax, 10_000_000);
+});
+
+test("contextual Egyptian budget updates preserve the active search and rerun it", async () => {
+  const firstIntent = await understand("عايز شقة 3 غرف في التجمع تحت 8 مليون");
+  const first = stateEngine.apply(state(), firstIntent, { channel: "WEB" });
+  const secondIntent = await understand("خليها 10 مليون", first);
+  const second = stateEngine.apply(first, secondIntent, { channel: "WEB" });
+  const plan = planner.plan(secondIntent, second);
+
+  assert.equal(secondIntent.intent, "MODIFY_SEARCH");
+  assert.deepEqual(secondIntent.operations.filter((item) => item.operation === "SET"), [
+    { operation: "SET", field: "budgetMax", value: 10_000_000 },
+  ]);
+  assert.equal(second.search.budgetMax, 10_000_000);
+  assert.equal(second.search.bedrooms, 3);
+  assert.deepEqual(second.search.locations, ["التجمع"]);
+  assert.deepEqual(second.search.propertyTypes, ["Apartment"]);
+  assert.equal(plan.steps[0]?.tool, "PROPERTY_SEARCH");
+});
+
+test("current-state questions answer persisted search state without tools or mutation", async () => {
+  const active = state({
+    revision: 2,
+    search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 10_000_000, currency: "EGP" },
+  });
+  const intent = await understand("الميزانية اللي محددها كام؟", active);
+  const next = stateEngine.apply(active, intent, { channel: "WEB" });
+  const plan = planner.plan(intent, next);
+  const response = await composer.compose({ userMessage: "الميزانية اللي محددها كام؟", understanding: intent, state: next, plan, toolResults: [], proposedActions: [], executedActions: [] });
+
+  assert.equal(intent.intent, "CURRENT_SEARCH_QUERY");
+  assert.equal(intent.stateQuery, "budgetMax");
+  assert.deepEqual(plan.steps, []);
+  assert.deepEqual(next.search, active.search);
+  assert.match(response.reply, /10,000,000|10\s*مليون/iu);
+  assert.doesNotMatch(response.reply, /(?:مش ظاهر|مفيش اختيار|no suitable)/iu);
+});
+
+test("current-state queries resolve bedrooms, location, summary, and unset values deterministically", async () => {
+  const active = state({ search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 10_000_000 } });
+  for (const [message, target] of [
+    ["كنت طالب كام غرفة؟", "bedrooms"],
+    ["إحنا بندور فين؟", "locations"],
+    ["المواصفات اللي قولتهالك إيه؟", "SEARCH"],
+  ] as const) {
+    const intent = await understand(message, active);
+    const plan = planner.plan(intent, stateEngine.apply(active, intent, { channel: "WEB" }));
+    assert.equal(intent.intent, "CURRENT_SEARCH_QUERY", message);
+    assert.equal(intent.stateQuery, target, message);
+    assert.deepEqual(plan.steps, [], message);
+  }
+
+  const noBudget = state({ search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: [] } });
+  const intent = await understand("أنا محدد ميزانية قد إيه؟", noBudget);
+  const next = stateEngine.apply(noBudget, intent, { channel: "WEB" });
+  const response = await composer.compose({ userMessage: "أنا محدد ميزانية قد إيه؟", understanding: intent, state: next, plan: planner.plan(intent, next), toolResults: [], proposedActions: [], executedActions: [] });
+  assert.doesNotMatch(response.reply, /(?:\d[\d,.]*\s*(?:EGP|مليون)|مش ظاهر|no suitable)/iu);
+});
+
+test("noisy budget questions use semantic understanding with active state and never search", async () => {
+  let modelCalls = 0;
+  let suppliedBudget: number | undefined;
+  const model: any = {
+    available: () => true,
+    understand: async (_message: string, current: NadimState) => {
+      modelCalls += 1;
+      suppliedBudget = current.search.budgetMax;
+      return {
+        value: { intent: "CURRENT_SEARCH_QUERY", confidence: 0.93, operations: [{ operation: "SET", field: "budgetMax", value: 99_000_000 }], ordinalReferences: [], actionRequested: false, stateQuery: "budgetMax" },
+        provider: "test", model: "semantic-test", fallbackUsed: false, latencyMs: 1,
+      };
+    },
+  };
+  const active = state({ search: { locations: [], projects: [], developers: [], propertyTypes: [], budgetMax: 10_000_000 } });
+  const intent = (await new UnderstandingService(model).understand("ميزانيه ال محددهل انا كام", active)).understanding;
+  assert.equal(modelCalls, 1);
+  assert.equal(suppliedBudget, 10_000_000);
+  assert.equal(intent.intent, "CURRENT_SEARCH_QUERY");
+  assert.equal(intent.stateQuery, "budgetMax");
+  assert.deepEqual(intent.operations, []);
+  const next = stateEngine.apply(active, intent, { channel: "WEB" });
+  assert.equal(next.search.budgetMax, 10_000_000);
+  assert.deepEqual(planner.plan(intent, next).steps, []);
+});
+
+test("rejecting proposed widening preserves constraints and acknowledges without searching", async () => {
+  const active = state({
+    revision: 3,
+    search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 8_000_000 },
+    recentAssistantWording: "مش ظاهر معايا حاجة مناسبة بالمواصفات دي دلوقتي.",
+  });
+  const intent = await understand("لا توسع الخيارات", active);
+  const next = stateEngine.apply(active, intent, { channel: "WEB" });
+  const plan = planner.plan(intent, next);
+  const response = await composer.compose({ userMessage: "لا توسع الخيارات", understanding: intent, state: next, plan, toolResults: [], proposedActions: [], executedActions: [] });
+
+  assert.equal(intent.intent, "CORRECTION");
+  assert.deepEqual(intent.operations, [{ operation: "PRESERVE", field: "SEARCH" }]);
+  assert.deepEqual(next.search, active.search);
+  assert.deepEqual(plan.steps, []);
+  assert.doesNotMatch(response.reply, /(?:مش فاهم|ما فهمت|no suitable|مش ظاهر)/iu);
+});
+
+test("contextual remove and preserve-plus-change operations affect only requested fields", async () => {
+  const active = state({ search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 8_000_000 } });
+  const removedIntent = await understand("سيب المكان مفتوح", active);
+  const removed = stateEngine.apply(active, removedIntent, { channel: "WEB" });
+  assert.deepEqual(removedIntent.operations, [{ operation: "REMOVE", field: "locations" }]);
+  assert.deepEqual(removed.search.locations, []);
+  assert.equal(removed.search.bedrooms, 3);
+
+  const changedIntent = await understand("نفس المواصفات بس 10 مليون", active);
+  const changed = stateEngine.apply(active, changedIntent, { channel: "WEB" });
+  assert.equal(changedIntent.intent, "MODIFY_SEARCH");
+  assert.equal(changed.search.budgetMax, 10_000_000);
+  assert.equal(changed.search.bedrooms, 3);
+  assert.deepEqual(changed.search.locations, ["التجمع"]);
+  assert.deepEqual(changed.search.propertyTypes, ["Apartment"]);
+});
+
+test("dominant numeric and bedroom references resolve from active search while vague changes clarify", async () => {
+  const active = state({ search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 8_000_000 } });
+  const budgetIntent = await understand("خليها 12", active);
+  const budgetState = stateEngine.apply(active, budgetIntent, { channel: "WEB" });
+  assert.equal(budgetIntent.intent, "MODIFY_SEARCH");
+  assert.equal(budgetState.search.budgetMax, 12_000_000);
+  assert.equal(budgetState.search.bedrooms, 3);
+
+  const bedroomIntent = await understand("خليهم 4 غرف", active);
+  const bedroomState = stateEngine.apply(active, bedroomIntent, { channel: "WEB" });
+  assert.equal(bedroomIntent.intent, "MODIFY_SEARCH");
+  assert.equal(bedroomState.search.bedrooms, 4);
+  assert.equal(bedroomState.search.budgetMax, 8_000_000);
+
+  const vagueIntent = await understand("زودها شوية", active);
+  const vaguePlan = planner.plan(vagueIntent, stateEngine.apply(active, vagueIntent, { channel: "WEB" }));
+  assert.equal(vagueIntent.intent, "MODIFY_SEARCH");
+  assert.equal(vagueIntent.ambiguity, "SEARCH_CHANGE_AMOUNT_REQUIRED");
+  assert.deepEqual(vaguePlan.steps, []);
+  assert.equal(vaguePlan.clarification, "SEARCH_CHANGE_AMOUNT_REQUIRED");
+
+  const preserveIntent = await understand("خليك على نفس المواصفات", active);
+  assert.equal(preserveIntent.intent, "CORRECTION");
+  assert.deepEqual(planner.plan(preserveIntent, stateEngine.apply(active, preserveIntent, { channel: "WEB" })).steps, []);
+});
+
+test("Gulf greeting is a greeting and cannot become an address-change acknowledgement", async () => {
+  const styled = languageStyles.apply(state(), "هلا");
+  const intent = await understand("هلا", styled);
+  const next = stateEngine.apply(styled, intent, { channel: "WEB" });
+  const plan = planner.plan(intent, next);
+  const response = await composer.compose({ userMessage: "هلا", understanding: intent, state: next, plan, toolResults: [], proposedActions: [], executedActions: [] });
+
+  assert.equal(styled.languageStyle.preferredResponseStyle, "AR_GULF");
+  assert.equal(styled.languageStyle.grammaticalAddressChangedThisTurn, false);
+  assert.equal(intent.intent, "GREETING");
+  assert.deepEqual(plan.steps, []);
+  assert.match(response.reply, /نديم/u);
+  assert.doesNotMatch(response.reply, /(?:بالطريقة هذي|بكمل بالطريقة)/u);
+
+  const active = languageStyles.apply(state({ revision: 4, search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], budgetMax: 8_000_000 } }), "هلا");
+  const activeIntent = await understand("هلا", active);
+  const activeNext = stateEngine.apply(active, activeIntent, { channel: "WEB" });
+  const activeResponse = await composer.compose({ userMessage: "هلا", understanding: activeIntent, state: activeNext, plan: planner.plan(activeIntent, activeNext), toolResults: [], proposedActions: [], executedActions: [] });
+  assert.deepEqual(activeNext.search, active.search);
+  assert.doesNotMatch(activeResponse.reply, /(?:بدأنا|بحث جديد|بالطريقة هذي)/u);
+});
+
+test("gibberish and ambiguous Arabic noise preserve state without search or no-match claims", async () => {
+  const active = state({ search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], budgetMax: 8_000_000 } });
+  for (const message of ["svgsvg", "عالا"]) {
+    const intent = await understand(message, active);
+    const next = stateEngine.apply(active, intent, { channel: "WEB" });
+    const plan = planner.plan(intent, next);
+    const response = await composer.compose({ userMessage: message, understanding: intent, state: next, plan, toolResults: [], proposedActions: [], executedActions: [] });
+    assert.equal(intent.intent, "UNKNOWN", message);
+    assert.deepEqual(intent.operations, [], message);
+    assert.deepEqual(next.search, active.search, message);
+    assert.deepEqual(plan.steps, [], message);
+    assert.doesNotMatch(response.reply, /(?:مش ظاهر|مفيش اختيار|no suitable)/iu, message);
+  }
+});
+
+test("short contextual budget updates work across English, Gulf, Franco, and mixed styles", async () => {
+  const cases = [
+    ["خلها 10 مليون", "AR_GULF"],
+    ["Make it 10 million", "EN_US"],
+    ["khalyha 10 million", "FRANCO_ARABIC"],
+    ["خلي الـbudget 10 million", "MIXED_AR_EN"],
+  ] as const;
+  for (const [message, expectedStyle] of cases) {
+    const active = state({ search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 8_000_000 } });
+    const styled = languageStyles.apply(active, message);
+    const intent = await understand(message, styled);
+    const next = stateEngine.apply(styled, intent, { channel: "WEB" });
+    assert.equal(styled.languageStyle.preferredResponseStyle, expectedStyle, message);
+    assert.equal(intent.intent, "MODIFY_SEARCH", message);
+    assert.equal(next.search.budgetMax, 10_000_000, message);
+    assert.equal(next.search.bedrooms, 3, message);
+    assert.equal(planner.plan(intent, next).steps[0]?.tool, "PROPERTY_SEARCH", message);
+  }
+});
+
+test("language-only requests cannot hallucinate search operations", async () => {
+  const active = state({ search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 8_000_000 } });
+  const styled = languageStyles.apply(active, "Explain it in English");
+  const intent = await understand("Explain it in English", styled);
+  const next = stateEngine.apply(styled, intent, { channel: "WEB" });
+  const plan = planner.plan(intent, next);
+  const response = await composer.compose({ userMessage: "Explain it in English", understanding: intent, state: next, plan, toolResults: [], proposedActions: [], executedActions: [] });
+  assert.equal(intent.intent, "SMALL_TALK");
+  assert.deepEqual(next.lastOperations, []);
+  assert.deepEqual(next.search, active.search);
+  assert.deepEqual(plan.steps, []);
+  assert.doesNotMatch(response.reply, /(?:budget|location).*(?:updated|changed)|(?:الميزانية|المكان).*(?:اتغير|غيّرت)/iu);
 });
 
 test("8 reset search clears constraints and result references", async () => {

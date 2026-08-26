@@ -50,7 +50,7 @@ export class ResponseComposerService {
       || input.state.languageStyle?.changedThisTurn
       || input.state.languageStyle?.grammaticalAddressChangedThisTurn
       || input.understanding.intent === "UNKNOWN"
-      || ["GREETING", "RESET_SEARCH"].includes(input.understanding.intent);
+      || ["GREETING", "RESET_SEARCH", "CURRENT_SEARCH_QUERY", "CORRECTION"].includes(input.understanding.intent);
     if (deterministicRequired || !this.dialogue.available()) return { reply: fallback };
     try {
       const model = await this.dialogue.compose({
@@ -87,6 +87,13 @@ export class ResponseComposerService {
     if (input.state.languageStyle?.grammaticalAddressChangedThisTurn && ["UNKNOWN", "SMALL_TALK"].includes(input.understanding.intent)) return this.responseStyle.addressChanged(style);
     if (input.understanding.intent === "RESET_SEARCH") return this.responseStyle.reset(style);
     if (input.understanding.intent === "UNKNOWN") return this.responseStyle.clarifyUnknown(style);
+    if (input.understanding.intent === "CURRENT_SEARCH_QUERY") {
+      return this.responseStyle.currentSearch(style, input.state, input.understanding.stateQuery);
+    }
+    if (input.understanding.intent === "CORRECTION"
+      && input.state.lastOperations.some((operation) => operation.operation === "PRESERVE")) {
+      return this.responseStyle.preservedSearch(style);
+    }
 
     if (input.plan.goal === "PROPERTY_SEARCH") {
       const result = input.toolResults.find((item) => item.tool === "PROPERTY_SEARCH");

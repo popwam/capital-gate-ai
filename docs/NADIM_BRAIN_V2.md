@@ -22,9 +22,9 @@ The first arrow always starts with an inbound customer turn. Nadim does not init
 
 ## Pipeline
 
-1. **Understand** produces a schema-validated `NadimUnderstanding`. GLM may interpret language, but explicit high-confidence facts are deterministically extracted and take precedence. Raw model JSON never becomes state without Zod validation.
-2. **State** applies only explicit `SET`, `REMOVE`, `RESET`, and `PRESERVE` operations. Unmentioned constraints survive. Search results are persisted as IDs, not reconstructed from model memory.
-3. **Plan** maps validated intent and state to typed tool calls. It cannot generate SQL or action success.
+1. **Understand** produces a schema-validated `NadimUnderstanding`. Short references are resolved against active search state before `UNKNOWN`; GLM may interpret noisy language, while explicit high-confidence facts still take precedence. `CURRENT_SEARCH_QUERY` identifies questions about persisted search values without turning them into mutations. Raw model JSON never becomes state without Zod validation.
+2. **State** applies only explicit `SET`, `REMOVE`, `RESET`, and `PRESERVE` operations. Unmentioned constraints survive, and greeting, state-query, small-talk, and unknown intents cannot mutate search state. Search results are persisted as IDs, not reconstructed from model memory.
+3. **Plan** maps validated intent and state to typed tool calls. State queries, rejected relaxations, greetings, gibberish, and ambiguous amount changes do not execute property search. The planner cannot generate SQL or action success.
 4. **Tools** call trusted application services and PostgreSQL-backed repositories. Tool errors become structured unavailable/not-found results.
 5. **Action policy** permits proposals only for explicit customer requests and checks prerequisites. Execution goes through the private automation API, never directly from model output.
 6. **Compose** receives verified tool/action results. Deterministic responses are used for property truth and action status; the dialogue model is limited to non-factual natural language composition.

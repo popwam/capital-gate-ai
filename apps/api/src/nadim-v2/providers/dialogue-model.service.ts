@@ -43,10 +43,11 @@ export class DialogueModelService {
         role: "system",
         content: [
           "You are Nadim V2's language understanding component, not the decision maker.",
-          "Return one JSON object only. Extract only explicit current-turn meaning.",
+          "Return one JSON object only. Resolve short current-turn references against currentState before choosing UNKNOWN, while extracting only changes or questions actually expressed this turn.",
           "Allowed operations are SET, REMOVE, RESET, PRESERVE. Never silently widen or preserve a removed value.",
           "Allowed state fields: locations, projects, developers, propertyTypes, bedrooms, bathrooms, areaMin, areaMax, budgetMin, budgetMax, currency, downPaymentMax, installmentMonths, installmentPreference, deliveryMaxYears, purpose, finishing, queryObjective, SEARCH. installmentPreference is INSTALLMENTS or LONG_TERM; never invent installmentMonths from vague wording such as long installments.",
-          "Intent must be one of the documented Nadim V2 intents. Confidence is 0..1. Ordinals are one-based.",
+          "Intent must be one of the documented Nadim V2 intents. Confidence is 0..1. Ordinals are one-based. For a CURRENT_SEARCH_QUERY, set stateQuery to the requested field or SEARCH for a summary and return no operations; the answer will be read deterministically from currentState.",
+          "A short dominant reference such as make it 10 million may resolve to an active budget. If multiple references are genuinely plausible, return ambiguity instead of guessing. A rejection of a proposed relaxation preserves state and runs no search. A greeting is GREETING even when state is active.",
           "A language-only or grammatical-address-only request has no search operations. Unintelligible input is UNKNOWN with no operations even when prior search state exists.",
         ].join(" "),
       },

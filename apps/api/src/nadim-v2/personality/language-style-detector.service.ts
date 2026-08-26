@@ -18,7 +18,9 @@ export class LanguageStyleDetectorService {
     const detectedAddress = this.grammaticalAddress(message, previous);
     const address = {
       ...detectedAddress,
-      changed: Boolean(previous && previous.grammaticalAddress !== detectedAddress.value),
+      changed: Boolean(previous
+        && previous.grammaticalAddress !== detectedAddress.value
+        && (detectedAddress.explicit || previous.grammaticalAddress !== "UNKNOWN")),
     };
     const explicit = this.explicitRequest(message);
     if (explicit) {
@@ -89,7 +91,7 @@ export class LanguageStyleDetectorService {
       const wordCount = Math.max(1, (text.match(/[\p{L}\d]+/gu) ?? []).length);
       return { style: "MIXED_AR_EN", confidence: 0.94, explicit: false, codeSwitchRatio: Math.min(1, englishRealEstate.length / wordCount) };
     }
-    if (hasArabic && /(?:أبي|ابي|أبغى|ابغى|ودي|وش|هذي|هال|خلني|تبيني|ما راح|^هلا(?:\s|$))/iu.test(text)) {
+    if (hasArabic && /(?:أبي|ابي|أبغى|ابغى|ودي|وش|هذي|هال|خلني|خلها|خلهم|تبيني|ما راح|^هلا(?:\s|$))/iu.test(text)) {
       return { style: "AR_GULF", confidence: 0.93, explicit: false };
     }
     if (hasArabic && /(?:أرغب|أود|اود|يرجى|الوحدات المتاحة|هل يمكن|أرشدني)/iu.test(text)) {
@@ -101,9 +103,9 @@ export class LanguageStyleDetectorService {
     if (hasArabic) return { style: "UNKNOWN", confidence: 0.45, explicit: false };
 
     const lower = text.toLowerCase();
-    const francoTokens = lower.match(/(?:3ay[ez]|sho2a|tagamo3|btedor|khalini|ashoof|mala2etsh|ta2seet|msa7|a7san|ar5as|\bfel\b|\b3ala\b)/gu) ?? [];
+    const francoTokens = lower.match(/(?:3ay[ez]|sho2a|tagamo3|btedor|khalini|khalyha|khalyhom|ashoof|mala2etsh|ta2seet|msa7|a7san|ar5as|\bfel\b|\b3ala\b)/gu) ?? [];
     const digitWords = lower.match(/[a-z]+[235789][a-z]+|[235789][a-z]{2,}/gu) ?? [];
-    if (francoTokens.length >= 1 && (francoTokens.length + digitWords.length >= 2)) return { style: "FRANCO_ARABIC", confidence: 0.94, explicit: false };
+    if (francoTokens.length >= 1 && (francoTokens.length + digitWords.length >= 2 || /\d/u.test(lower))) return { style: "FRANCO_ARABIC", confidence: 0.94, explicit: false };
     if (latinWords.length) return { style: "EN_US", confidence: 0.9, explicit: false };
     return { style: "UNKNOWN", confidence: 0.2, explicit: false };
   }

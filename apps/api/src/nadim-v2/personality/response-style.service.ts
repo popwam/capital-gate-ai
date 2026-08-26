@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { ExecutedAction, ProposedAction } from "../domain/nadim-action";
-import { StateOperation } from "../domain/nadim-intent";
+import { CurrentSearchQueryTarget, StateOperation } from "../domain/nadim-intent";
 import { NadimState } from "../domain/nadim-state";
 import { GrammaticalAddress, NadimLanguageStyle } from "./language-style.types";
 
@@ -56,6 +56,14 @@ export class ResponseStyleService {
   }
 
   clarification(style: NadimLanguageStyle, reason: string) {
+    if (reason === "SEARCH_CHANGE_AMOUNT_REQUIRED") return this.pick(style, {
+      AR_EGYPTIAN: "عايز تزودها لكام تحديدًا؟",
+      AR_GULF: "تبغى ترفعها إلى كم تحديدًا؟",
+      AR_FORMAL: "إلى أي قيمة تريد زيادتها تحديدًا؟",
+      EN_US: "What exact value should I raise it to?",
+      FRANCO_ARABIC: "3ayez tezawedha le kam belzabt?",
+      MIXED_AR_EN: "عايز تزودها لـكام بالضبط؟",
+    });
     if (reason === "RESULT_REFERENCE_NOT_FOUND") return this.pick(style, {
       AR_EGYPTIAN: "مش قادر أحدد أنهي اختيار تقصد. قولّي الرقم اللي ظاهر عندك.",
       AR_GULF: "ما قدرت أحدد أي خيار تقصد. قل لي الرقم الظاهر عندك.",
@@ -281,6 +289,73 @@ export class ResponseStyleService {
       EN_US: "Sure. Where should we pick up?",
       FRANCO_ARABIC: "tamam, nkamel mn fein?",
       MIXED_AR_EN: "تمام — نكمّل منين؟",
+    });
+  }
+
+  preservedSearch(style: NadimLanguageStyle) {
+    return this.pick(style, {
+      AR_EGYPTIAN: "تمام، هنفضل على نفس المواصفات من غير ما أغيّر حاجة.",
+      AR_GULF: "تمام، نخلي المواصفات مثل ما هي بدون تغيير.",
+      AR_FORMAL: "حسنًا، سأُبقي مواصفات البحث كما هي دون تغيير.",
+      EN_US: "Got it — I’ll keep the search as it is.",
+      FRANCO_ARABIC: "tamam, han5ally el search zay ma howa mn gheir taghyeer.",
+      MIXED_AR_EN: "تمام، هنفضل على نفس الـpreferences من غير أي change.",
+    });
+  }
+
+  currentSearch(style: NadimLanguageStyle, state: NadimState, target: CurrentSearchQueryTarget = "SEARCH") {
+    if (target === "budgetMax") {
+      const value = this.money(state.search.budgetMax, state.search.currency);
+      return value ? this.pick(style, {
+        AR_EGYPTIAN: `الميزانية المحددة دلوقتي لحد ${value}.`,
+        AR_GULF: `الميزانية المحددة حاليًا إلى ${value}.`,
+        AR_FORMAL: `الحد الأقصى للميزانية حاليًا هو ${value}.`,
+        EN_US: `The current maximum budget is ${value}.`,
+        FRANCO_ARABIC: `el max budget delwa2ty ${value}.`,
+        MIXED_AR_EN: `الـmaximum budget دلوقتي ${value}.`,
+      }) : this.pick(style, {
+        AR_EGYPTIAN: "لسه ما حددناش ميزانية.",
+        AR_GULF: "ما حددنا ميزانية إلى الآن.",
+        AR_FORMAL: "لم نحدد ميزانية بعد.",
+        EN_US: "We haven’t set a budget yet.",
+        FRANCO_ARABIC: "lessa ma 7adadnash budget.",
+        MIXED_AR_EN: "لسه ما حددناش budget.",
+      });
+    }
+    if (target === "bedrooms") {
+      const value = state.search.bedrooms;
+      return value !== undefined ? this.pick(style, {
+        AR_EGYPTIAN: `إنت طالب ${value} غرف.`,
+        AR_GULF: `أنت طالب ${value} غرف.`,
+        AR_FORMAL: `طلبك الحالي يتضمن ${value} غرف.`,
+        EN_US: `You currently have ${value} bedrooms in the search.`,
+        FRANCO_ARABIC: `enta taleb ${value} rooms.`,
+        MIXED_AR_EN: `إنت طالب ${value} bedrooms.`,
+      }) : this.pick(style, {
+        AR_EGYPTIAN: "لسه ما حددناش عدد الغرف.", AR_GULF: "ما حددنا عدد الغرف إلى الآن.", AR_FORMAL: "لم نحدد عدد الغرف بعد.", EN_US: "We haven’t set the bedroom count yet.", FRANCO_ARABIC: "lessa ma 7adadnash 3adad el rooms.", MIXED_AR_EN: "لسه ما حددناش عدد الـbedrooms.",
+      });
+    }
+    if (target === "locations") {
+      const value = state.search.locations.join("، ");
+      return value ? this.pick(style, {
+        AR_EGYPTIAN: `إحنا بندور في ${value}.`, AR_GULF: `ندور حاليًا في ${value}.`, AR_FORMAL: `نبحث حاليًا في ${value}.`, EN_US: `We’re currently looking in ${value}.`, FRANCO_ARABIC: `e7na bnedawar fe ${value}.`, MIXED_AR_EN: `إحنا عاملين search في ${value}.`,
+      }) : this.pick(style, {
+        AR_EGYPTIAN: "لسه ما حددناش مكان معين.", AR_GULF: "ما حددنا موقع معين إلى الآن.", AR_FORMAL: "لم نحدد موقعًا بعد.", EN_US: "We haven’t set a location yet.", FRANCO_ARABIC: "lessa ma 7adadnash location.", MIXED_AR_EN: "لسه ما حددناش location.",
+      });
+    }
+
+    const details = [
+      state.search.propertyTypes.length ? state.search.propertyTypes.join(", ") : undefined,
+      state.search.locations.length ? state.search.locations.join("، ") : undefined,
+      state.search.bedrooms !== undefined ? `${state.search.bedrooms} ${style === "EN_US" || style === "FRANCO_ARABIC" ? "bedrooms" : "غرف"}` : undefined,
+      this.money(state.search.budgetMax, state.search.currency),
+    ].filter(Boolean);
+    if (!details.length) return this.pick(style, {
+      AR_EGYPTIAN: "لسه ما حددناش مواصفات للبحث.", AR_GULF: "ما حددنا مواصفات للبحث إلى الآن.", AR_FORMAL: "لم نحدد مواصفات للبحث بعد.", EN_US: "We haven’t set any search preferences yet.", FRANCO_ARABIC: "lessa ma 7adadnash search specs.", MIXED_AR_EN: "لسه ما حددناش search preferences.",
+    });
+    const joined = details.join(" · ");
+    return this.pick(style, {
+      AR_EGYPTIAN: `إحنا بندور على: ${joined}.`, AR_GULF: `ندور حاليًا على: ${joined}.`, AR_FORMAL: `مواصفات البحث الحالية: ${joined}.`, EN_US: `Your current search is: ${joined}.`, FRANCO_ARABIC: `el search delwa2ty: ${joined}.`, MIXED_AR_EN: `الـcurrent search: ${joined}.`,
     });
   }
 

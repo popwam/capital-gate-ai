@@ -9,13 +9,16 @@ const NUMBER_FIELDS = new Set(["bedrooms", "bathrooms", "areaMin", "areaMax", "b
 export class StateEngineService {
   apply(previous: NadimState, understanding: NadimUnderstanding, identity: { channel: NadimState["channel"]; customerId?: string; externalUserId?: string; locale?: string }) {
     let state = structuredClone(previous);
-    for (const operation of understanding.operations) state = this.applyOperation(state, operation);
+    const operations = ["GREETING", "CURRENT_SEARCH_QUERY", "SMALL_TALK", "UNKNOWN"].includes(understanding.intent)
+      ? understanding.operations.filter((operation) => operation.operation === "PRESERVE")
+      : understanding.operations;
+    for (const operation of operations) state = this.applyOperation(state, operation);
     state.channel = identity.channel;
     state.customerId = identity.customerId ?? state.customerId;
     state.externalUserId = identity.externalUserId ?? state.externalUserId;
     state.locale = identity.locale ?? understanding.locale ?? state.locale;
     state.goal = understanding.intent;
-    state.lastOperations = understanding.operations;
+    state.lastOperations = operations;
     state.pendingClarification = undefined;
 
     if (understanding.ordinalReferences.length) {
