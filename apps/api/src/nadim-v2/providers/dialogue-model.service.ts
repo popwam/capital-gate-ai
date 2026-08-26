@@ -47,6 +47,7 @@ export class DialogueModelService {
           "Allowed operations are SET, REMOVE, RESET, PRESERVE. Never silently widen or preserve a removed value.",
           "Allowed state fields: locations, projects, developers, propertyTypes, bedrooms, bathrooms, areaMin, areaMax, budgetMin, budgetMax, currency, downPaymentMax, installmentMonths, installmentPreference, deliveryMaxYears, purpose, finishing, queryObjective, SEARCH. installmentPreference is INSTALLMENTS or LONG_TERM; never invent installmentMonths from vague wording such as long installments.",
           "Intent must be one of the documented Nadim V2 intents. Confidence is 0..1. Ordinals are one-based.",
+          "A language-only or grammatical-address-only request has no search operations. Unintelligible input is UNKNOWN with no operations even when prior search state exists.",
         ].join(" "),
       },
       { role: "user", content: JSON.stringify({ message, currentState: state }) },

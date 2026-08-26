@@ -144,12 +144,13 @@ test("8 reset search clears constraints and result references", async () => {
   assert.deepEqual(planner.plan(intent, next).steps, []);
 });
 
-test("9 no exact match is stated honestly", async () => {
+test("9 verified no-match is stated honestly without robotic or causal claims", async () => {
   const intent = await understand("عايز شقة تحت 5 مليون");
   const current = stateEngine.apply(state(), intent, { channel: "WEB" });
   const plan = planner.plan(intent, current);
   const reply = await composer.compose({ userMessage: "x", understanding: intent, state: current, plan, toolResults: [{ tool: "PROPERTY_SEARCH", ok: true, data: [], latencyMs: 1 }], proposedActions: [], executedActions: [] });
-  assert.match(reply.reply, /ملقتش حاجة مطابقة 100%/u);
+  assert.match(reply.reply, /(?:مش ظاهر|مفيش اختيار)/u);
+  assert.doesNotMatch(reply.reply, /(?:مطابقة 100%|القيد|الميزانية.{0,20}(?:السبب|مقلل|مانع))/u);
 });
 
 test("10 no-match does not mutate or widen constraints", async () => {

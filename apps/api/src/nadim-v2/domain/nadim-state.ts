@@ -39,6 +39,7 @@ export type NadimState = {
   lastResultIds: string[];
   pendingClarification?: { reason: string; field?: StateField };
   lastOperations: StateOperation[];
+  recentAssistantWording?: string;
 };
 
 export function initialNadimState(input: {
@@ -57,7 +58,16 @@ export function initialNadimState(input: {
     customerId: input.customerId,
     externalUserId: input.externalUserId,
     locale,
-    languageStyle: { detected: "UNKNOWN", confidence: 0, preferredResponseStyle, explicitOverride: false, changedThisTurn: false },
+    languageStyle: {
+      detected: "UNKNOWN",
+      confidence: 0,
+      preferredResponseStyle,
+      explicitOverride: false,
+      changedThisTurn: false,
+      grammaticalAddress: "UNKNOWN",
+      grammaticalAddressExplicit: false,
+      grammaticalAddressChangedThisTurn: false,
+    },
     search: { locations: [], projects: [], developers: [], propertyTypes: [] },
     comparisonUnitIds: [],
     lastResultIds: [],

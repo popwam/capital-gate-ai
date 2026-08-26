@@ -1,8 +1,9 @@
 import { Injectable } from "@nestjs/common";
 import { NadimState } from "../domain/nadim-state";
-import { NadimLanguageStyle, NadimLanguageStyleState, styleFromLocale } from "./language-style.types";
+import { GrammaticalAddress, NadimLanguageStyle, NadimLanguageStyleState, styleFromLocale } from "./language-style.types";
 
 type Detection = { style: NadimLanguageStyle; confidence: number; explicit: boolean; codeSwitchRatio?: number };
+type AddressDetection = { value: GrammaticalAddress; explicit: boolean; changed?: boolean };
 
 const ARABIC = /[\u0600-\u06FF]/u;
 const LATIN_WORD = /[A-Za-z]{2,}/gu;
@@ -14,24 +15,59 @@ export class LanguageStyleDetectorService {
   }
 
   detect(message: string, previous?: NadimLanguageStyleState, localeHint?: string): NadimLanguageStyleState {
+    const detectedAddress = this.grammaticalAddress(message, previous);
+    const address = {
+      ...detectedAddress,
+      changed: Boolean(previous && previous.grammaticalAddress !== detectedAddress.value),
+    };
     const explicit = this.explicitRequest(message);
     if (explicit) {
       const changed = previous?.preferredResponseStyle !== explicit;
-      return this.result(explicit, explicit, 1, true, changed);
+      return this.result(explicit, explicit, 1, true, changed, address);
     }
 
     const latest = this.latestMessage(message);
     if (previous?.explicitOverride && previous.preferredResponseStyle !== "UNKNOWN") {
-      return this.result(latest.style, previous.preferredResponseStyle, latest.confidence, true, false, latest.codeSwitchRatio);
+      return this.result(latest.style, previous.preferredResponseStyle, latest.confidence, true, false, address, latest.codeSwitchRatio);
     }
     if (latest.style !== "UNKNOWN" && latest.confidence >= 0.65) {
-      return this.result(latest.style, latest.style, latest.confidence, false, false, latest.codeSwitchRatio);
+      return this.result(latest.style, latest.style, latest.confidence, false, false, address, latest.codeSwitchRatio);
     }
 
     const recent = previous?.detected && previous.detected !== "UNKNOWN" ? previous.detected : undefined;
     const persisted = previous?.preferredResponseStyle && previous.preferredResponseStyle !== "UNKNOWN" ? previous.preferredResponseStyle : undefined;
     const fallback = recent ?? persisted ?? styleFromLocale(localeHint);
-    return this.result(latest.style, fallback, latest.confidence, previous?.explicitOverride ?? false, false, latest.codeSwitchRatio);
+    return this.result(latest.style, fallback, latest.confidence, previous?.explicitOverride ?? false, false, address, latest.codeSwitchRatio);
+  }
+
+  private grammaticalAddress(message: string, previous?: NadimLanguageStyleState): AddressDetection {
+    const text = message.normalize("NFKC").trim();
+    if (/(?:بصيغة|خاطبني|كلمني|كلّميني).{0,24}(?:مؤنث|للمؤنث)|(?:use|address me in).{0,20}feminine/iu.test(text)) {
+      return { value: "FEMININE", explicit: true };
+    }
+    if (/(?:من غير|بدون).{0,12}(?:صيغة )?مؤنث|(?:بصيغة|خاطبني).{0,20}(?:مذكر|للمذكر)|(?:use|address me in).{0,20}masculine/iu.test(text)) {
+      return { value: "MASCULINE", explicit: true };
+    }
+    if (/(?:صيغة|كلام|خطاب).{0,16}محايد|من غير (?:تذكير|مذكر).{0,12}(?:تأنيث|مؤنث)|gender[- ]neutral/iu.test(text)) {
+      return { value: "NEUTRAL", explicit: true };
+    }
+    if (previous?.grammaticalAddressExplicit) {
+      return { value: previous.grammaticalAddress ?? "NEUTRAL", explicit: true };
+    }
+
+    const feminine = /(?:عايزة|عاوزة|حابة)(?=$|\s|[،,.!?])/iu.test(text)
+      || /\b(?:3ayza|3awza|7aba)\b/iu.test(text);
+    const masculine = /(?:عايز|عاوز|حابب)(?=$|\s|[،,.!?])/iu.test(text)
+      || /\b(?:3ayz|3awz|7abeb)\b/iu.test(text);
+    if (feminine && masculine) return { value: "NEUTRAL", explicit: false };
+    if (feminine) return { value: "FEMININE", explicit: false };
+    if (masculine) return { value: "MASCULINE", explicit: false };
+    return {
+      value: previous?.grammaticalAddress && previous.grammaticalAddress !== "UNKNOWN"
+        ? previous.grammaticalAddress
+        : "NEUTRAL",
+      explicit: false,
+    };
   }
 
   private explicitRequest(message: string): NadimLanguageStyle | undefined {
@@ -72,7 +108,25 @@ export class LanguageStyleDetectorService {
     return { style: "UNKNOWN", confidence: 0.2, explicit: false };
   }
 
-  private result(detected: NadimLanguageStyle, preferredResponseStyle: NadimLanguageStyle, confidence: number, explicitOverride: boolean, changedThisTurn: boolean, codeSwitchRatio?: number): NadimLanguageStyleState {
-    return { detected, confidence, preferredResponseStyle, explicitOverride, changedThisTurn, codeSwitchRatio };
+  private result(
+    detected: NadimLanguageStyle,
+    preferredResponseStyle: NadimLanguageStyle,
+    confidence: number,
+    explicitOverride: boolean,
+    changedThisTurn: boolean,
+    address: AddressDetection,
+    codeSwitchRatio?: number,
+  ): NadimLanguageStyleState {
+    return {
+      detected,
+      confidence,
+      preferredResponseStyle,
+      explicitOverride,
+      changedThisTurn,
+      codeSwitchRatio,
+      grammaticalAddress: address.value,
+      grammaticalAddressExplicit: address.explicit,
+      grammaticalAddressChangedThisTurn: Boolean(address.changed),
+    };
   }
 }

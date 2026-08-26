@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { ExecutedAction, ProposedAction } from "../domain/nadim-action";
 import { StateOperation } from "../domain/nadim-intent";
 import { NadimState } from "../domain/nadim-state";
-import { NadimLanguageStyle } from "./language-style.types";
+import { GrammaticalAddress, NadimLanguageStyle } from "./language-style.types";
 
 type Copy = Record<Exclude<NadimLanguageStyle, "UNKNOWN">, string> & { UNKNOWN?: string };
 
@@ -44,6 +44,17 @@ export class ResponseStyleService {
     });
   }
 
+  addressChanged(style: NadimLanguageStyle) {
+    return this.pick(style, {
+      AR_EGYPTIAN: "تمام، هكمل بالطريقة دي.",
+      AR_GULF: "أكيد، بكمل بالطريقة هذي.",
+      AR_FORMAL: "بالتأكيد، سأتابع بهذه الصيغة.",
+      EN_US: "Sure — I’ll use that form of address.",
+      FRANCO_ARABIC: "tamam, hankamel bel segha di.",
+      MIXED_AR_EN: "تمام، هكمل بنفس الـaddress style.",
+    });
+  }
+
   clarification(style: NadimLanguageStyle, reason: string) {
     if (reason === "RESULT_REFERENCE_NOT_FOUND") return this.pick(style, {
       AR_EGYPTIAN: "مش قادر أحدد أنهي اختيار تقصد. قولّي الرقم اللي ظاهر عندك.",
@@ -75,10 +86,10 @@ export class ResponseStyleService {
     return this.pick(style, {
       AR_EGYPTIAN: "تمام، بدأنا بحث جديد وسيبت الطلب القديم ورا.",
       AR_GULF: "تمام، بدأنا بحث جديد وتركنا الطلب السابق.",
-      AR_FORMAL: "حسنًا، بدأنا بحثًا جديدًا وأزلنا شروط البحث السابقة.",
-      EN_US: "Got it — we’re starting a fresh search and leaving the old filters behind.",
-      FRANCO_ARABIC: "tamam, bada2na search gedid w sebna el filters el adeema.",
-      MIXED_AR_EN: "تمام، بدأنا search جديد وشلنا الـfilters القديمة.",
+      AR_FORMAL: "حسنًا، بدأنا بحثًا جديدًا وتركنا تفاصيل البحث السابق.",
+      EN_US: "Got it — we’re starting a fresh search and leaving the old request behind.",
+      FRANCO_ARABIC: "tamam, bada2na search gedid w sebna el talab el adeem.",
+      MIXED_AR_EN: "تمام، بدأنا search جديد وسيبنا الطلب القديم.",
     });
   }
 
@@ -104,53 +115,28 @@ export class ResponseStyleService {
     });
   }
 
-  noMatch(style: NadimLanguageStyle, blocker?: string, change?: string) {
-    const prefix = change ? `${change} ` : "";
-    const blockerText = blocker ? this.pick(style, {
-      AR_EGYPTIAN: `الظاهر إن ${blocker} مقلل الاختيارات.`,
-      AR_GULF: `يبدو إن ${blocker} مقلل الخيارات.`,
-      AR_FORMAL: `يبدو أن ${blocker} هو القيد الأبرز.`,
-      EN_US: `${blocker} looks like the main blocker.`,
-      FRANCO_ARABIC: `bayen en ${blocker} howa akbar constraint.`,
-      MIXED_AR_EN: `واضح إن ${blocker} هو الـmain blocker.`,
-    }) : "";
-    return prefix + this.pick(style, {
-      AR_EGYPTIAN: `ملقتش حاجة مطابقة 100% للشروط دي دلوقتي. ${blockerText} تحب نغيّر قيد واحد؟`,
-      AR_GULF: `ما لقيت خيار مطابق 100% للشروط حاليًا. ${blockerText} تبيني نغيّر شرط واحد؟`,
-      AR_FORMAL: `لم أجد خيارًا مطابقًا تمامًا لهذه الشروط حاليًا. ${blockerText} هل نعدّل شرطًا واحدًا؟`,
-      EN_US: `I didn’t find an exact match with those filters. ${blockerText} Want to loosen one filter?`,
-      FRANCO_ARABIC: `mala2etsh match 100% bel shoroot di. ${blockerText}`,
-      MIXED_AR_EN: `ملقتش match 100% بالـfilters دي. ${blockerText} نغيّر filter واحد؟`,
-    }).replace(/\s+/gu, " ").trim();
+  noMatch(style: NadimLanguageStyle, context: { change?: string; previousAssistantWording?: string } = {}) {
+    const primary = this.pick(style, {
+      AR_EGYPTIAN: "مش ظاهر معايا حاجة مناسبة بالمواصفات دي دلوقتي. ممكن نجرب نزود الميزانية شوية أو نغيّر حاجة بسيطة في الطلب.",
+      AR_GULF: "ما ظهر لي شيء مناسب بالمواصفات هذي حاليًا. نقدر نوسّع أحد الخيارات شوي ونشوف.",
+      AR_FORMAL: "لا تظهر لدي حاليًا وحدة مناسبة بهذه المواصفات. يمكننا تعديل الميزانية قليلًا أو تغيير إحدى المواصفات ثم البحث مجددًا.",
+      EN_US: "Nothing suitable is showing up with those preferences right now. We could bump the budget a little or adjust one preference.",
+      FRANCO_ARABIC: "Msh zaherly 7aga monaseba bel specs di delwa2ty. Momken nwassa3 el budget shwaya aw nghayar tafseela baseeta.",
+      MIXED_AR_EN: "مش ظاهر معايا option مناسب بالـpreferences دي دلوقتي. ممكن نوسّع الـbudget شوية أو نعدّل detail بسيطة.",
+    });
+    const alternate = this.pick(style, {
+      AR_EGYPTIAN: "لحد دلوقتي مفيش اختيار مناسب للطلب ده. نقدر نجرب مساحة أوسع شوية في الميزانية أو المواصفات.",
+      AR_GULF: "حاليًا ما عندي خيار مناسب للطلب هذا. ممكن نوسّع الميزانية أو نخفف إحدى المواصفات شوي.",
+      AR_FORMAL: "لا يوجد حاليًا خيار مناسب للطلب. يمكننا توسيع الميزانية أو تخفيف إحدى المواصفات قليلًا.",
+      EN_US: "I’m not seeing a suitable option for that request right now. We can widen the budget or relax one preference a little.",
+      FRANCO_ARABIC: "Delwa2ty msh shayef option monaseb lel talab da. Momken nwassa3 el budget aw n5afef tafseela shwaya.",
+      MIXED_AR_EN: "حاليًا مش شايف option مناسب للطلب ده. نقدر نوسّع الـbudget أو نخفف preference بسيطة.",
+    });
+    const response = context.previousAssistantWording?.includes(primary.split(/[.!؟]/u)[0]) ? alternate : primary;
+    return [context.change, response].filter(Boolean).join(" ");
   }
 
-  searchBlocker(style: NadimLanguageStyle, state: NadimState) {
-    if (state.search.budgetMax != null) {
-      const value = this.money(state.search.budgetMax, state.search.currency);
-      return this.pick(style, {
-        AR_EGYPTIAN: `سقف الميزانية ${value}`,
-        AR_GULF: `حد الميزانية ${value}`,
-        AR_FORMAL: `الميزانية القصوى ${value}`,
-        EN_US: `the ${value} budget cap`,
-        FRANCO_ARABIC: `budget cap ${value}`,
-        MIXED_AR_EN: `الـbudget cap ${value}`,
-      });
-    }
-    if (state.search.locations.length) {
-      const locations = state.search.locations.join(style === "EN_US" || style === "FRANCO_ARABIC" ? ", " : "، ");
-      return this.pick(style, {
-        AR_EGYPTIAN: `المكان (${locations})`,
-        AR_GULF: `الموقع (${locations})`,
-        AR_FORMAL: `الموقع (${locations})`,
-        EN_US: `the location (${locations})`,
-        FRANCO_ARABIC: `location (${locations})`,
-        MIXED_AR_EN: `الـlocation (${locations})`,
-      });
-    }
-    return undefined;
-  }
-
-  searchResults(style: NadimLanguageStyle, units: any[], change?: string) {
+  searchResults(style: NadimLanguageStyle, units: any[], change?: string, address: GrammaticalAddress = "NEUTRAL") {
     const intro = this.pick(style, {
       AR_EGYPTIAN: `لقيتلك ${units.length} ${units.length === 1 ? "اختيار مناسب" : "اختيارات مناسبين"}.`,
       AR_GULF: `لقيت لك ${units.length} ${units.length === 1 ? "خيار مناسب" : "خيارات مناسبة"}.`,
@@ -162,12 +148,12 @@ export class ResponseStyleService {
     const lines = units.slice(0, 5).map((unit, index) => this.unitLine(style, unit, index));
     const insight = this.resultInsight(style, units);
     const next = units.length === 2 ? this.pick(style, {
-      AR_EGYPTIAN: "لو حابب، أقارنلك الاتنين بسرعة.",
+      AR_EGYPTIAN: address === "FEMININE" ? "لو حابة، أقارنلك الاتنين بسرعة." : address === "MASCULINE" ? "لو حابب، أقارنلك الاتنين بسرعة." : "ممكن أقارنلك الاتنين بسرعة.",
       AR_GULF: "إذا ودك، أقارن لك بينهم بسرعة.",
       AR_FORMAL: "يمكنني مقارنة الخيارين باختصار.",
       EN_US: "I can compare the two side by side if useful.",
-      FRANCO_ARABIC: "momken a2arenhomlak besor3a law 7abeb.",
-      MIXED_AR_EN: "لو حابب، أعملك quick comparison بينهم.",
+      FRANCO_ARABIC: address === "FEMININE" ? "momken a2arenhomlak besor3a law 7aba." : address === "MASCULINE" ? "momken a2arenhomlak besor3a law 7abeb." : "momken a2arenhomlak besor3a.",
+      MIXED_AR_EN: address === "FEMININE" ? "لو حابة، أعملك quick comparison بينهم." : address === "MASCULINE" ? "لو حابب، أعملك quick comparison بينهم." : "ممكن أعملك quick comparison بينهم.",
     }) : "";
     return [change, intro, insight, ...lines, next].filter(Boolean).join("\n");
   }
@@ -276,14 +262,25 @@ export class ResponseStyleService {
     });
   }
 
+  clarifyUnknown(style: NadimLanguageStyle) {
+    return this.pick(style, {
+      AR_EGYPTIAN: "مش فاهم قصدك هنا، ممكن توضحهالي؟",
+      AR_GULF: "ما فهمت قصدك هنا، ممكن توضح لي؟",
+      AR_FORMAL: "لم أفهم المقصود هنا. هل يمكنك توضيحه؟",
+      EN_US: "I didn’t catch that. What did you mean?",
+      FRANCO_ARABIC: "Msh fahem 2asdak, momken twada7ly?",
+      MIXED_AR_EN: "مش فاهم قصدك هنا، ممكن توضح الـmeaning؟",
+    });
+  }
+
   safeFallback(style: NadimLanguageStyle) {
     return this.pick(style, {
-      AR_EGYPTIAN: "قولّي تفصيلة واحدة زيادة وأنا أمشي معاك في أنسب اتجاه.",
-      AR_GULF: "قل لي تفصيلة واحدة زيادة وبمشي معك في أنسب اتجاه.",
-      AR_FORMAL: "أخبرني بتفصيل إضافي واحد لأساعدك بدقة.",
-      EN_US: "Give me one more detail and I’ll point you in the right direction.",
-      FRANCO_ARABIC: "2olly tafseela wa7da zeyada w hasa3dak beda2a.",
-      MIXED_AR_EN: "قولّي detail واحدة زيادة وأنا أساعدك بدقة.",
+      AR_EGYPTIAN: "تمام — نكمل منين؟",
+      AR_GULF: "تمام — من وين نكمل؟",
+      AR_FORMAL: "بالتأكيد. كيف نتابع؟",
+      EN_US: "Sure. Where should we pick up?",
+      FRANCO_ARABIC: "tamam, nkamel mn fein?",
+      MIXED_AR_EN: "تمام — نكمّل منين؟",
     });
   }
 
@@ -326,20 +323,20 @@ export class ResponseStyleService {
   operationSummary(style: NadimLanguageStyle, operations: StateOperation[], state: NadimState) {
     const budget = operations.find((operation) => operation.operation === "SET" && operation.field === "budgetMax");
     if (budget) return this.pick(style, {
-      AR_EGYPTIAN: `خليت الميزانية ${this.money(state.search.budgetMax, state.search.currency)} وسيبت باقي المواصفات زي ما هي.`,
-      AR_GULF: `عدلت الميزانية إلى ${this.money(state.search.budgetMax, state.search.currency)} وخليت باقي المواصفات مثل ما هي.`,
-      AR_FORMAL: `عدّلت الميزانية إلى ${this.money(state.search.budgetMax, state.search.currency)} وأبقيت بقية المواصفات كما هي.`,
-      EN_US: `I updated the budget to ${this.money(state.search.budgetMax, state.search.currency)} and kept the other preferences unchanged.`,
-      FRANCO_ARABIC: `5alet el budget ${this.money(state.search.budgetMax, state.search.currency)} w sebt ba2y el preferences zay ma hya.`,
-      MIXED_AR_EN: `خليت الـbudget ${this.money(state.search.budgetMax, state.search.currency)} وسيبت باقي الـpreferences زي ما هي.`,
+      AR_EGYPTIAN: `خليت الميزانية لحد ${this.money(state.search.budgetMax, state.search.currency)}.`,
+      AR_GULF: `خليت الميزانية إلى ${this.money(state.search.budgetMax, state.search.currency)}.`,
+      AR_FORMAL: `أصبحت الميزانية حتى ${this.money(state.search.budgetMax, state.search.currency)}.`,
+      EN_US: `The budget is now ${this.money(state.search.budgetMax, state.search.currency)}.`,
+      FRANCO_ARABIC: `5alet el budget le7ad ${this.money(state.search.budgetMax, state.search.currency)}.`,
+      MIXED_AR_EN: `خليت الـbudget لحد ${this.money(state.search.budgetMax, state.search.currency)}.`,
     });
     if (operations.some((operation) => operation.operation === "REMOVE" && operation.field === "locations")) return this.pick(style, {
-      AR_EGYPTIAN: "تمام، شلت شرط المكان. باقي طلبك زي ما هو.",
-      AR_GULF: "تمام، شلت شرط الموقع وخليت باقي طلبك مثل ما هو.",
-      AR_FORMAL: "أزلت شرط الموقع وأبقيت بقية الطلب كما هو.",
-      EN_US: "I removed the location filter and kept everything else unchanged.",
-      FRANCO_ARABIC: "tamam, shelt location filter w sebt ba2y el request zay ma howa.",
-      MIXED_AR_EN: "تمام، شلت الـlocation filter وسيبت باقي الـrequest زي ما هو.",
+      AR_EGYPTIAN: "تمام، شلت المكان من الطلب.",
+      AR_GULF: "تمام، شلت الموقع من الطلب.",
+      AR_FORMAL: "أزلت الموقع من الطلب.",
+      EN_US: "I removed the location from the search.",
+      FRANCO_ARABIC: "tamam, shelt el location mn el talab.",
+      MIXED_AR_EN: "تمام، شلت الـlocation من الطلب.",
     });
     return undefined;
   }

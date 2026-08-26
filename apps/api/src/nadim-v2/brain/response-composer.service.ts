@@ -3,7 +3,7 @@ import { ExecutedAction, ProposedAction } from "../domain/nadim-action";
 import { NadimUnderstanding } from "../domain/nadim-intent";
 import { NadimPlan, NadimToolResult } from "../domain/nadim-plan";
 import { NadimState } from "../domain/nadim-state";
-import { NADIM_CORE_PERSONALITY } from "../personality/nadim-personality";
+import { NADIM_CORE_PERSONALITY, NADIM_STYLE_PROFILES } from "../personality/nadim-personality";
 import { ResponseStyleService } from "../personality/response-style.service";
 import { DialogueModelService } from "../providers/dialogue-model.service";
 
@@ -41,12 +41,15 @@ export class ResponseComposerService {
 
   async compose(input: CompositionInput): Promise<CompositionResult> {
     const fallback = this.deterministic(input);
-    const deterministicRequired = input.plan.steps.length > 0
-      || input.plan.goal === "PROPERTY_SEARCH"
+    const verifiedEmptySearch = this.verifiedEmptySearch(input);
+    const deterministicRequired = (!verifiedEmptySearch && input.plan.steps.length > 0)
+      || (!verifiedEmptySearch && input.plan.goal === "PROPERTY_SEARCH")
       || Boolean(input.plan.clarification)
       || input.proposedActions.length > 0
       || input.executedActions.length > 0
       || input.state.languageStyle?.changedThisTurn
+      || input.state.languageStyle?.grammaticalAddressChangedThisTurn
+      || input.understanding.intent === "UNKNOWN"
       || ["GREETING", "RESET_SEARCH"].includes(input.understanding.intent);
     if (deterministicRequired || !this.dialogue.available()) return { reply: fallback };
     try {
@@ -55,13 +58,19 @@ export class ResponseComposerService {
         intent: input.understanding,
         state: input.state,
         selectedLanguageStyle: input.state.languageStyle,
+        styleProfile: NADIM_STYLE_PROFILES[input.state.languageStyle.preferredResponseStyle],
         personality: NADIM_CORE_PERSONALITY,
         verifiedFacts: input.toolResults.filter((result) => result.ok).map((result) => ({ tool: result.tool, data: result.data })),
+        currentStateOperations: input.state.lastOperations,
+        previousAssistantWording: input.state.recentAssistantWording,
+        responseGoal: verifiedEmptySearch ? "VERIFIED_EMPTY_SEARCH" : input.plan.goal,
         actionResults: input.executedActions,
         deterministicFallback: fallback,
       }, input.trace);
       if (!this.safeActionClaims(model.value, input.executedActions)) return { reply: fallback };
       if (!this.safeInventoryClaims(model.value, input.toolResults)) return { reply: fallback };
+      if (!this.safeStyleSurface(model.value, input.state.languageStyle.preferredResponseStyle)) return { reply: fallback };
+      if (verifiedEmptySearch && !this.safeNoMatchComposition(model.value)) return { reply: fallback };
       return { reply: model.value, model: { provider: model.provider, model: model.model, fallbackUsed: model.fallbackUsed, latencyMs: model.latencyMs } };
     } catch {
       return { reply: fallback };
@@ -75,7 +84,9 @@ export class ResponseComposerService {
     if (input.proposedActions.length) return this.responseStyle.proposedAction(style, input.proposedActions[0]);
     if (input.understanding.intent === "GREETING") return this.responseStyle.greeting(style, input.state.revision <= 1, input.userMessage);
     if (input.state.languageStyle?.changedThisTurn && ["UNKNOWN", "SMALL_TALK"].includes(input.understanding.intent)) return this.responseStyle.languageChanged(style);
+    if (input.state.languageStyle?.grammaticalAddressChangedThisTurn && ["UNKNOWN", "SMALL_TALK"].includes(input.understanding.intent)) return this.responseStyle.addressChanged(style);
     if (input.understanding.intent === "RESET_SEARCH") return this.responseStyle.reset(style);
+    if (input.understanding.intent === "UNKNOWN") return this.responseStyle.clarifyUnknown(style);
 
     if (input.plan.goal === "PROPERTY_SEARCH") {
       const result = input.toolResults.find((item) => item.tool === "PROPERTY_SEARCH");
@@ -85,8 +96,8 @@ export class ResponseComposerService {
         ? this.responseStyle.operationSummary(style, input.state.lastOperations, input.state)
         : undefined;
       return result.data.length
-        ? this.responseStyle.searchResults(style, result.data, change)
-        : this.responseStyle.noMatch(style, this.responseStyle.searchBlocker(style, input.state), change);
+        ? this.responseStyle.searchResults(style, result.data, change, input.state.languageStyle.grammaticalAddress)
+        : this.responseStyle.noMatch(style, { change, previousAssistantWording: input.state.recentAssistantWording });
     }
 
     if (input.plan.goal === "COMPARISON") {
@@ -124,9 +135,42 @@ export class ResponseComposerService {
   }
 
   private safeInventoryClaims(reply: string, toolResults: NadimToolResult[]) {
-    const claimsZeroInventory = /(?:ملقتش|ما\s+لقيت|مفيش\s+(?:نتائج|وحدات)|لا\s+توجد\s+(?:نتائج|وحدات)|mala2etsh|no\s+(?:results|available\s+units|inventory)|nothing\s+matched|didn[’']t\s+find\s+an?\s+exact\s+match)/iu.test(reply);
+    const claimsZeroInventory = /(?:مش\s+(?:ظاهر|شايف)|ما\s+(?:ظهر|لقيت)|ملقتش|مفيش\s+(?:اختيار|نتائج|وحدات)|لا\s+(?:تظهر|يوجد|توجد)|لم\s+أجد|m(?:e)?sh\s+(?:zaher|shayef)|mala2etsh|ma\s+la2etsh|not\s+seeing|nothing\s+suitable|no\s+(?:suitable|results|available\s+units|inventory)|didn[’']t\s+find)/iu.test(reply);
     if (!claimsZeroInventory) return true;
     const search = toolResults.find((result) => result.tool === "PROPERTY_SEARCH");
     return Boolean(search?.ok && Array.isArray(search.data) && search.data.length === 0);
+  }
+
+  private verifiedEmptySearch(input: CompositionInput) {
+    const search = input.toolResults.find((result) => result.tool === "PROPERTY_SEARCH");
+    return input.plan.goal === "PROPERTY_SEARCH" && Boolean(search?.ok && Array.isArray(search.data) && search.data.length === 0);
+  }
+
+  private safeNoMatchComposition(reply: string) {
+    const statesNoMatch = /(?:مش\s+(?:ظاهر|شايف)|ما\s+(?:ظهر|لقيت)|ملقتش|مفيش\s+(?:اختيار|حاجة|نتيجة|وحدة)|لا\s+(?:تظهر|يوجد|توجد)|لم\s+أجد|m(?:e)?sh\s+(?:zaher|shayef)|mala2etsh|ma\s+la2etsh|not\s+seeing|nothing\s+suitable|no\s+suitable|didn[’']t\s+find)/iu.test(reply);
+    const inventsCause = /(?:main blocker|100%\s*match|exact match|your specified criteria|based on the current parameters|(?:budget|location|bedrooms?).{0,35}(?:too low|is the (?:issue|reason)|prevent|limit|block)|القيد (?:الرئيسي|الأبرز)|مطابقة 100%|المعايير المحددة|الشروط المحددة|(?:الميزانية|الموقع|المكان|الغرف).{0,35}(?:هي السبب|هو السبب|مقلل|مانع|المشكلة))/iu.test(reply);
+    const inventsInventoryFact = /(?:\b(?:EGP|USD|AED)\b|\d[\d,.]*\s*(?:million|m|مليون)|(?:unit|project|compound)\s+(?:id|code|[A-Z][\w-]{2,})|(?:بسعر|سعرها|متاحة في مشروع))/iu.test(reply);
+    return statesNoMatch && !inventsCause && !inventsInventoryFact;
+  }
+
+  private safeStyleSurface(reply: string, style: NadimState["languageStyle"]["preferredResponseStyle"]) {
+    const hasArabic = /[\u0600-\u06FF]/u.test(reply);
+    const hasLatin = /[A-Za-z]{2,}/u.test(reply);
+    switch (style) {
+      case "AR_EGYPTIAN":
+        return hasArabic && !/(?:هذي|وش|ما راح|ما ظهر لي)/u.test(reply);
+      case "AR_GULF":
+        return hasArabic && !/(?:دلوقتي|ملقتش|معايا|مفيش|عايز)/u.test(reply);
+      case "AR_FORMAL":
+        return hasArabic && !/(?:دلوقتي|ملقتش|مفيش|هذي|وش|ما راح)/u.test(reply);
+      case "EN_US":
+        return hasLatin && !hasArabic;
+      case "FRANCO_ARABIC":
+        return hasLatin && !hasArabic && /(?:msh|mesh|zaher|shayef|mala2etsh|delwa2ty|momken|7aga|monaseb|tamam|nkamel)/iu.test(reply);
+      case "MIXED_AR_EN":
+        return hasArabic && hasLatin;
+      default:
+        return true;
+    }
   }
 }

@@ -88,6 +88,7 @@ export class NadimV2Service {
       executedActions,
       trace,
     });
+    state = this.stateEngine.withAssistantWording(state, composed.reply);
     const model = composed.model ?? understood.model;
     const fallbackUsed = Boolean(understood.model?.fallbackUsed || composed.model?.fallbackUsed);
     const latencyMs = Date.now() - started;

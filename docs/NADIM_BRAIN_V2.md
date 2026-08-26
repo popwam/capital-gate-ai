@@ -55,12 +55,17 @@ The style state is persisted inside the existing `NadimConversation.state` JSON,
     "confidence": 0.95,
     "preferredResponseStyle": "AR_EGYPTIAN",
     "explicitOverride": false,
-    "changedThisTurn": false
+    "changedThisTurn": false,
+    "grammaticalAddress": "MASCULINE",
+    "grammaticalAddressExplicit": false,
+    "grammaticalAddressChangedThisTurn": false
   }
 }
 ```
 
 Changing language cannot reset locations, budget, bedrooms, selected results, or any other search state. For example, an Egyptian search can switch to `Explain the payment plan in English` and later `كمل مصري` while retaining the same unit and constraints.
+
+`grammaticalAddress` controls conversational agreement only; it is not customer gender or demographic identity. Strong current-turn forms such as `عايزة` or `3ayza` may set it, explicit address preferences take precedence, conflicting evidence becomes neutral, and Nadim never mentions the detection. The most recent assistant wording is retained as bounded conversation-style context so composition can avoid verbatim repetition without changing facts.
 
 Greeting behavior is contextual:
 
@@ -68,9 +73,9 @@ Greeting behavior is contextual:
 - `Hi` can receive `Hey, I’m Nadim. What are you looking for?`
 - `عايز شقة 3 غرف في التجمع` skips the introduction and answers the request directly.
 
-Deterministic user-visible responses are styled through the same response-style service, including clarification, no-match, unknown facts, provider failure, reset, constraint changes, result presentation and action status. Typical equivalents include `مش ظاهر عندي نظام تقسيط موثّق للوحدة دي، فمش هخمن.`, `ما عندي خطة دفع موثقة للوحدة هذي، فما راح أخمن.`, `I don’t have a verified payment plan for that unit, so I won’t guess.`, and `mesh zaher 3andy payment plan mota2aked lel wa7da di, fa mesh hakhamen.`
+Deterministic user-visible responses are styled through the same response-style service, including clarification, no-match, unknown facts, provider failure, reset, current-turn state changes, result presentation and action status. A no-match statement is allowed only after a successful `PROPERTY_SEARCH` returns zero verified rows; active filters alone are never treated as proof of why the result is empty. Unintelligible turns preserve state, run no tool, and receive a style-aware clarification.
 
-Personality remains presentation-only. Result IDs, ordering, selection, price, rooms, area, availability, payment terms and action outcomes come from trusted deterministic results. Factual turns use deterministic rendering. The model receives the selected style, stable personality and verified context for eligible natural composition, but hard inventory and action-claim guards remain authoritative.
+Personality remains presentation-only. Result IDs, ordering, selection, price, rooms, area, availability, payment terms and action outcomes come from trusted deterministic results. Factual result turns use deterministic rendering. For a verified empty search, the model may vary only the cause-free surface wording; a semantic guard rejects missing no-match meaning, invented blockers, robotic phrases, and unverified inventory claims. The deterministic style-aware response remains the provider fallback.
 
 ## Trusted and untrusted data
 

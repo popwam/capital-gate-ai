@@ -36,6 +36,10 @@ export class StateEngineService {
     return { ...state, lastResultIds: resultIds.slice(0, 20) };
   }
 
+  withAssistantWording(state: NadimState, reply: string) {
+    return { ...state, recentAssistantWording: reply.trim().slice(0, 1_000) };
+  }
+
   fresh(identity: Parameters<typeof initialNadimState>[0]) {
     return initialNadimState(identity);
   }

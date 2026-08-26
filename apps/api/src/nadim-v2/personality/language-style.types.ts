@@ -10,6 +10,9 @@ export const NADIM_LANGUAGE_STYLES = [
 
 export type NadimLanguageStyle = (typeof NADIM_LANGUAGE_STYLES)[number];
 
+export const GRAMMATICAL_ADDRESSES = ["MASCULINE", "FEMININE", "NEUTRAL", "UNKNOWN"] as const;
+export type GrammaticalAddress = (typeof GRAMMATICAL_ADDRESSES)[number];
+
 export type NadimLanguageStyleState = {
   detected: NadimLanguageStyle;
   confidence: number;
@@ -17,6 +20,10 @@ export type NadimLanguageStyleState = {
   explicitOverride: boolean;
   changedThisTurn: boolean;
   codeSwitchRatio?: number;
+  /** Conversational agreement only. This is not a demographic or gender-identity field. */
+  grammaticalAddress: GrammaticalAddress;
+  grammaticalAddressExplicit: boolean;
+  grammaticalAddressChangedThisTurn: boolean;
 };
 
 export function styleFromLocale(locale?: string): NadimLanguageStyle {

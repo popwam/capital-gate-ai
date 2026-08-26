@@ -1,6 +1,7 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import { ResponseComposerService } from "../brain/response-composer.service";
+import { PlannerService } from "../brain/planner.service";
 import { StateEngineService } from "../brain/state-engine.service";
 import { UnderstandingService } from "../brain/understanding.service";
 import { NadimUnderstanding } from "../domain/nadim-intent";
@@ -14,6 +15,7 @@ const noModel: any = { available: () => false };
 const composer = new ResponseComposerService(noModel, new ResponseStyleService());
 const detector = new LanguageStyleDetectorService();
 const stateEngine = new StateEngineService();
+const planner = new PlannerService();
 
 function styledState(style: NadimLanguageStyle, overrides: Partial<NadimState> = {}): NadimState {
   const base = initialNadimState({ channel: "WEB", locale: style === "EN_US" ? "en-US" : "ar-EG" });
@@ -26,6 +28,9 @@ function styledState(style: NadimLanguageStyle, overrides: Partial<NadimState> =
       preferredResponseStyle: style,
       explicitOverride: false,
       changedThisTurn: false,
+      grammaticalAddress: "NEUTRAL",
+      grammaticalAddressExplicit: false,
+      grammaticalAddressChangedThisTurn: false,
     },
   };
 }
@@ -249,8 +254,7 @@ test("deterministic reset and constraint-change confirmations follow active styl
     plan: { goal: "PROPERTY_SEARCH", steps: [{ tool: "PROPERTY_SEARCH", arguments: {} }] },
     tools: [{ tool: "PROPERTY_SEARCH", ok: true, data: [{ id: "u1", externalUnitId: "NC-A" }], latencyMs: 1 }],
   });
-  assert.match(budget.reply, /خليت الميزانية 10,000,000 EGP/u);
-  assert.match(budget.reply, /باقي المواصفات/u);
+  assert.match(budget.reply, /خليت الميزانية لحد 10,000,000 EGP/u);
 
   const location = await compose({
     style: "AR_GULF",
@@ -263,7 +267,7 @@ test("deterministic reset and constraint-change confirmations follow active styl
     plan: { goal: "PROPERTY_SEARCH", steps: [{ tool: "PROPERTY_SEARCH", arguments: {} }] },
     tools: [{ tool: "PROPERTY_SEARCH", ok: true, data: [{ id: "u1", externalUnitId: "NC-A" }], latencyMs: 1 }],
   });
-  assert.match(location.reply, /شلت شرط الموقع/u);
+  assert.match(location.reply, /شلت الموقع من الطلب/u);
   assert.doesNotMatch(location.reply, /مفيش|عايز|التانية/u);
 });
 
@@ -276,8 +280,8 @@ test("no-match, unknown payment, and provider failures are truthful and style-aw
     plan: { goal: "PROPERTY_SEARCH", steps: [{ tool: "PROPERTY_SEARCH", arguments: {} }] },
     tools: [{ tool: "PROPERTY_SEARCH", ok: true, data: [], latencyMs: 1 }],
   });
-  assert.match(noMatch.reply, /didn.t find an exact match/u);
-  assert.match(noMatch.reply, /5,000,000 EGP/u);
+  assert.match(noMatch.reply, /(?:Nothing suitable|not seeing a suitable)/u);
+  assert.doesNotMatch(noMatch.reply, /(?:exact match|100% match|main blocker|5,000,000 EGP.*(?:blocker|issue|reason))/iu);
 
   const noSearch = await compose({ style: "AR_EGYPTIAN", intent: "PROPERTY_SEARCH", goal: "PROPERTY_SEARCH" });
   assert.doesNotMatch(noSearch.reply, /(?:ملقتش|مفيش\s+(?:نتائج|وحدات))/u);
@@ -360,7 +364,10 @@ test("every deterministic Franco surface remains in readable Latin script", () =
     copy.reset("FRANCO_ARABIC"),
     copy.searchNotRun("FRANCO_ARABIC"),
     copy.searchFailed("FRANCO_ARABIC"),
-    copy.noMatch("FRANCO_ARABIC", copy.searchBlocker("FRANCO_ARABIC", current)),
+    copy.noMatch("FRANCO_ARABIC"),
+    copy.noMatch("FRANCO_ARABIC", {
+      previousAssistantWording: copy.noMatch("FRANCO_ARABIC"),
+    }),
     copy.searchResults("FRANCO_ARABIC", [unit, { ...unit, id: "unit-2", externalUnitId: "NC-B", price: 7_900_000, builtUpArea: 170 }]),
     copy.comparison("FRANCO_ARABIC", [unit]),
     copy.media("FRANCO_ARABIC", 0, true),
@@ -391,4 +398,237 @@ test("language-style application remains independent from deterministic state up
   assert.equal(next.languageStyle.preferredResponseStyle, "AR_EGYPTIAN");
   assert.deepEqual(next.search.locations, ["التجمع"]);
   assert.equal(next.search.bedrooms, 3);
+});
+
+async function freshLanguageTurn(message: string, locale = "ar-EG") {
+  const initial = initialNadimState({ channel: "WEB", locale });
+  const styled = detector.apply(initial, message, locale);
+  const parsed = await new UnderstandingService(noModel).understand(message, styled);
+  const state = stateEngine.apply(styled, parsed.understanding, { channel: "WEB", locale });
+  return { understanding: parsed.understanding, state, plan: planner.plan(parsed.understanding, state) };
+}
+
+test("fresh language turns recover search meaning and grammatical address without model dependency", async () => {
+  const cases = [
+    {
+      message: "عايز شقة 3 غرف في التجمع تحت 8 مليون",
+      style: "AR_EGYPTIAN",
+      address: "MASCULINE",
+      expected: { bedrooms: 3, budgetMax: 8_000_000, type: "Apartment", location: "التجمع" },
+    },
+    {
+      message: "عايزة شقة 3 غرف في التجمع",
+      style: "AR_EGYPTIAN",
+      address: "FEMININE",
+      expected: { bedrooms: 3, type: "Apartment", location: "التجمع" },
+    },
+    {
+      message: "أبي شقة 3 غرف في التجمع وودي تكون بالتقسيط",
+      style: "AR_GULF",
+      address: "NEUTRAL",
+      expected: { bedrooms: 3, type: "Apartment", location: "التجمع", installmentPreference: "INSTALLMENTS" },
+    },
+    {
+      message: "I need a 3-bedroom apartment in New Cairo under 8 million EGP",
+      style: "EN_US",
+      address: "NEUTRAL",
+      expected: { bedrooms: 3, budgetMax: 8_000_000, type: "Apartment", location: "new cairo" },
+    },
+    {
+      message: "3ayz sho2a 3 rooms fel tagamo3 ta7t 8 million",
+      style: "FRANCO_ARABIC",
+      address: "MASCULINE",
+      expected: { bedrooms: 3, budgetMax: 8_000_000, type: "Apartment", location: "new cairo" },
+    },
+    {
+      message: "3ayza sho2a 3 rooms fel tagamo3",
+      style: "FRANCO_ARABIC",
+      address: "FEMININE",
+      expected: { bedrooms: 3, type: "Apartment", location: "new cairo" },
+    },
+    {
+      message: "عايز apartment 3 bedrooms في New Cairo تحت 8 million",
+      style: "MIXED_AR_EN",
+      address: "MASCULINE",
+      expected: { bedrooms: 3, budgetMax: 8_000_000, type: "Apartment", location: "new cairo" },
+    },
+  ] as const;
+
+  for (const item of cases) {
+    const result = await freshLanguageTurn(item.message, item.style === "EN_US" ? "en-US" : "ar-EG");
+    assert.equal(result.state.languageStyle.preferredResponseStyle, item.style, item.message);
+    assert.equal(result.state.languageStyle.grammaticalAddress, item.address, item.message);
+    assert.equal(result.understanding.intent, "PROPERTY_SEARCH", item.message);
+    assert.equal(result.plan.steps[0]?.tool, "PROPERTY_SEARCH", item.message);
+    assert.equal(result.state.search.bedrooms, item.expected.bedrooms, item.message);
+    assert.equal(result.state.search.propertyTypes[0], item.expected.type, item.message);
+    assert.ok(result.state.search.locations.some((location) => location.toLowerCase() === item.expected.location), item.message);
+    if ("budgetMax" in item.expected) assert.equal(result.state.search.budgetMax, item.expected.budgetMax, item.message);
+    if ("installmentPreference" in item.expected) assert.equal(result.state.search.installmentPreference, item.expected.installmentPreference, item.message);
+  }
+});
+
+test("grammatical address is linguistic-only, explicit preferences win, and conflicts become neutral", async () => {
+  const feminine = detector.apply(initialNadimState({ channel: "WEB", locale: "ar-EG" }), "عايزة شقة في التجمع");
+  assert.equal(feminine.languageStyle.grammaticalAddress, "FEMININE");
+  assert.equal(feminine.languageStyle.grammaticalAddressExplicit, false);
+
+  const explicit = detector.apply(feminine, "خليني أكمل من غير صيغة مؤنث");
+  assert.equal(explicit.languageStyle.grammaticalAddress, "MASCULINE");
+  assert.equal(explicit.languageStyle.grammaticalAddressExplicit, true);
+  const laterMarker = detector.apply(explicit, "عايزة أعرف السعر");
+  assert.equal(laterMarker.languageStyle.grammaticalAddress, "MASCULINE");
+
+  const conflict = detector.detect("عايزة شقة وأنا حابب أشوف المتاح");
+  assert.equal(conflict.grammaticalAddress, "NEUTRAL");
+
+  const feminineState = styledState("AR_EGYPTIAN");
+  feminineState.languageStyle.grammaticalAddress = "FEMININE";
+  const feminineReply = await composer.compose({
+    userMessage: "عايزة اختيارات",
+    understanding: understanding("PROPERTY_SEARCH"),
+    state: feminineState,
+    plan: { goal: "PROPERTY_SEARCH", steps: [{ tool: "PROPERTY_SEARCH", arguments: {} }] },
+    toolResults: [{ tool: "PROPERTY_SEARCH", ok: true, data: [{ id: "u1" }, { id: "u2" }], latencyMs: 1 }],
+    proposedActions: [],
+    executedActions: [],
+  });
+  assert.match(feminineReply.reply, /لو حابة/u);
+});
+
+test("language and address switching preserve search, selection, and result continuity", async () => {
+  const first = await freshLanguageTurn("عايز شقة 3 غرف في التجمع تحت 8 مليون");
+  const seeded = { ...first.state, selectedUnitId: "unit-1", lastResultIds: ["unit-1", "unit-2"], comparisonUnitIds: ["unit-1", "unit-2"] };
+  const original = structuredClone(seeded.search);
+
+  const englishStyled = detector.apply(seeded, "Explain the options in English");
+  const stateChangingModel: any = {
+    available: () => true,
+    understand: async () => ({
+      value: { intent: "MODIFY_SEARCH", confidence: 1, operations: [{ operation: "RESET", field: "SEARCH" }], ordinalReferences: [], actionRequested: false },
+      provider: "test", model: "test", fallbackUsed: false, latencyMs: 1,
+    }),
+  };
+  const englishUnderstanding = await new UnderstandingService(stateChangingModel).understand("Explain the options in English", englishStyled);
+  const english = stateEngine.apply(englishStyled, englishUnderstanding.understanding, { channel: "WEB" });
+  assert.equal(english.languageStyle.preferredResponseStyle, "EN_US");
+  assert.deepEqual(englishUnderstanding.understanding.operations, []);
+  assert.deepEqual(english.search, original);
+  assert.deepEqual(english.lastResultIds, seeded.lastResultIds);
+  assert.equal(english.selectedUnitId, "unit-1");
+
+  const egyptianStyled = detector.apply(english, "كمل مصري");
+  const egyptianUnderstanding = await new UnderstandingService(noModel).understand("كمل مصري", egyptianStyled);
+  const egyptian = stateEngine.apply(egyptianStyled, egyptianUnderstanding.understanding, { channel: "WEB" });
+  assert.equal(egyptian.languageStyle.preferredResponseStyle, "AR_EGYPTIAN");
+  assert.deepEqual(egyptian.search, original);
+  assert.deepEqual(egyptian.comparisonUnitIds, seeded.comparisonUnitIds);
+});
+
+test("gibberish cannot replay an active search or accept model-authored state changes", async () => {
+  const active = styledState("AR_EGYPTIAN", {
+    search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 8_000_000 },
+    lastResultIds: ["unit-1"],
+  });
+  const adversarialModel: any = {
+    available: () => true,
+    understand: async () => ({
+      value: { intent: "PROPERTY_SEARCH", confidence: 1, operations: [{ operation: "RESET", field: "SEARCH" }], ordinalReferences: [], actionRequested: false },
+      provider: "test", model: "test", fallbackUsed: false, latencyMs: 1,
+    }),
+  };
+  const parsed = await new UnderstandingService(adversarialModel).understand("svgsvg", active);
+  const next = stateEngine.apply(active, parsed.understanding, { channel: "WEB" });
+  const plan = planner.plan(parsed.understanding, next);
+  assert.equal(parsed.understanding.intent, "UNKNOWN");
+  assert.deepEqual(parsed.understanding.operations, []);
+  assert.deepEqual(next.search, active.search);
+  assert.deepEqual(next.lastResultIds, active.lastResultIds);
+  assert.equal(plan.steps.length, 0);
+
+  const response = await composer.compose({
+    userMessage: "svgsvg",
+    understanding: parsed.understanding,
+    state: next,
+    plan,
+    toolResults: [],
+    proposedActions: [],
+    executedActions: [],
+  });
+  assert.match(response.reply, /مش فاهم قصدك/u);
+  assert.doesNotMatch(response.reply, /(?:مش ظاهر|ملقتش|مفيش (?:اختيار|نتائج|وحدات))/u);
+});
+
+test("verified no-match wording stays natural, cause-free, and context-aware", async () => {
+  const baseInput = {
+    userMessage: "عايز شقة 3 غرف في التجمع تحت 8 مليون",
+    understanding: understanding("PROPERTY_SEARCH"),
+    plan: { goal: "PROPERTY_SEARCH", steps: [{ tool: "PROPERTY_SEARCH", arguments: {} }] } as NadimPlan,
+    toolResults: [{ tool: "PROPERTY_SEARCH", ok: true, data: [], latencyMs: 1 }] as NadimToolResult[],
+    proposedActions: [],
+    executedActions: [],
+  };
+  const first = await composer.compose({ ...baseInput, state: styledState("AR_EGYPTIAN", { search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 8_000_000 } }) });
+  const second = await composer.compose({ ...baseInput, state: styledState("AR_EGYPTIAN", { search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 8_000_000 }, recentAssistantWording: first.reply }) });
+  assert.notEqual(first.reply, second.reply);
+  for (const reply of [first.reply, second.reply]) {
+    assert.match(reply, /(?:مش ظاهر|مفيش اختيار)/u);
+    assert.doesNotMatch(reply, /(?:مطابقة 100%|القيد|المعايير المحددة|الشروط المحددة|الميزانية.{0,20}(?:السبب|مقلل|مانع))/u);
+  }
+
+  let captured: any;
+  const naturalModel: any = {
+    available: () => true,
+    compose: async (input: any) => {
+      captured = input;
+      return { value: "I’m not seeing a suitable option right now. We can adjust one preference and try again.", provider: "test", model: "test", fallbackUsed: false, latencyMs: 1 };
+    },
+  };
+  const modelComposer = new ResponseComposerService(naturalModel, new ResponseStyleService());
+  const modelState = styledState("EN_US", { recentAssistantWording: "Nothing suitable showed up before." });
+  const modeled = await modelComposer.compose({ ...baseInput, state: modelState });
+  assert.match(modeled.reply, /not seeing a suitable/u);
+  assert.equal(captured.responseGoal, "VERIFIED_EMPTY_SEARCH");
+  assert.equal(captured.previousAssistantWording, modelState.recentAssistantWording);
+  assert.deepEqual(captured.currentStateOperations, []);
+
+  const causalModel: any = {
+    available: () => true,
+    compose: async () => ({ value: "Nothing suitable is showing because the budget is too low.", provider: "test", model: "test", fallbackUsed: false, latencyMs: 1 }),
+  };
+  const guarded = await new ResponseComposerService(causalModel, new ResponseStyleService()).compose({ ...baseInput, state: styledState("EN_US") });
+  assert.doesNotMatch(guarded.reply, /budget is too low/u);
+
+  const inventedInventoryModel: any = {
+    available: () => true,
+    compose: async () => ({ value: "Nothing suitable is showing, but unit NC-X is available for 7 million EGP.", provider: "test", model: "test", fallbackUsed: false, latencyMs: 1 }),
+  };
+  const inventoryGuarded = await new ResponseComposerService(inventedInventoryModel, new ResponseStyleService()).compose({ ...baseInput, state: styledState("EN_US") });
+  assert.doesNotMatch(inventoryGuarded.reply, /(?:NC-X|7 million EGP)/u);
+
+  const wrongStyleModel: any = {
+    available: () => true,
+    compose: async () => ({ value: "Nothing suitable is showing right now.", provider: "test", model: "test", fallbackUsed: false, latencyMs: 1 }),
+  };
+  const francoGuarded = await new ResponseComposerService(wrongStyleModel, new ResponseStyleService()).compose({ ...baseInput, state: styledState("FRANCO_ARABIC") });
+  assert.match(francoGuarded.reply, /(?:Msh|msh|Delwa2ty)/u);
+  assert.doesNotMatch(francoGuarded.reply, /Nothing suitable/u);
+});
+
+test("language-only turns cannot narrate a stale budget operation", async () => {
+  const state = styledState("EN_US", {
+    search: { locations: ["New Cairo"], projects: [], developers: [], propertyTypes: ["Apartment"], budgetMax: 10_000_000 },
+    lastOperations: [],
+  });
+  state.languageStyle.changedThisTurn = true;
+  const reply = await composer.compose({
+    userMessage: "Explain the search in English",
+    understanding: understanding("SMALL_TALK"),
+    state,
+    plan: { goal: "SMALL_TALK", steps: [] },
+    toolResults: [],
+    proposedActions: [],
+    executedActions: [],
+  });
+  assert.doesNotMatch(reply.reply, /(?:updated|budget is now|10,000,000)/iu);
 });
