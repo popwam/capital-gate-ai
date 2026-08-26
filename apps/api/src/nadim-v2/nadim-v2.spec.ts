@@ -1,7 +1,7 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import { ConflictException } from "@nestjs/common";
-import { PATH_METADATA } from "@nestjs/common/constants";
+import { HTTP_CODE_METADATA, PATH_METADATA } from "@nestjs/common/constants";
 import { AutomationActionClient } from "./actions/automation-action.client";
 import { ActionPolicyService } from "./brain/action-policy.service";
 import { PlannerService } from "./brain/planner.service";
@@ -326,6 +326,7 @@ test("29 V2 disabled fails before any pipeline execution", async () => {
 
 test("30 V2 route is separate and does not replace legacy controllers", () => {
   assert.equal(Reflect.getMetadata(PATH_METADATA, NadimV2Controller), "v2/nadim");
+  assert.equal(Reflect.getMetadata(HTTP_CODE_METADATA, NadimV2Controller.prototype.turn), 200);
 });
 
 test("model output alone cannot authorize an action", async () => {

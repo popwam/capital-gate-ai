@@ -3,7 +3,7 @@ import test from "node:test";
 import { appendUniqueMessage, mergeConversationIndex, shouldLoadConversationHistory } from "./chat-state.ts";
 
 type Message = { id: string; role: "user" | "assistant"; text: string };
-type Conversation = { id: string; title: string; messages: Message[] };
+type Conversation = { id: string; title: string; messages: Message[]; nadimConversationId?: string | null };
 
 test("a locally created conversation skips the stale bootstrap history request once", () => {
   const skip = new Set(["server-1"]);
@@ -42,4 +42,11 @@ test("a locally created conversation survives an older conversation-index respon
   const old: Conversation = { id: "older", title: "older", messages: [] };
   const result = mergeConversationIndex([local], [old], new Set(["server-1"]));
   assert.deepEqual(result.map(conversation => conversation.id), ["server-1", "older"]);
+});
+
+test("history reconciliation preserves a locally learned Nadim conversation id", () => {
+  const local: Conversation = { id: "server-1", title: "chat", messages: [], nadimConversationId: "nadim-1" };
+  const incoming: Conversation = { id: "server-1", title: "renamed", messages: [] };
+  const result = mergeConversationIndex([local], [incoming], new Set());
+  assert.equal(result[0].nadimConversationId, "nadim-1");
 });

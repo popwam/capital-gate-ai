@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Headers, Post, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Headers, HttpCode, HttpStatus, Post, Req, UseGuards } from "@nestjs/common";
 import { NadimTurnDto } from "./dto/nadim-turn.dto";
 import { NadimV2Service } from "./nadim-v2.service";
 import { NadimGatewayGuard } from "./security/nadim-gateway.guard";
@@ -9,6 +9,7 @@ export class NadimV2Controller {
   constructor(private readonly nadim: NadimV2Service) {}
 
   @Post("turn")
+  @HttpCode(HttpStatus.OK)
   turn(
     @Body() body: NadimTurnDto,
     @Req() request: { requestId?: string },

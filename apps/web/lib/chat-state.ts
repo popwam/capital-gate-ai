@@ -6,6 +6,7 @@ export type ChatMessageState = {
 export type ChatConversationState<TMessage extends ChatMessageState = ChatMessageState> = {
   id: string;
   messages: TMessage[];
+  nadimConversationId?: string | null;
 };
 
 export function appendUniqueMessage<
@@ -38,7 +39,14 @@ export function mergeConversationIndex<TConversation extends ChatConversationSta
   const localOnly = current.filter(conversation => locallyCreatedIds.has(conversation.id) && !incomingIds.has(conversation.id));
   const reconciled = incoming.map(conversation => {
     const existing = currentById.get(conversation.id);
-    return existing?.messages.length ? { ...conversation, messages: existing.messages } : conversation;
+    if (!existing) return conversation;
+    return {
+      ...conversation,
+      ...(existing.nadimConversationId && !conversation.nadimConversationId
+        ? { nadimConversationId: existing.nadimConversationId }
+        : {}),
+      ...(existing.messages.length ? { messages: existing.messages } : {}),
+    };
   });
   return [...localOnly, ...reconciled];
 }

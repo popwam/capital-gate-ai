@@ -58,7 +58,7 @@ Copy `.env.example` to one root file:
 
 The API and Web workspaces both load the root `.env` locally. Railway should continue using per-service Variables.
 
-Customer web chat uses the server-only `NADIM_API_URL` and `NADIM_GATEWAY_SECRET` variables. Never create a `NEXT_PUBLIC_` gateway-secret variable; the browser calls the same-origin Next.js adapter instead.
+Customer web chat uses the server-only `NADIM_API_URL`, `INTERNAL_API_URL`, and `NADIM_GATEWAY_SECRET` variables. The browser calls same-origin Next.js adapters for Nadim turns and conversation history; it has no `NEXT_PUBLIC_API_URL` dependency. Never create a `NEXT_PUBLIC_` gateway-secret or private API URL variable.
 
 ## Install / migrate
 

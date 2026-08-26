@@ -1,4 +1,4 @@
-export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000").replace(/\/$/, "");
+const API_ROUTE = "/api/backend/v1";
 
 export type ApiConversation = { id: string; title: string | null; detectedLanguage?: string | null; nadimConversationId?: string | null; createdAt: string; updatedAt: string; closed?: boolean; _count?: { messages: number } };
 export type ApiMessage = { id: string; role: "USER" | "ASSISTANT"; content: string; toolPayload?: Record<string, unknown> | null; createdAt: string };
@@ -80,7 +80,7 @@ async function request<T>(path: string, init: RequestInit = {}, device = true): 
   const mutationId = requestId;
   if (isAdminMutation) emitAdminMutation({ id: mutationId, state: "saving", method, path, requestId });
   try {
-    const response = await fetch(`${API_URL}/v1${path}`, { ...init, headers, credentials: "include" });
+    const response = await fetch(`${API_ROUTE}${path}`, { ...init, headers, credentials: "same-origin" });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
       const baseMessage = Array.isArray(body.message) ? body.message[0] : body.message || `Request failed (${response.status})`;
@@ -111,8 +111,8 @@ export function downloadFileName(disposition: string | null, fallback: string) {
 
 async function downloadRequest(path: string, fallbackFileName: string) {
   const requestId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-  const response = await fetch(`${API_URL}/v1/admin${path}`, {
-    credentials: "include",
+  const response = await fetch(`${API_ROUTE}/admin${path}`, {
+    credentials: "same-origin",
     headers: { "x-request-id": requestId },
   });
   if (!response.ok) {

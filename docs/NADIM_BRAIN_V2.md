@@ -187,7 +187,7 @@ n8n/provider gateways should pass the immutable inbound provider event ID throug
 
 ### Customer web adapter
 
-The public browser posts to the same-origin Next.js route `POST /api/nadim/turn`. Only that server route reads `NADIM_GATEWAY_SECRET`; the secret and `x-nadim-gateway-secret` never enter the client bundle. Configure the web runtime with server-only `NADIM_API_URL` (prefer the private API URL) and `NADIM_GATEWAY_SECRET`. `NEXT_PUBLIC_API_URL` remains the fallback API location, not a credential.
+The public browser posts turns to the same-origin Next.js route `POST /api/nadim/turn` and accesses conversation history through the allowlisted `/api/backend/v1/...` server proxy. Only server routes read `NADIM_API_URL`, `INTERNAL_API_URL`, and `NADIM_GATEWAY_SECRET`; private API locations, the secret, and `x-nadim-gateway-secret` never enter the client bundle. Production must configure the server-only private API URLs and gateway secret. Public chat has no `NEXT_PUBLIC_API_URL` dependency.
 
 The adapter posts a non-streaming WEB turn to `/v2/nadim/turn`, forwards the submitted event UUID as both `metadata.eventId` and `x-idempotency-key`, and persists the returned Nadim conversation ID on the existing web conversation shell. The existing history endpoints continue to supply refresh/list/delete behavior, but customer replies come only from Nadim V2. The legacy message and streaming endpoints remain available for rollback/admin comparison and are not called by the customer web component.
 
