@@ -22,9 +22,9 @@ The first arrow always starts with an inbound customer turn. Nadim does not init
 
 ## Pipeline
 
-1. **Understand** produces a schema-validated `NadimUnderstanding`. Short references are resolved against active search state before `UNKNOWN`; GLM may interpret noisy language, while explicit high-confidence facts still take precedence. `CURRENT_SEARCH_QUERY` identifies questions about persisted search values without turning them into mutations. Raw model JSON never becomes state without Zod validation.
-2. **State** applies only explicit `SET`, `REMOVE`, `RESET`, and `PRESERVE` operations. Unmentioned constraints survive, and greeting, state-query, small-talk, and unknown intents cannot mutate search state. Search results are persisted as IDs, not reconstructed from model memory.
-3. **Plan** maps validated intent and state to typed tool calls. State queries, rejected relaxations, greetings, gibberish, and ambiguous amount changes do not execute property search. The planner cannot generate SQL or action success.
+1. **Understand** first identifies what the customer is doing, then produces a schema-validated `NadimUnderstanding`. Customer-service intents such as assistant identity, normal conversation, callback, handoff, reset and current-state questions are independent from property inventory. Short references are resolved against active state before `UNKNOWN`; GLM may interpret noisy language, while explicit high-confidence facts still take precedence. Raw model JSON never becomes state without Zod validation.
+2. **State** applies only explicit `SET`, `REMOVE`, `RESET`, and `PRESERVE` operations. Unmentioned constraints survive, and greeting, assistant-identity, state-query, small-talk, and unknown intents cannot mutate search state. Search results are persisted as IDs, not reconstructed from model memory.
+3. **Plan** maps validated intent and state to typed tool calls. `PROPERTY_SEARCH` runs only when inventory results are requested or a search mutation requires new results. Identity, state queries, rejected relaxations, language requests, callbacks, handoff, greetings, gibberish, and plain resets do not execute it. The planner cannot generate SQL or action success.
 4. **Tools** call trusted application services and PostgreSQL-backed repositories. Tool errors become structured unavailable/not-found results.
 5. **Action policy** permits proposals only for explicit customer requests and checks prerequisites. Execution goes through the private automation API, never directly from model output.
 6. **Compose** receives verified tool/action results. Deterministic responses are used for property truth and action status; the dialogue model is limited to non-factual natural language composition.
@@ -34,7 +34,7 @@ The first arrow always starts with an inbound customer turn. Nadim does not init
 
 Nadim has one stable personality: an intelligent, calm, warm, confident, concise, commercially aware, trustworthy, polished and practical real-estate advisor. He is helpful without being pushy and human without becoming over-familiar. This identity does not change with language; only its expression changes.
 
-Language style is detected before understanding and remains isolated from intent, search constraints, tool execution and action policy. The supported response styles are:
+Inbound language is detected before understanding and remains isolated from intent, search constraints, tool execution and action policy. `inputLanguage` is a current-turn comprehension signal; `preferredResponseStyle` is the sticky persisted output contract. Understanding English, Arabic, Franco, mixed wording, or noisy input does not itself authorize an output-language change. The supported styles are:
 
 - `AR_EGYPTIAN`: polished, natural Egyptian Arabic;
 - `AR_GULF`: neutral Gulf Arabic without Egyptian fillers;
@@ -44,17 +44,19 @@ Language style is detected before understanding and remains isolated from intent
 - `MIXED_AR_EN`: restrained mirroring of Arabic/English code-switching;
 - `UNKNOWN`: resolved from conversation preference or locale fallback.
 
-Resolution priority is an explicit current language instruction, an existing explicit preference, the latest confidently detected customer wording, recent conversation style, persisted preference, then locale. Instructions such as `كمل مصري`, `كلمني خليجي`, `رد بالعربي`, `رد بالإنجليزي`, `continue in English`, and `كلمني فرانكو` persist until another explicit language instruction changes them. Automatic detection uses conservative dialect markers and does not guess a Gulf country. Latin script alone is not English evidence: unrecognized input such as `svgsvg` remains `UNKNOWN` and uses the established conversational style, while meaningful English and Franco retain their own detection paths.
+Response resolution priority is an explicit current language instruction, an explicit persisted preference, the established `preferredResponseStyle`, channel/conversation locale, then the safe Arabic default. Instructions such as `كمل مصري`, `كمل خليجي`, `رد بالعربي`, `رد بالإنجليزي`, `continue in English`, and `kamel franco` persist until another explicit language instruction changes them. `inputLanguage` still detects meaningful English and Franco for comprehension, but it is never used as an automatic response-language switch. Latin script alone is not language consent: `What's your name?` can be understood in an Egyptian conversation and answered in Egyptian Arabic, while `svgsvg` remains `UNKNOWN` and receives the established style's clarification.
 
 The style state is persisted inside the existing `NadimConversation.state` JSON, separately from `search`:
 
 ```json
 {
   "languageStyle": {
-    "detected": "AR_EGYPTIAN",
+    "inputLanguage": "EN_US",
+    "detected": "EN_US",
     "confidence": 0.95,
     "preferredResponseStyle": "AR_EGYPTIAN",
     "explicitOverride": false,
+    "explicitRequestThisTurn": false,
     "changedThisTurn": false,
     "grammaticalAddress": "MASCULINE",
     "grammaticalAddressExplicit": false,
@@ -63,15 +65,17 @@ The style state is persisted inside the existing `NadimConversation.state` JSON,
 }
 ```
 
-Changing language cannot reset locations, budget, bedrooms, selected results, or any other search state. For example, an Egyptian search can switch to `Explain the payment plan in English` and later `كمل مصري` while retaining the same unit and constraints.
+Changing language cannot reset locations, budget, bedrooms, selected results, or any other search state. For example, an Egyptian search remains Egyptian when the customer says `What's my budget?`, switches only after `Reply in English`, and can later use `كمل مصري` while retaining the same unit and constraints.
 
 `grammaticalAddress` controls conversational agreement only; it is not customer gender or demographic identity. Strong current-turn forms such as `عايزة` or `3ayza` may set it, explicit address preferences take precedence, conflicting evidence becomes neutral, and Nadim never mentions the detection. The most recent assistant wording is retained as bounded conversation-style context so composition can avoid verbatim repetition without changing facts.
 
 Greeting behavior is contextual:
 
 - `السلام عليكم` on the first inbound turn can receive `وعليكم السلام، أنا نديم. قولّي بتدور على إيه وأنا أساعدك.`
-- `Hi` can receive `Hey, I’m Nadim. What are you looking for?`
+- `Hi` with an English locale or explicit English preference can receive `Hey, I’m Nadim. What are you looking for?`
 - `عايز شقة 3 غرف في التجمع` skips the introduction and answers the request directly.
+
+Assistant identity is deterministic: `اسمك اي`, `انت مين`, `What's your name?`, and `Who are you?` return a brief style-aware Nadim identity response without inventory, state reset, or search execution.
 
 Deterministic user-visible responses are styled through the same response-style service, including clarification, no-match, unknown facts, provider failure, reset, current-turn state changes, result presentation and action status. Customer-facing presentation turns numeric budgets into spoken amounts such as `10 مليون` or `10M EGP`, maps property enums to natural labels, and acknowledges mutations without narrating state-engine operations. State questions and rejections use micro-responses; search and comparison turns retain the detail their function requires. A no-match statement is allowed only after a successful `PROPERTY_SEARCH` returns zero verified rows; active filters alone are never treated as proof of why the result is empty. Unintelligible turns preserve state, run no tool, and receive a style-aware clarification.
 

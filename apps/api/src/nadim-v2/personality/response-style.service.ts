@@ -44,6 +44,39 @@ export class ResponseStyleService {
     });
   }
 
+  assistantIdentity(style: NadimLanguageStyle) {
+    return this.pick(style, {
+      AR_EGYPTIAN: "أنا نديم.",
+      AR_GULF: "أنا نديم.",
+      AR_FORMAL: "أنا نديم.",
+      EN_US: "I’m Nadim.",
+      FRANCO_ARABIC: "ana Nadim.",
+      MIXED_AR_EN: "أنا نديم.",
+    });
+  }
+
+  smallTalk(style: NadimLanguageStyle, userMessage: string) {
+    const thanks = /(?:شكر[ًاا]?|متشكر|thank\s*you|thanks)/iu.test(userMessage);
+    const unsure = /(?:محتار|مش\s+عارف\s+أبدأ|مش\s+عارف\s+ابدأ|don['’]?t know where to start)/iu.test(userMessage);
+    if (thanks) return this.pick(style, {
+      AR_EGYPTIAN: "العفو، أنا معاك.",
+      AR_GULF: "العفو، أنا معك.",
+      AR_FORMAL: "على الرحب والسعة.",
+      EN_US: "You’re welcome.",
+      FRANCO_ARABIC: "el 3afw, ana ma3ak.",
+      MIXED_AR_EN: "العفو، أنا معاك.",
+    });
+    if (unsure) return this.pick(style, {
+      AR_EGYPTIAN: "ولا يهمك. نبدأ بالمكان اللي يناسبك ولا بالميزانية؟",
+      AR_GULF: "ولا يهمك. نبدأ بالموقع المناسب لك أو بالميزانية؟",
+      AR_FORMAL: "لا بأس. هل نبدأ بالموقع المناسب أم بالميزانية؟",
+      EN_US: "No problem. Should we start with the location or your budget?",
+      FRANCO_ARABIC: "wala yhemmak. nebda2 bel location wala el budget?",
+      MIXED_AR_EN: "ولا يهمك. نبدأ بالـlocation ولا الـbudget؟",
+    });
+    return this.safeFallback(style);
+  }
+
   addressChanged(style: NadimLanguageStyle) {
     return this.pick(style, {
       AR_EGYPTIAN: "تمام، هكمل بالطريقة دي.",

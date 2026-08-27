@@ -23,10 +23,12 @@ function styledState(style: NadimLanguageStyle, overrides: Partial<NadimState> =
     ...base,
     ...overrides,
     languageStyle: {
+      inputLanguage: style,
       detected: style,
       confidence: 0.99,
       preferredResponseStyle: style,
       explicitOverride: false,
+      explicitRequestThisTurn: false,
       changedThisTurn: false,
       grammaticalAddress: "NEUTRAL",
       grammaticalAddressExplicit: false,
@@ -64,7 +66,7 @@ async function compose(input: {
   });
 }
 
-test("language detector identifies all supported automatic customer styles", () => {
+test("language detector identifies input language without treating it as response consent", () => {
   const cases: Array<[string, NadimLanguageStyle]> = [
     ["عايز شقة 3 غرف في التجمع تحت 8 مليون", "AR_EGYPTIAN"],
     ["أبي شقة 3 غرف وودي تكون بالتقسيط", "AR_GULF"],
@@ -74,7 +76,9 @@ test("language detector identifies all supported automatic customer styles", () 
     ["عايز apartment 3 bedrooms في التجمع", "MIXED_AR_EN"],
   ];
   for (const [message, expected] of cases) {
-    assert.equal(detector.detect(message).preferredResponseStyle, expected, message);
+    const resolved = detector.detect(message);
+    assert.equal(resolved.inputLanguage, expected, message);
+    assert.equal(resolved.preferredResponseStyle, "AR_FORMAL", message);
   }
 });
 
@@ -87,15 +91,17 @@ test("Latin noise is UNKNOWN and keeps the established conversational style", ()
       assert.equal(next.languageStyle.preferredResponseStyle, style, `${style}: ${message}`);
     }
   }
-  assert.equal(detector.detect("I need an apartment").preferredResponseStyle, "EN_US");
-  assert.equal(detector.detect("3ayz sho2a").preferredResponseStyle, "FRANCO_ARABIC");
+  assert.equal(detector.detect("I need an apartment").inputLanguage, "EN_US");
+  assert.equal(detector.detect("3ayz sho2a").inputLanguage, "FRANCO_ARABIC");
   assert.equal(detector.apply(styledState("FRANCO_ARABIC"), "khalyha").languageStyle.preferredResponseStyle, "FRANCO_ARABIC");
 });
 
 test("locale is only a fallback and explicit language requests remain authoritative", () => {
   const gulfLocale = initialNadimState({ channel: "WEB", locale: "ar-SA" });
   assert.equal(gulfLocale.languageStyle.preferredResponseStyle, "AR_GULF");
-  assert.equal(detector.apply(gulfLocale, "عايز شقة", "ar-SA").languageStyle.preferredResponseStyle, "AR_EGYPTIAN");
+  const egyptianInput = detector.apply(gulfLocale, "عايز شقة", "ar-SA").languageStyle;
+  assert.equal(egyptianInput.inputLanguage, "AR_EGYPTIAN");
+  assert.equal(egyptianInput.preferredResponseStyle, "AR_GULF");
 
   const explicitEnglish = detector.apply(gulfLocale, "Explain the payment plan in English");
   assert.equal(explicitEnglish.languageStyle.preferredResponseStyle, "EN_US");
@@ -110,8 +116,14 @@ test("locale is only a fallback and explicit language requests remain authoritat
     ["كلمني خليجي", "AR_GULF"],
     ["رد بالعربي", "AR_FORMAL"],
     ["رد بالإنجليزي", "EN_US"],
+    ["رد عليا بالإنجليزي", "EN_US"],
+    ["كلمّني إنجليزي", "EN_US"],
     ["continue in English", "EN_US"],
+    ["Speak English", "EN_US"],
+    ["كمل خليجي", "AR_GULF"],
+    ["Back to Arabic", "AR_FORMAL"],
     ["كلمني فرانكو", "FRANCO_ARABIC"],
+    ["kamel franco", "FRANCO_ARABIC"],
   ];
   for (const [message, expected] of explicitCases) assert.equal(detector.detect(message).preferredResponseStyle, expected, message);
 });
@@ -482,8 +494,11 @@ test("fresh language turns recover search meaning and grammatical address withou
   ] as const;
 
   for (const item of cases) {
-    const result = await freshLanguageTurn(item.message, item.style === "EN_US" ? "en-US" : "ar-EG");
-    assert.equal(result.state.languageStyle.preferredResponseStyle, item.style, item.message);
+    const locale = item.style === "EN_US" ? "en-US" : item.style === "AR_GULF" ? "ar-SA" : "ar-EG";
+    const result = await freshLanguageTurn(item.message, locale);
+    assert.equal(result.state.languageStyle.inputLanguage, item.style, item.message);
+    const expectedResponse = item.style === "EN_US" ? "EN_US" : item.style === "AR_GULF" ? "AR_GULF" : "AR_EGYPTIAN";
+    assert.equal(result.state.languageStyle.preferredResponseStyle, expectedResponse, item.message);
     assert.equal(result.state.languageStyle.grammaticalAddress, item.address, item.message);
     assert.equal(result.understanding.intent, "PROPERTY_SEARCH", item.message);
     assert.equal(result.plan.steps[0]?.tool, "PROPERTY_SEARCH", item.message);
@@ -721,4 +736,188 @@ test("the observed seven-turn Egyptian conversation stays human, brief, and stat
   assert.deepEqual(unknown.plan.steps, []);
   assert.match(unknown.reply, /[\u0600-\u06FF]/u);
   assert.doesNotMatch(unknown.reply, /(?:I didn.t catch|What did you mean|مش شايف|مفيش حاجة)/iu);
+});
+
+test("input language stays independent from the sticky response language until an explicit switch", async () => {
+  const understander = new UnderstandingService(noModel);
+  let current = initialNadimState({ channel: "WEB", locale: "ar-EG" });
+  current = {
+    ...current,
+    revision: 3,
+    search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 8_000_000 },
+    lastResultIds: ["unit-1", "unit-2"],
+  };
+  const originalSearch = structuredClone(current.search);
+
+  const run = async (message: string, facts: any[] = []) => {
+    const styled = detector.apply(current, message);
+    const parsed = (await understander.understand(message, styled)).understanding;
+    const next = stateEngine.apply(styled, parsed, { channel: "WEB" });
+    const plan = planner.plan(parsed, next);
+    const toolResults: NadimToolResult[] = plan.steps.map((step) => ({
+      tool: step.tool,
+      ok: true,
+      data: step.tool === "PROPERTY_SEARCH" ? [] : facts,
+      latencyMs: 1,
+    }));
+    const response = await composer.compose({ userMessage: message, understanding: parsed, state: next, plan, toolResults, proposedActions: [], executedActions: [] });
+    current = stateEngine.withAssistantWording(next, response.reply);
+    return { styled, parsed, state: current, plan, reply: response.reply };
+  };
+
+  const identity = await run("What's your name?");
+  assert.equal(identity.parsed.intent, "ASSISTANT_IDENTITY");
+  assert.equal(identity.state.languageStyle.inputLanguage, "EN_US");
+  assert.equal(identity.state.languageStyle.preferredResponseStyle, "AR_EGYPTIAN");
+  assert.equal(identity.state.locale, "ar-EG");
+  assert.deepEqual(identity.plan.steps, []);
+  assert.match(identity.reply, /نديم/u);
+  assert.doesNotMatch(identity.reply, /I(?:’|'| a)m Nadim/iu);
+
+  const modification = await run("Make it 10 million");
+  assert.equal(modification.parsed.intent, "MODIFY_SEARCH");
+  assert.equal(modification.state.search.budgetMax, 10_000_000);
+  assert.equal(modification.state.languageStyle.preferredResponseStyle, "AR_EGYPTIAN");
+  assert.match(modification.reply, /10\s*مليون/u);
+  assert.deepEqual({ ...modification.state.search, budgetMax: originalSearch.budgetMax }, originalSearch);
+
+  current = { ...current, lastResultIds: ["unit-1", "unit-2"] };
+  const selected = await run("Show me the second one", [{ id: "unit-2", price: 7_500_000, currency: "EGP" }]);
+  assert.equal(selected.parsed.intent, "PROPERTY_QUESTION");
+  assert.equal(selected.state.selectedUnitId, "unit-2");
+  assert.equal(selected.plan.steps[0]?.tool, "GET_UNIT_FACTS");
+  assert.equal(selected.state.languageStyle.preferredResponseStyle, "AR_EGYPTIAN");
+
+  const switched = await run("Reply in English");
+  assert.equal(switched.state.languageStyle.preferredResponseStyle, "EN_US");
+  assert.equal(switched.state.languageStyle.explicitOverride, true);
+  assert.equal(switched.state.languageStyle.explicitRequestThisTurn, true);
+  assert.deepEqual(switched.plan.steps, []);
+  assert.equal(switched.state.selectedUnitId, "unit-2");
+  assert.deepEqual(switched.state.lastResultIds, ["unit-1", "unit-2"]);
+  assert.match(switched.reply, /English/iu);
+
+  const budget = await run("What's my budget?");
+  assert.equal(budget.parsed.intent, "CURRENT_SEARCH_QUERY");
+  assert.deepEqual(budget.plan.steps, []);
+  assert.match(budget.reply, /10\s*M|10\s*million/iu);
+  assert.doesNotMatch(budget.reply, /[\u0600-\u06FF]/u);
+
+  const back = await run("كمل مصري");
+  assert.equal(back.state.languageStyle.preferredResponseStyle, "AR_EGYPTIAN");
+  assert.deepEqual(back.plan.steps, []);
+  assert.equal(back.state.search.budgetMax, 10_000_000);
+
+  const unknown = await run("svgsvg");
+  assert.equal(unknown.parsed.intent, "UNKNOWN");
+  assert.equal(unknown.state.languageStyle.inputLanguage, "UNKNOWN");
+  assert.equal(unknown.state.languageStyle.preferredResponseStyle, "AR_EGYPTIAN");
+  assert.match(unknown.reply, /[\u0600-\u06FF]/u);
+  assert.deepEqual(unknown.plan.steps, []);
+});
+
+test("customer-service intents gate inventory and reset only the requested search state", async () => {
+  const understander = new UnderstandingService(noModel);
+  const active = styledState("AR_EGYPTIAN", {
+    revision: 5,
+    customerId: "customer-1",
+    externalUserId: "web-user-1",
+    search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 10_000_000 },
+    selectedUnitId: "unit-2",
+    lastResultIds: ["unit-1", "unit-2"],
+  });
+
+  for (const [message, expectedIntent] of [
+    ["اسمك اي", "ASSISTANT_IDENTITY"],
+    ["What's your name?", "ASSISTANT_IDENTITY"],
+    ["شكرا", "SMALL_TALK"],
+    ["كلمني بكرة", "CALLBACK_REQUEST"],
+    ["عايز أكلم حد", "HUMAN_HANDOFF"],
+    ["الميزانية اللي محددها كام؟", "CURRENT_SEARCH_QUERY"],
+  ] as const) {
+    const styled = detector.apply(active, message);
+    const parsed = (await understander.understand(message, styled)).understanding;
+    const next = stateEngine.apply(styled, parsed, { channel: "WEB", customerId: active.customerId, externalUserId: active.externalUserId });
+    const plan = planner.plan(parsed, next);
+    assert.equal(parsed.intent, expectedIntent, message);
+    assert.equal(plan.steps.some((step) => step.tool === "PROPERTY_SEARCH"), false, message);
+    assert.deepEqual(next.search, active.search, message);
+  }
+
+  for (const message of [
+    "عايز شقة 3 غرف في التجمع",
+    "وريني المتاح",
+    "فيه حاجة في زايد تحت 10 مليون؟",
+    "دورلي على فيلا",
+  ]) {
+    const fresh = initialNadimState({ channel: "WEB", locale: "ar-EG" });
+    const styled = detector.apply(fresh, message);
+    const parsed = (await understander.understand(message, styled)).understanding;
+    const next = stateEngine.apply(styled, parsed, { channel: "WEB" });
+    assert.equal(parsed.intent, "PROPERTY_SEARCH", message);
+    assert.equal(planner.plan(parsed, next).steps[0]?.tool, "PROPERTY_SEARCH", message);
+  }
+
+  const resetUnderstanding = (await understander.understand("ابدأ من الأول", detector.apply(active, "ابدأ من الأول"))).understanding;
+  const reset = stateEngine.apply(active, resetUnderstanding, { channel: "WEB", customerId: active.customerId, externalUserId: active.externalUserId });
+  assert.equal(resetUnderstanding.intent, "RESET_SEARCH");
+  assert.deepEqual(resetUnderstanding.ordinalReferences, []);
+  assert.deepEqual(reset.search, { locations: [], projects: [], developers: [], propertyTypes: [] });
+  assert.equal(reset.customerId, "customer-1");
+  assert.equal(reset.externalUserId, "web-user-1");
+  assert.equal(reset.languageStyle.preferredResponseStyle, "AR_EGYPTIAN");
+  assert.deepEqual(planner.plan(resetUnderstanding, reset).steps, []);
+
+  const broadMessage = "ابدأ من الأول وامشي أي حاجة";
+  const broadUnderstanding = (await understander.understand(broadMessage, detector.apply(active, broadMessage))).understanding;
+  const broad = stateEngine.apply(active, broadUnderstanding, { channel: "WEB", customerId: active.customerId, externalUserId: active.externalUserId });
+  const broadPlan = planner.plan(broadUnderstanding, broad);
+  assert.equal(broadUnderstanding.intent, "PROPERTY_SEARCH");
+  assert.deepEqual(broadUnderstanding.ordinalReferences, []);
+  assert.deepEqual(broad.search, { locations: [], projects: [], developers: [], propertyTypes: [] });
+  assert.equal(broad.pendingClarification, undefined);
+  assert.equal(broadPlan.steps[0]?.tool, "PROPERTY_SEARCH");
+});
+
+test("final response-language regression sequence preserves state except explicit budget and style changes", async () => {
+  const understander = new UnderstandingService(noModel);
+  let current = initialNadimState({ channel: "WEB", customerId: "customer-1", externalUserId: "web-user-1", locale: "ar-EG" });
+  const outputs: string[] = [];
+  const run = async (message: string) => {
+    const styled = detector.apply(current, message);
+    const parsed = (await understander.understand(message, styled)).understanding;
+    let next = stateEngine.apply(styled, parsed, { channel: "WEB", customerId: current.customerId, externalUserId: current.externalUserId });
+    const plan = planner.plan(parsed, next);
+    const toolResults: NadimToolResult[] = plan.steps.some((step) => step.tool === "PROPERTY_SEARCH")
+      ? [{ tool: "PROPERTY_SEARCH", ok: true, data: [], latencyMs: 1 }]
+      : [];
+    const response = await composer.compose({ userMessage: message, understanding: parsed, state: next, plan, toolResults, proposedActions: [], executedActions: [] });
+    next = stateEngine.withAssistantWording(next, response.reply);
+    current = next;
+    outputs.push(response.reply);
+    return { parsed, plan, reply: response.reply };
+  };
+
+  await run("عايز شقة 3 غرف في التجمع تحت 8 مليون");
+  const budgetArabic = await run("What's my budget?");
+  await run("Make it 10 million");
+  const identityArabic = await run("What's your name?");
+  await run("Reply in English");
+  const budgetEnglish = await run("What's my budget?");
+  await run("كمل مصري");
+  const identityEgyptian = await run("اسمك اي");
+
+  assert.match(budgetArabic.reply, /8\s*مليون/u);
+  assert.match(identityArabic.reply, /نديم/u);
+  assert.match(budgetEnglish.reply, /10\s*M|10\s*million/iu);
+  assert.match(identityEgyptian.reply, /نديم/u);
+  assert.equal(current.search.budgetMax, 10_000_000);
+  assert.equal(current.search.bedrooms, 3);
+  assert.deepEqual(current.search.locations, ["التجمع"]);
+  assert.deepEqual(current.search.propertyTypes, ["Apartment"]);
+  assert.equal(current.customerId, "customer-1");
+  assert.equal(current.externalUserId, "web-user-1");
+  assert.equal(current.languageStyle.preferredResponseStyle, "AR_EGYPTIAN");
+  assert.equal(outputs.length, 8);
+  for (const item of [budgetArabic, identityArabic, budgetEnglish, identityEgyptian]) assert.deepEqual(item.plan.steps, []);
 });

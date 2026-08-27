@@ -49,10 +49,10 @@ export class ResponseComposerService {
       || Boolean(input.plan.clarification)
       || input.proposedActions.length > 0
       || input.executedActions.length > 0
-      || input.state.languageStyle?.changedThisTurn
+      || input.state.languageStyle?.explicitRequestThisTurn
       || input.state.languageStyle?.grammaticalAddressChangedThisTurn
       || input.understanding.intent === "UNKNOWN"
-      || ["GREETING", "RESET_SEARCH", "CURRENT_SEARCH_QUERY", "CORRECTION"].includes(input.understanding.intent);
+      || ["GREETING", "ASSISTANT_IDENTITY", "RESET_SEARCH", "CURRENT_SEARCH_QUERY", "CORRECTION"].includes(input.understanding.intent);
     if (deterministicRequired || !this.dialogue.available()) return { reply: fallback };
     try {
       const model = await this.dialogue.compose({
@@ -94,13 +94,15 @@ export class ResponseComposerService {
     if (input.executedActions.length) return this.responseStyle.actionResult(style, input.executedActions[0]);
     if (input.proposedActions.length) return this.responseStyle.proposedAction(style, input.proposedActions[0]);
     if (input.understanding.intent === "GREETING") return this.responseStyle.greeting(style, input.state.revision <= 1, input.userMessage);
-    if (input.state.languageStyle?.changedThisTurn && ["UNKNOWN", "SMALL_TALK"].includes(input.understanding.intent)) return this.responseStyle.languageChanged(style);
+    if (input.understanding.intent === "ASSISTANT_IDENTITY") return this.responseStyle.assistantIdentity(style);
+    if (input.state.languageStyle?.explicitRequestThisTurn && ["UNKNOWN", "SMALL_TALK"].includes(input.understanding.intent)) return this.responseStyle.languageChanged(style);
     if (input.state.languageStyle?.grammaticalAddressChangedThisTurn && ["UNKNOWN", "SMALL_TALK"].includes(input.understanding.intent)) return this.responseStyle.addressChanged(style);
     if (input.understanding.intent === "RESET_SEARCH") return this.responseStyle.reset(style);
     if (input.understanding.intent === "UNKNOWN") return this.responseStyle.clarifyUnknown(style);
     if (input.understanding.intent === "CURRENT_SEARCH_QUERY") {
       return this.responseStyle.currentSearch(style, input.state, input.understanding.stateQuery);
     }
+    if (input.understanding.intent === "SMALL_TALK") return this.responseStyle.smallTalk(style, input.userMessage);
     if (input.understanding.intent === "CORRECTION"
       && input.state.lastOperations.some((operation) => operation.operation === "PRESERVE")) {
       return this.responseStyle.preservedSearch(style);

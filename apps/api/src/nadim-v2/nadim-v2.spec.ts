@@ -281,7 +281,8 @@ test("dominant numeric and bedroom references resolve from active search while v
 });
 
 test("Gulf greeting is a greeting and cannot become an address-change acknowledgement", async () => {
-  const styled = languageStyles.apply(state(), "هلا");
+  const gulfState = initialNadimState({ channel: "WEB", locale: "ar-SA" });
+  const styled = languageStyles.apply(gulfState, "هلا");
   const intent = await understand("هلا", styled);
   const next = stateEngine.apply(styled, intent, { channel: "WEB" });
   const plan = planner.plan(intent, next);
@@ -294,7 +295,7 @@ test("Gulf greeting is a greeting and cannot become an address-change acknowledg
   assert.match(response.reply, /نديم/u);
   assert.doesNotMatch(response.reply, /(?:بالطريقة هذي|بكمل بالطريقة)/u);
 
-  const active = languageStyles.apply(state({ revision: 4, search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], budgetMax: 8_000_000 } }), "هلا");
+  const active = languageStyles.apply({ ...gulfState, revision: 4, search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], budgetMax: 8_000_000 } }, "هلا");
   const activeIntent = await understand("هلا", active);
   const activeNext = stateEngine.apply(active, activeIntent, { channel: "WEB" });
   const activeResponse = await composer.compose({ userMessage: "هلا", understanding: activeIntent, state: activeNext, plan: planner.plan(activeIntent, activeNext), toolResults: [], proposedActions: [], executedActions: [] });
@@ -317,7 +318,7 @@ test("gibberish and ambiguous Arabic noise preserve state without search or no-m
   }
 });
 
-test("short contextual budget updates work across English, Gulf, Franco, and mixed styles", async () => {
+test("multilingual contextual updates preserve the established response style", async () => {
   const cases = [
     ["خلها 10 مليون", "AR_GULF"],
     ["Make it 10 million", "EN_US"],
@@ -329,7 +330,8 @@ test("short contextual budget updates work across English, Gulf, Franco, and mix
     const styled = languageStyles.apply(active, message);
     const intent = await understand(message, styled);
     const next = stateEngine.apply(styled, intent, { channel: "WEB" });
-    assert.equal(styled.languageStyle.preferredResponseStyle, expectedStyle, message);
+    assert.equal(styled.languageStyle.inputLanguage, expectedStyle, message);
+    assert.equal(styled.languageStyle.preferredResponseStyle, "AR_EGYPTIAN", message);
     assert.equal(intent.intent, "MODIFY_SEARCH", message);
     assert.equal(next.search.budgetMax, 10_000_000, message);
     assert.equal(next.search.bedrooms, 3, message);

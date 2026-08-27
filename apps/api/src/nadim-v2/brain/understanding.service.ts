@@ -86,7 +86,8 @@ function explicitUnderstanding(message: string, state: NadimState): NadimUnderst
   const operations: StateOperation[] = [];
   const activeSearch = hasActiveSearch(state);
   const modifyingSearch = /(?:خليها|خليه|خليهم|خلها|خلهم|نفس(?:ها|ه)?|نفس المواصفات|غي[ّ]?ر|عد[ّ]?ل|بدل|make it|make them|change|instead)/iu.test(text);
-  const reset = /(?:ابد[أا]\s+(?:بحث|من جديد)|بحث جديد|reset|new search|start over)/iu.test(text);
+  const reset = /(?:ابد[أا]\s+(?:بحث|من جديد|من الأول|من الاول)|بحث جديد|نبدأ\s+من\s+(?:جديد|الأول|الاول)|سيب\s+اللي\s+فات|reset|new search|start over)/iu.test(text);
+  const broadResetSearch = reset && /(?:امشي\s+(?:أي|اي)\s+حاجة|سيب\s+(?:كل\s+)?(?:الخيارات|المواصفات)\s+مفتوحة|anything|any(?:thing)?\s+(?:is\s+)?fine|search broadly)/iu.test(text);
   if (reset) operations.push({ operation: "RESET", field: "SEARCH" });
 
   const locations = LOCATION_TERMS.filter((term) => lower.includes(term.toLowerCase()));
@@ -137,9 +138,11 @@ function explicitUnderstanding(message: string, state: NadimState): NadimUnderst
   if (/(?:الأرخص|الارخص|cheapest)/iu.test(text)) operations.push({ operation: "SET", field: "queryObjective", value: "CHEAPEST" });
   if (/(?:الأغلى|الاغلى|most expensive)/iu.test(text)) operations.push({ operation: "SET", field: "queryObjective", value: "MOST_EXPENSIVE" });
 
-  const references = ordinals(text);
+  // "من الأول" is a reset idiom, not an ordinal selection.
+  const references = reset ? [] : ordinals(text);
   const unitReference = text.match(/\b(?:unit|وحدة)\s*[:#-]?\s*([\p{L}\d][\p{L}\d_\-/ ]{1,40})/iu)?.[1]?.trim();
   const hasSearch = /(?:عايز|عاوز|أبي|ابي|أبغى|ابغى|ودي|بدور|دورلي|وريني|ابحث|find|show me|looking for|\bneed\b|search)/iu.test(text);
+  const resultSelection = references.length > 0 && state.lastResultIds.length > 0;
   const paymentPreferenceContext = hasSearch || (hasActiveSearch(state) && modifyingSearch);
   if (paymentPreferenceContext && /(?:تقسيط طويل|مدة أطول|مدة اطول|long(?:er)? installments?)/iu.test(text)) {
     operations.push({ operation: "SET", field: "installmentPreference", value: "LONG_TERM" });
@@ -154,25 +157,31 @@ function explicitUnderstanding(message: string, state: NadimState): NadimUnderst
     && !hasMutation;
   const queryTarget = stateQueryTarget(text, state);
   const paymentQuestion = /(?:نظام التقسيط|خطة السداد|خطط السداد|المقدم\s+كام|التقسيط\s+على\s+كام\s*(?:سنة|سنين|شهر)?|payment plan|down payment|how (?:many|long).*(?:installment|year|month))/iu.test(text);
-  const languageOnly = Boolean(state.languageStyle?.changedThisTurn || state.languageStyle?.grammaticalAddressChangedThisTurn)
+  const addressOnlyRequest = state.languageStyle?.grammaticalAddressChangedThisTurn
+    && /(?:صيغة|خاطبني|مؤنث|مذكر|محايد|address me|feminine|masculine|gender[- ]neutral)/iu.test(text);
+  const languageOnly = Boolean(state.languageStyle?.explicitRequestThisTurn || addressOnlyRequest)
     && !hasMutation
     && !/(?:شقة|فيلا|وحدة|مشروع|سعر|ميزانية|تقسيط|مقدم|غرف|حمام|مساحة|متاح|صور|معاينة|حجز|apartment|villa|unit|project|price|budget|payment|bedroom|bathroom|area|available|media|viewing|reservation)/iu.test(text);
   let intent: NadimUnderstanding["intent"] = "UNKNOWN";
   if (/^(?:اهلا|أهلا|أهلين|هلا|السلام عليكم|صباح الخير|مساء الخير|hi|hello|hey)(?=\s|$|[،,.!?])/iu.test(text)) intent = "GREETING";
   if (hasSearch) intent = "PROPERTY_SEARCH";
   else if (hasMutation) intent = activeSearch ? "MODIFY_SEARCH" : "PROPERTY_SEARCH";
-  if (reset) intent = "RESET_SEARCH";
+  if (reset) intent = broadResetSearch ? "PROPERTY_SEARCH" : "RESET_SEARCH";
   if (/(?:قارن|مقارنة|compare)/iu.test(text)) intent = "COMPARISON";
   else if (/(?:صور|صورة|photos?|images?|media)/iu.test(text)) intent = "MEDIA_REQUEST";
   else if (paymentQuestion && !["PROPERTY_SEARCH", "MODIFY_SEARCH"].includes(intent)) intent = "PAYMENT_PLAN_QUESTION";
   else if (/(?:السعر|سعرها|سعره|price|how much)/iu.test(text)) intent = "PRICE_QUESTION";
-  else if (/(?:متاح|متاحة|availability|available)/iu.test(text)) intent = "AVAILABILITY_QUESTION";
+  else if (/(?:متاح|متاحة|availability|available)/iu.test(text) && !["PROPERTY_SEARCH", "MODIFY_SEARCH"].includes(intent)) intent = "AVAILABILITY_QUESTION";
   else if (/(?:الموقع|فين|location|where is)/iu.test(text) && !hasSearch) intent = "LOCATION_QUESTION";
+  if (resultSelection && ["UNKNOWN", "PROPERTY_SEARCH"].includes(intent)) intent = "PROPERTY_QUESTION";
   if (/(?:احجز|حجز|reservation|reserve)/iu.test(text)) intent = "RESERVATION_REQUEST";
   else if (/(?:معاينة|viewing|visit)/iu.test(text)) intent = "VIEWING_REQUEST";
+  else if (/(?:مش\s+عايز\s+أكمل\s+مع\s+(?:ال)?(?:ai|ذكاء)|عايز\s+(?:أكلم|اتكلم\s+مع)\s+حد|موظف|حد من المبيعات|human|sales agent|representative|talk to (?:a )?(?:person|human))/iu.test(text)) intent = "HUMAN_HANDOFF";
   else if (!languageOnly && /(?:كلمني|اتصل بي|اتصلوا|callback|call me)/iu.test(text)) intent = "CALLBACK_REQUEST";
-  else if (/(?:موظف|حد من المبيعات|human|sales agent|representative)/iu.test(text)) intent = "HUMAN_HANDOFF";
   else if (/(?:سيب بياناتي|مهتم|contact me|lead)/iu.test(text)) intent = "LEAD_REQUEST";
+  if (/(?:اسمك\s*(?:إيه|ايه|اي)?|إنت\s+مين|انت\s+مين|مين\s+نديم|what(?:'s| is)\s+your\s+name|who\s+are\s+you)/iu.test(text)) intent = "ASSISTANT_IDENTITY";
+  else if (/(?:شكر[ًاا]?|متشكر|thank\s*you|thanks)/iu.test(text)
+    || /(?:محتار|مش\s+عارف\s+أبدأ|مش\s+عارف\s+ابدأ|don['’]?t know where to start)/iu.test(text)) intent = "SMALL_TALK";
   if (languageOnly) intent = "SMALL_TALK";
   if (preserveRequest && !hasMutation) intent = "CORRECTION";
   if (ambiguousRelativeChange) intent = "MODIFY_SEARCH";
@@ -202,7 +211,7 @@ export class UnderstandingService {
     if (!this.dialogue.available()) return { understanding: deterministic };
     if (deterministic.intent === "UNKNOWN" && deterministic.confidence >= 0.8) return { understanding: deterministic };
     if (deterministic.intent === "SMALL_TALK"
-      && (state.languageStyle.changedThisTurn || state.languageStyle.grammaticalAddressChangedThisTurn)) {
+      && (state.languageStyle.explicitRequestThisTurn || state.languageStyle.grammaticalAddressChangedThisTurn)) {
       return { understanding: deterministic };
     }
     try {
@@ -225,7 +234,7 @@ export class UnderstandingService {
         && !parsed.data.ambiguity;
       const modelStateQueryHasNoTarget = parsed.data.intent === "CURRENT_SEARCH_QUERY" && !stateQuery;
       if (modelRecoveryIsWeak || modelSearchHasNoMeaning || modelStateQueryHasNoTarget) intent = deterministic.intent;
-      if (["GREETING", "CURRENT_SEARCH_QUERY", "CORRECTION", "SMALL_TALK", "UNKNOWN"].includes(intent)) {
+      if (["GREETING", "ASSISTANT_IDENTITY", "CURRENT_SEARCH_QUERY", "CORRECTION", "SMALL_TALK", "UNKNOWN"].includes(intent)) {
         mergedOperations = deterministic.operations.filter((operation) => operation.operation === "PRESERVE");
       }
       const understanding = {

@@ -59,10 +59,12 @@ export function initialNadimState(input: {
     externalUserId: input.externalUserId,
     locale,
     languageStyle: {
+      inputLanguage: "UNKNOWN",
       detected: "UNKNOWN",
       confidence: 0,
       preferredResponseStyle,
       explicitOverride: false,
+      explicitRequestThisTurn: false,
       changedThisTurn: false,
       grammaticalAddress: "UNKNOWN",
       grammaticalAddressExplicit: false,

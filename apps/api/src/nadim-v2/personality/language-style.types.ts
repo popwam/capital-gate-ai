@@ -14,10 +14,15 @@ export const GRAMMATICAL_ADDRESSES = ["MASCULINE", "FEMININE", "NEUTRAL", "UNKNO
 export type GrammaticalAddress = (typeof GRAMMATICAL_ADDRESSES)[number];
 
 export type NadimLanguageStyleState = {
+  /** Language/style observed in the current inbound message. Comprehension signal only. */
+  inputLanguage: NadimLanguageStyle;
+  /** @deprecated Use inputLanguage. Kept for persisted V2 state compatibility. */
   detected: NadimLanguageStyle;
   confidence: number;
+  /** Sticky output style. It changes only after an explicit customer request. */
   preferredResponseStyle: NadimLanguageStyle;
   explicitOverride: boolean;
+  explicitRequestThisTurn: boolean;
   changedThisTurn: boolean;
   codeSwitchRatio?: number;
   /** Conversational agreement only. This is not a demographic or gender-identity field. */
