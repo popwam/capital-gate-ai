@@ -207,7 +207,7 @@ test("explicit language switching preserves every property-search constraint", (
 test("a language-only instruction never becomes a callback or action request", async () => {
   const previous = detector.apply(styledState("AR_EGYPTIAN"), "كلمني خليجي");
   const result = await new UnderstandingService(noModel).understand("كلمني خليجي", previous);
-  assert.equal(result.understanding.intent, "SMALL_TALK");
+  assert.equal(result.understanding.intent, "LANGUAGE_STYLE_CHANGE");
   assert.equal(result.understanding.actionRequested, false);
 });
 
@@ -920,4 +920,172 @@ test("final response-language regression sequence preserves state except explici
   assert.equal(current.languageStyle.preferredResponseStyle, "AR_EGYPTIAN");
   assert.equal(outputs.length, 8);
   for (const item of [budgetArabic, identityArabic, budgetEnglish, identityEgyptian]) assert.deepEqual(item.plan.steps, []);
+});
+
+test("language capability questions never switch style while explicit labels do and Arabic restores the prior dialect", async () => {
+  const understander = new UnderstandingService(noModel);
+  let current = initialNadimState({ channel: "WEB", locale: "ar-EG" });
+  current = {
+    ...current,
+    revision: 2,
+    search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 8_000_000 },
+  };
+  const originalSearch = structuredClone(current.search);
+
+  const run = async (message: string) => {
+    const styled = detector.apply(current, message);
+    const parsed = (await understander.understand(message, styled)).understanding;
+    const next = stateEngine.apply(styled, parsed, { channel: "WEB" });
+    const plan = planner.plan(parsed, next);
+    const response = await composer.compose({ userMessage: message, understanding: parsed, state: next, plan, toolResults: [], proposedActions: [], executedActions: [] });
+    current = stateEngine.withAssistantWording(next, response.reply);
+    return { parsed, state: current, plan, reply: response.reply };
+  };
+
+  for (const message of ["بتتكلم انجليزي", "بتعرف تتكلم سعودي؟", "تعرف خليجي؟", "Can you speak Arabic?", "Do you speak English?"]) {
+    const result = await run(message);
+    assert.equal(result.parsed.intent, "LANGUAGE_CAPABILITY_QUERY", message);
+    assert.equal(result.state.languageStyle.preferredResponseStyle, "AR_EGYPTIAN", message);
+    assert.equal(result.state.languageStyle.explicitRequestThisTurn, false, message);
+    assert.deepEqual(result.plan.steps, [], message);
+    assert.deepEqual(result.state.search, originalSearch, message);
+    assert.match(result.reply, /[\u0600-\u06FF]/u, message);
+  }
+
+  const english = await run("رد انجليزي");
+  assert.equal(english.parsed.intent, "LANGUAGE_STYLE_CHANGE");
+  assert.equal(english.state.languageStyle.preferredResponseStyle, "EN_US");
+  assert.equal(english.state.languageStyle.lastArabicResponseStyle, "AR_EGYPTIAN");
+
+  const restored = await run("رد عربي");
+  assert.equal(restored.parsed.intent, "LANGUAGE_STYLE_CHANGE");
+  assert.equal(restored.state.languageStyle.preferredResponseStyle, "AR_EGYPTIAN");
+  assert.doesNotMatch(restored.reply, /سأتابع|بالتأكيد/u);
+
+  for (const [message, style, regionalVariant] of [
+    ["مصري", "AR_EGYPTIAN", undefined],
+    ["خليجي", "AR_GULF", undefined],
+    ["سعودي", "AR_GULF", "SAUDI"],
+    ["English", "EN_US", undefined],
+    ["عربي", "AR_GULF", "SAUDI"],
+  ] as const) {
+    const result = await run(message);
+    assert.equal(result.parsed.intent, "LANGUAGE_STYLE_CHANGE", message);
+    assert.equal(result.state.languageStyle.preferredResponseStyle, style, message);
+    assert.equal(result.state.languageStyle.regionalVariant, regionalVariant, message);
+    assert.deepEqual(result.plan.steps, [], message);
+    assert.deepEqual(result.state.search, originalSearch, message);
+  }
+
+  const saudi = await run("رد سعودي");
+  assert.equal(saudi.state.languageStyle.regionalVariant, "SAUDI");
+  await run("Answer in English");
+  const restoredSaudi = await run("رد عربي");
+  assert.equal(restoredSaudi.state.languageStyle.preferredResponseStyle, "AR_GULF");
+  assert.equal(restoredSaudi.state.languageStyle.regionalVariant, "SAUDI");
+});
+
+test("ordinary customer-service conversation is understood without inventory or state mutation", async () => {
+  const understander = new UnderstandingService(noModel);
+  const active = initialNadimState({ channel: "WEB", locale: "ar-AE" });
+  active.revision = 4;
+  active.search = { locations: ["زايد"], projects: [], developers: [], propertyTypes: ["Villa"], budgetMax: 12_000_000 };
+  const originalSearch = structuredClone(active.search);
+
+  const cases: Array<{ message: string; intent: NadimUnderstanding["intent"]; semantic: RegExp }> = [
+    { message: "كيفك", intent: "SMALL_TALK", semantic: /(?:بخير|الحمد لله|حالك)/u },
+    { message: "عامل ايه", intent: "SMALL_TALK", semantic: /(?:بخير|الحمد لله|حالك)/u },
+    { message: "اخبارك", intent: "SMALL_TALK", semantic: /(?:بخير|الحمد لله|حالك)/u },
+    { message: "شلونك", intent: "SMALL_TALK", semantic: /(?:بخير|الحمد لله|حالك)/u },
+    { message: "كيف الحال", intent: "SMALL_TALK", semantic: /(?:بخير|الحمد لله|حالك)/u },
+    { message: "how are you?", intent: "SMALL_TALK", semantic: /(?:بخير|الحمد لله|حالك)/u },
+    { message: "انت تقدر تساعدني ب اي", intent: "ASSISTANT_CAPABILITIES", semantic: /(?:العقار|العقاري|المتاح|أبحث|أقارن)/u },
+    { message: "تقدر تعمل اي", intent: "ASSISTANT_CAPABILITIES", semantic: /(?:العقار|العقاري|المتاح|أبحث|أقارن)/u },
+    { message: "ممكن تساعدني ازاي", intent: "ASSISTANT_CAPABILITIES", semantic: /(?:العقار|العقاري|المتاح|أبحث|أقارن)/u },
+    { message: "كيف أن تساعدني", intent: "ASSISTANT_CAPABILITIES", semantic: /(?:العقار|العقاري|المتاح|أبحث|أقارن)/u },
+    { message: "كيف تقدر تساعدني", intent: "ASSISTANT_CAPABILITIES", semantic: /(?:العقار|العقاري|المتاح|أبحث|أقارن)/u },
+    { message: "وش تقدر تسوي", intent: "ASSISTANT_CAPABILITIES", semantic: /(?:العقار|العقاري|المتاح|أبحث|أقارن)/u },
+    { message: "what can you help me with?", intent: "ASSISTANT_CAPABILITIES", semantic: /(?:العقار|العقاري|المتاح|أبحث|أقارن)/u },
+  ];
+
+  for (const item of cases) {
+    const styled = detector.apply(active, item.message);
+    const parsed = (await understander.understand(item.message, styled)).understanding;
+    const next = stateEngine.apply(styled, parsed, { channel: "WEB" });
+    const plan = planner.plan(parsed, next);
+    const response = await composer.compose({ userMessage: item.message, understanding: parsed, state: next, plan, toolResults: [], proposedActions: [], executedActions: [] });
+    assert.equal(parsed.intent, item.intent, item.message);
+    assert.notEqual(parsed.intent, "UNKNOWN", item.message);
+    assert.equal(next.languageStyle.preferredResponseStyle, "AR_GULF", item.message);
+    assert.deepEqual(plan.steps, [], item.message);
+    assert.deepEqual(next.search, originalSearch, item.message);
+    assert.match(response.reply, item.semantic, item.message);
+    assert.doesNotMatch(response.reply, /(?:ما فهمت|لم أفهم|I didn.t catch)/iu, item.message);
+  }
+});
+
+test("observed conversational regression sequence remains customer-service-first", async () => {
+  const understander = new UnderstandingService(noModel);
+  let current = initialNadimState({ channel: "WEB", locale: "ar-EG" });
+  const outputs: Array<{ message: string; intent: NadimUnderstanding["intent"]; style: NadimLanguageStyle; regionalVariant?: string; tools: string[]; reply: string }> = [];
+  const run = async (message: string) => {
+    const styled = detector.apply(current, message);
+    const parsed = (await understander.understand(message, styled)).understanding;
+    let next = stateEngine.apply(styled, parsed, { channel: "WEB" });
+    const plan = planner.plan(parsed, next);
+    const toolResults: NadimToolResult[] = plan.steps.some((step) => step.tool === "PROPERTY_SEARCH")
+      ? [{ tool: "PROPERTY_SEARCH", ok: true, data: [], latencyMs: 1 }]
+      : [];
+    const response = await composer.compose({ userMessage: message, understanding: parsed, state: next, plan, toolResults, proposedActions: [], executedActions: [] });
+    next = stateEngine.withAssistantWording(next, response.reply);
+    current = next;
+    const result = { message, intent: parsed.intent, style: current.languageStyle.preferredResponseStyle, regionalVariant: current.languageStyle.regionalVariant, tools: plan.steps.map((step) => step.tool), reply: response.reply };
+    outputs.push(result);
+    return result;
+  };
+
+  const unknown = await run("...");
+  assert.equal(unknown.intent, "UNKNOWN");
+  assert.deepEqual(unknown.tools, []);
+
+  const search = await run("عايز شقة 3 غرف في التجمع تحت 8 مليون");
+  assert.equal(search.intent, "PROPERTY_SEARCH");
+  assert.deepEqual(search.tools, ["PROPERTY_SEARCH"]);
+
+  const capability = await run("بتتكلم انجليزي");
+  assert.equal(capability.intent, "LANGUAGE_CAPABILITY_QUERY");
+  assert.equal(capability.style, "AR_EGYPTIAN");
+  assert.deepEqual(capability.tools, []);
+
+  assert.equal((await run("رد انجليزي")).style, "EN_US");
+  assert.equal((await run("رد عربي")).style, "AR_EGYPTIAN");
+  assert.equal((await run("مصري")).style, "AR_EGYPTIAN");
+  assert.equal((await run("رد مصري")).style, "AR_EGYPTIAN");
+
+  const saudi = await run("رد سعودي");
+  assert.equal(saudi.style, "AR_GULF");
+  assert.equal(saudi.regionalVariant, "SAUDI");
+  assert.equal((await run("رد بالسعودية")).regionalVariant, "SAUDI");
+
+  const gulf = await run("رد خليجي");
+  assert.equal(gulf.style, "AR_GULF");
+  assert.equal(gulf.regionalVariant, undefined);
+
+  for (const [message, expectedIntent] of [
+    ["كيفك", "SMALL_TALK"],
+    ["مساء الخير", "GREETING"],
+    ["كيف أن تساعدني", "ASSISTANT_CAPABILITIES"],
+    ["انت تقدر تساعدني ب اي", "ASSISTANT_CAPABILITIES"],
+  ] as const) {
+    const result = await run(message);
+    assert.equal(result.intent, expectedIntent, message);
+    assert.equal(result.style, "AR_GULF", message);
+    assert.deepEqual(result.tools, [], message);
+    assert.doesNotMatch(result.reply, /(?:ما فهمت|لم أفهم|I didn.t catch)/iu, message);
+  }
+
+  assert.equal(current.search.budgetMax, 8_000_000);
+  assert.equal(current.search.bedrooms, 3);
+  assert.deepEqual(current.search.locations, ["التجمع"]);
+  assert.equal(outputs.filter((item) => item.tools.includes("PROPERTY_SEARCH")).length, 1);
 });

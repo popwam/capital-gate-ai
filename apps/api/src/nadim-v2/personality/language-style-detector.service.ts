@@ -1,9 +1,17 @@
 import { Injectable } from "@nestjs/common";
 import { NadimState } from "../domain/nadim-state";
-import { GrammaticalAddress, NadimLanguageStyle, NadimLanguageStyleState, styleFromLocale } from "./language-style.types";
+import {
+  GrammaticalAddress,
+  NadimLanguageStyle,
+  NadimLanguageStyleState,
+  NadimRegionalVariant,
+  regionalVariantFromLocale,
+  styleFromLocale,
+} from "./language-style.types";
 
 type Detection = { style: NadimLanguageStyle; confidence: number; explicit: boolean; codeSwitchRatio?: number };
 type AddressDetection = { value: GrammaticalAddress; explicit: boolean; changed?: boolean };
+type ExplicitRequest = { style?: NadimLanguageStyle; regionalVariant?: NadimRegionalVariant; restoreArabic?: boolean };
 
 const ARABIC = /[\u0600-\u06FF]/u;
 const LATIN_WORD = /[A-Za-z]{2,}/gu;
@@ -22,17 +30,21 @@ export class LanguageStyleDetectorService {
         && previous.grammaticalAddress !== detectedAddress.value
         && (detectedAddress.explicit || previous.grammaticalAddress !== "UNKNOWN")),
     };
+    const latest = this.latestMessage(message);
     const explicit = this.explicitRequest(message);
     if (explicit) {
-      const changed = previous?.preferredResponseStyle !== explicit;
-      return this.result(explicit, explicit, 1, true, true, changed, address);
+      const restored = explicit.restoreArabic ? this.restoreArabic(previous, localeHint) : undefined;
+      const preferred = explicit.style ?? restored?.style ?? "AR_FORMAL";
+      const regionalVariant = explicit.restoreArabic ? restored?.regionalVariant : explicit.regionalVariant;
+      const changed = previous?.preferredResponseStyle !== preferred || previous?.regionalVariant !== regionalVariant;
+      return this.result(latest.style, preferred, latest.confidence, true, true, changed, address, previous, regionalVariant, latest.codeSwitchRatio);
     }
 
-    const latest = this.latestMessage(message);
     const persisted = previous?.preferredResponseStyle && previous.preferredResponseStyle !== "UNKNOWN" ? previous.preferredResponseStyle : undefined;
     const localeFallback = styleFromLocale(localeHint);
     const fallback = persisted ?? (localeFallback === "UNKNOWN" ? "AR_FORMAL" : localeFallback);
-    return this.result(latest.style, fallback, latest.confidence, previous?.explicitOverride ?? false, false, false, address, latest.codeSwitchRatio);
+    const regionalVariant = persisted ? previous?.regionalVariant : regionalVariantFromLocale(localeHint);
+    return this.result(latest.style, fallback, latest.confidence, previous?.explicitOverride ?? false, false, false, address, previous, regionalVariant, latest.codeSwitchRatio);
   }
 
   private grammaticalAddress(message: string, previous?: NadimLanguageStyleState): AddressDetection {
@@ -65,15 +77,35 @@ export class LanguageStyleDetectorService {
     };
   }
 
-  private explicitRequest(message: string): NadimLanguageStyle | undefined {
+  private explicitRequest(message: string): ExplicitRequest | undefined {
     const text = message.normalize("NFKC").replace(/[\u064B-\u065F\u0670]/gu, "").trim();
+    if (this.languageCapabilityQuery(text)) return undefined;
     const recipient = "(?:\\s+(?:لي|عليا|علي))?";
-    if (new RegExp(`(?:كمل|رد|كلمني|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?مصري|باللهجة المصرية|back\\s+to\\s+egyptian`, "iu").test(text)) return "AR_EGYPTIAN";
-    if (new RegExp(`(?:كمل|رد|كلمني|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?خليجي|باللهجة الخليجية`, "iu").test(text)) return "AR_GULF";
-    if (new RegExp(`(?:كمل|رد|كلمني|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?عربي(?:ة)?|بالفصحى|بالعربية الفصحى|back\\s+to\\s+arabic`, "iu").test(text)) return "AR_FORMAL";
-    if (new RegExp(`(?:رد|كلمني|اتكلم)${recipient}\\s*(?:ب|بال)?(?:إنجليزي|انجليزي)|(?:continue|reply|explain|answer|speak)\\b[^.?!]{0,60}(?:\\bin english\\b|\\benglish\\b)|english please`, "iu").test(text)) return "EN_US";
-    if (new RegExp(`(?:رد|كلمني|اتكلم|كمل)${recipient}\\s+(?:ب|بال)?فرانكو|بالفرانكو|\\bkamel\\s+franco\\b`, "iu").test(text)) return "FRANCO_ARABIC";
+    if (new RegExp(`^(?:مصري)$|(?:كمل|رد|كلمني|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?مصري|باللهجة المصرية|back\\s+to\\s+egyptian`, "iu").test(text)) return { style: "AR_EGYPTIAN" };
+    if (new RegExp(`^(?:سعودي)$|(?:كمل|رد|كلمني|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?(?:سعودي|السعودي|السعودية)|بالسعودي(?:ة)?`, "iu").test(text)) return { style: "AR_GULF", regionalVariant: "SAUDI" };
+    if (new RegExp(`^(?:خليجي)$|(?:كمل|رد|كلمني|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?خليجي|باللهجة الخليجية`, "iu").test(text)) return { style: "AR_GULF" };
+    if (new RegExp(`(?:كمل|رد|كلمني|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?(?:فصحى|عربي(?:ة)?\\s+فصحى)|بالفصحى|بالعربية الفصحى`, "iu").test(text)) return { style: "AR_FORMAL" };
+    if (new RegExp(`^(?:عربي(?:ة)?)$|(?:كمل|رد|كلمني|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?عربي(?:ة)?|back\\s+to\\s+arabic`, "iu").test(text)) return { restoreArabic: true };
+    if (new RegExp(`^(?:english)$|(?:رد|كلمني|اتكلم|كمل)${recipient}\\s*(?:ب|بال)?(?:إنجليزي|انجليزي)|(?:continue|reply|explain|answer|speak)\\b[^.?!]{0,60}(?:\\bin english\\b|\\benglish\\b)|english please`, "iu").test(text)) return { style: "EN_US" };
+    if (new RegExp(`^(?:franco)$|(?:رد|كلمني|اتكلم|كمل)${recipient}\\s+(?:ب|بال)?فرانكو|بالفرانكو|\\bkamel\\s+franco\\b`, "iu").test(text)) return { style: "FRANCO_ARABIC" };
     return undefined;
+  }
+
+  private languageCapabilityQuery(text: string) {
+    return /(?:بتتكلم|بتعرف\s+تتكلم|تعرف\s+(?:تتكلم\s+)?|بتقدر\s+تتكلم|هل\s+(?:تقدر|تستطيع|تعرف).{0,12}(?:تتكلم|تحكي)).{0,16}(?:إنجليزي|انجليزي|عربي|خليجي|سعودي|فصحى)|(?:can|do)\s+you\s+speak\s+(?:english|arabic)/iu.test(text);
+  }
+
+  private restoreArabic(previous?: NadimLanguageStyleState, localeHint?: string): { style: NadimLanguageStyle; regionalVariant?: NadimRegionalVariant } {
+    if (previous?.lastArabicResponseStyle?.startsWith("AR_")) {
+      return { style: previous.lastArabicResponseStyle, regionalVariant: previous.lastArabicRegionalVariant };
+    }
+    if (previous?.preferredResponseStyle?.startsWith("AR_")) {
+      return { style: previous.preferredResponseStyle, regionalVariant: previous.regionalVariant };
+    }
+    const localeStyle = styleFromLocale(localeHint);
+    return localeStyle.startsWith("AR_")
+      ? { style: localeStyle, regionalVariant: regionalVariantFromLocale(localeHint) }
+      : { style: "AR_FORMAL" };
   }
 
   private latestMessage(message: string): Detection {
@@ -116,13 +148,25 @@ export class LanguageStyleDetectorService {
     explicitRequestThisTurn: boolean,
     changedThisTurn: boolean,
     address: AddressDetection,
+    previous?: NadimLanguageStyleState,
+    regionalVariant?: NadimRegionalVariant,
     codeSwitchRatio?: number,
   ): NadimLanguageStyleState {
+    const outputIsArabic = preferredResponseStyle.startsWith("AR_");
+    const previousArabicStyle = previous?.preferredResponseStyle?.startsWith("AR_")
+      ? previous.preferredResponseStyle
+      : previous?.lastArabicResponseStyle;
+    const previousArabicVariant = previous?.preferredResponseStyle?.startsWith("AR_")
+      ? previous.regionalVariant
+      : previous?.lastArabicRegionalVariant;
     return {
       inputLanguage: detected,
       detected,
       confidence,
       preferredResponseStyle,
+      regionalVariant,
+      lastArabicResponseStyle: outputIsArabic ? preferredResponseStyle : previousArabicStyle,
+      lastArabicRegionalVariant: outputIsArabic ? regionalVariant : previousArabicVariant,
       explicitOverride,
       explicitRequestThisTurn,
       changedThisTurn,

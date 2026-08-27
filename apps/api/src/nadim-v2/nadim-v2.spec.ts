@@ -346,7 +346,7 @@ test("language-only requests cannot hallucinate search operations", async () => 
   const next = stateEngine.apply(styled, intent, { channel: "WEB" });
   const plan = planner.plan(intent, next);
   const response = await composer.compose({ userMessage: "Explain it in English", understanding: intent, state: next, plan, toolResults: [], proposedActions: [], executedActions: [] });
-  assert.equal(intent.intent, "SMALL_TALK");
+  assert.equal(intent.intent, "LANGUAGE_STYLE_CHANGE");
   assert.deepEqual(next.lastOperations, []);
   assert.deepEqual(next.search, active.search);
   assert.deepEqual(plan.steps, []);

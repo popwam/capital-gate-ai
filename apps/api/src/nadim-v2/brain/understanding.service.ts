@@ -37,7 +37,20 @@ function withFrancoSemanticHints(value: string) {
 
 function looksLikeGibberish(value: string) {
   const compact = value.trim();
-  return /^[a-z]{4,}$/iu.test(compact) && !/[aeiouy]/iu.test(compact);
+  return (!/[\p{L}\d]/u.test(compact) && compact.length > 0)
+    || (/^[a-z]{4,}$/iu.test(compact) && !/[aeiouy]/iu.test(compact));
+}
+
+function isLanguageCapabilityQuery(text: string) {
+  return /(?:بتتكلم|بتعرف\s+تتكلم|تعرف\s+(?:تتكلم\s+)?|بتقدر\s+تتكلم|هل\s+(?:تقدر|تستطيع|تعرف).{0,12}(?:تتكلم|تحكي)).{0,16}(?:إنجليزي|انجليزي|عربي|خليجي|سعودي|فصحى)|(?:can|do)\s+you\s+speak\s+(?:english|arabic)/iu.test(text);
+}
+
+function isAssistantCapabilitiesQuery(text: string) {
+  return /(?:إنت|انت)?\s*(?:تقدر|تستطيع)\s+(?:تساعدني|تعمل|تسوي).{0,18}(?:ب?\s*(?:إيه|ايه|اي)|كيف|ازاي)?|ممكن\s+تساعدني\s+(?:إزاي|ازاي|كيف)|كيف\s+(?:أن|ان|تقدر|تستطيع)\s+تساعدني|وش\s+تقدر\s+تسوي|what\s+can\s+you\s+(?:help\s+me\s+with|do)|how\s+can\s+you\s+help\s+me/iu.test(text);
+}
+
+function isWellbeingSmallTalk(text: string) {
+  return /^(?:كيفك|عامل\s+(?:إيه|ايه|اي)|أخبارك|اخبارك|شلونك|كيف\s+الحال|how\s+are\s+you|how['’]?s\s+it\s+going)[؟?!.،,\s]*$/iu.test(text);
 }
 
 function amount(raw: string, scale?: string, implicitMillions = false) {
@@ -180,9 +193,14 @@ function explicitUnderstanding(message: string, state: NadimState): NadimUnderst
   else if (!languageOnly && /(?:كلمني|اتصل بي|اتصلوا|callback|call me)/iu.test(text)) intent = "CALLBACK_REQUEST";
   else if (/(?:سيب بياناتي|مهتم|contact me|lead)/iu.test(text)) intent = "LEAD_REQUEST";
   if (/(?:اسمك\s*(?:إيه|ايه|اي)?|إنت\s+مين|انت\s+مين|مين\s+نديم|what(?:'s| is)\s+your\s+name|who\s+are\s+you)/iu.test(text)) intent = "ASSISTANT_IDENTITY";
+  else if (isLanguageCapabilityQuery(text)) intent = "LANGUAGE_CAPABILITY_QUERY";
+  else if (isAssistantCapabilitiesQuery(text)) intent = "ASSISTANT_CAPABILITIES";
+  else if (isWellbeingSmallTalk(text)) intent = "SMALL_TALK";
   else if (/(?:شكر[ًاا]?|متشكر|thank\s*you|thanks)/iu.test(text)
-    || /(?:محتار|مش\s+عارف\s+أبدأ|مش\s+عارف\s+ابدأ|don['’]?t know where to start)/iu.test(text)) intent = "SMALL_TALK";
-  if (languageOnly) intent = "SMALL_TALK";
+    || /(?:محتار|مش\s+عارف\s+أبدأ|مش\s+عارف\s+ابدأ|don['’]?t know where to start)/iu.test(text)
+    || /^(?:تمام|ماشي|اوكي|أوكي|okay|ok|got it)[.!،,\s]*$/iu.test(text)) intent = "SMALL_TALK";
+  if (state.languageStyle?.explicitRequestThisTurn && languageOnly) intent = "LANGUAGE_STYLE_CHANGE";
+  else if (addressOnlyRequest && languageOnly) intent = "SMALL_TALK";
   if (preserveRequest && !hasMutation) intent = "CORRECTION";
   if (ambiguousRelativeChange) intent = "MODIFY_SEARCH";
   if (queryTarget) intent = "CURRENT_SEARCH_QUERY";
@@ -210,8 +228,8 @@ export class UnderstandingService {
     const deterministic = explicitUnderstanding(message, state);
     if (!this.dialogue.available()) return { understanding: deterministic };
     if (deterministic.intent === "UNKNOWN" && deterministic.confidence >= 0.8) return { understanding: deterministic };
-    if (deterministic.intent === "SMALL_TALK"
-      && (state.languageStyle.explicitRequestThisTurn || state.languageStyle.grammaticalAddressChangedThisTurn)) {
+    if (deterministic.intent === "LANGUAGE_STYLE_CHANGE"
+      || (deterministic.intent === "SMALL_TALK" && state.languageStyle.grammaticalAddressChangedThisTurn)) {
       return { understanding: deterministic };
     }
     try {
@@ -234,7 +252,10 @@ export class UnderstandingService {
         && !parsed.data.ambiguity;
       const modelStateQueryHasNoTarget = parsed.data.intent === "CURRENT_SEARCH_QUERY" && !stateQuery;
       if (modelRecoveryIsWeak || modelSearchHasNoMeaning || modelStateQueryHasNoTarget) intent = deterministic.intent;
-      if (["GREETING", "ASSISTANT_IDENTITY", "CURRENT_SEARCH_QUERY", "CORRECTION", "SMALL_TALK", "UNKNOWN"].includes(intent)) {
+      if ([
+        "GREETING", "ASSISTANT_IDENTITY", "ASSISTANT_CAPABILITIES", "LANGUAGE_CAPABILITY_QUERY",
+        "LANGUAGE_STYLE_CHANGE", "CURRENT_SEARCH_QUERY", "CORRECTION", "SMALL_TALK", "UNKNOWN",
+      ].includes(intent)) {
         mergedOperations = deterministic.operations.filter((operation) => operation.operation === "PRESERVE");
       }
       const understanding = {

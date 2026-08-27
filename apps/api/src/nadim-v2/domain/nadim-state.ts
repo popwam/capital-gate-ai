@@ -1,5 +1,5 @@
 import type { NadimChannel } from "../dto/nadim-turn.dto";
-import { styleFromLocale, type NadimLanguageStyleState } from "../personality/language-style.types";
+import { regionalVariantFromLocale, styleFromLocale, type NadimLanguageStyleState } from "../personality/language-style.types";
 import type { NadimIntentType, StateField, StateOperation } from "./nadim-intent";
 
 export type NadimSearchState = {
@@ -51,6 +51,7 @@ export function initialNadimState(input: {
   const locale = input.locale ?? "ar-EG";
   const localeStyle = styleFromLocale(locale);
   const preferredResponseStyle = localeStyle === "UNKNOWN" ? "AR_FORMAL" : localeStyle;
+  const regionalVariant = regionalVariantFromLocale(locale);
   return {
     version: 2,
     revision: 0,
@@ -63,6 +64,9 @@ export function initialNadimState(input: {
       detected: "UNKNOWN",
       confidence: 0,
       preferredResponseStyle,
+      regionalVariant,
+      lastArabicResponseStyle: preferredResponseStyle.startsWith("AR_") ? preferredResponseStyle : undefined,
+      lastArabicRegionalVariant: regionalVariant,
       explicitOverride: false,
       explicitRequestThisTurn: false,
       changedThisTurn: false,

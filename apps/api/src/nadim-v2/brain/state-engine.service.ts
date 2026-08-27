@@ -9,7 +9,10 @@ const NUMBER_FIELDS = new Set(["bedrooms", "bathrooms", "areaMin", "areaMax", "b
 export class StateEngineService {
   apply(previous: NadimState, understanding: NadimUnderstanding, identity: { channel: NadimState["channel"]; customerId?: string; externalUserId?: string; locale?: string }) {
     let state = structuredClone(previous);
-    const operations = ["GREETING", "ASSISTANT_IDENTITY", "CURRENT_SEARCH_QUERY", "SMALL_TALK", "UNKNOWN"].includes(understanding.intent)
+    const operations = [
+      "GREETING", "ASSISTANT_IDENTITY", "ASSISTANT_CAPABILITIES", "LANGUAGE_CAPABILITY_QUERY",
+      "LANGUAGE_STYLE_CHANGE", "CURRENT_SEARCH_QUERY", "SMALL_TALK", "UNKNOWN",
+    ].includes(understanding.intent)
       ? understanding.operations.filter((operation) => operation.operation === "PRESERVE")
       : understanding.operations;
     for (const operation of operations) state = this.applyOperation(state, operation);

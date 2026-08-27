@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { ExecutedAction, ProposedAction } from "../domain/nadim-action";
 import { CurrentSearchQueryTarget, StateOperation } from "../domain/nadim-intent";
 import { NadimState } from "../domain/nadim-state";
-import { GrammaticalAddress, NadimLanguageStyle } from "./language-style.types";
+import { GrammaticalAddress, NadimLanguageStyle, NadimRegionalVariant } from "./language-style.types";
 
 type Copy = Record<Exclude<NadimLanguageStyle, "UNKNOWN">, string> & { UNKNOWN?: string };
 
@@ -33,7 +33,8 @@ export class ResponseStyleService {
     });
   }
 
-  languageChanged(style: NadimLanguageStyle) {
+  languageChanged(style: NadimLanguageStyle, regionalVariant?: NadimRegionalVariant) {
+    if (style === "AR_GULF" && regionalVariant === "SAUDI") return "تمام، بكمل معك بالسعودي.";
     return this.pick(style, {
       AR_EGYPTIAN: "تمام، هكمل معاك بالمصري.",
       AR_GULF: "تمام، بكمل معك بالخليجي.",
@@ -55,9 +56,56 @@ export class ResponseStyleService {
     });
   }
 
-  smallTalk(style: NadimLanguageStyle, userMessage: string) {
+  languageCapability(style: NadimLanguageStyle, userMessage: string, regionalVariant?: NadimRegionalVariant) {
+    const asksEnglish = /(?:إنجليزي|انجليزي|english)/iu.test(userMessage);
+    const asksSaudi = /(?:سعودي|السعودية|saudi)/iu.test(userMessage);
+    const asksGulf = /(?:خليجي|gulf)/iu.test(userMessage);
+    const subject = asksEnglish ? "ENGLISH" : asksSaudi ? "SAUDI" : asksGulf ? "GULF" : "ARABIC";
+    if (style === "AR_GULF" && regionalVariant === "SAUDI") {
+      if (subject === "ENGLISH") return "إيه، أقدر أتكلم إنجليزي. وإذا ودك أكمل فيه قل لي.";
+      if (subject === "SAUDI") return "إيه، أقدر أكلمك بأسلوب سعودي طبيعي.";
+      if (subject === "GULF") return "إيه، أقدر أكلمك خليجي.";
+      return "إيه، أقدر أتكلم عربي.";
+    }
+    return this.pick(style, {
+      AR_EGYPTIAN: subject === "ENGLISH" ? "أيوه، أقدر أتكلم إنجليزي. لو حابب أكمل بيه قولّي." : subject === "SAUDI" ? "أيوه، أقدر أكلمك بأسلوب سعودي طبيعي." : subject === "GULF" ? "أيوه، أقدر أكلمك خليجي." : "أيوه، أقدر أتكلم عربي.",
+      AR_GULF: subject === "ENGLISH" ? "إيه، أقدر أتكلم إنجليزي. وإذا ودك أكمل فيه قل لي." : subject === "SAUDI" ? "إيه، أقدر أكلمك بأسلوب سعودي طبيعي." : subject === "GULF" ? "إيه، أقدر أكلمك خليجي." : "إيه، أقدر أتكلم عربي.",
+      AR_FORMAL: subject === "ENGLISH" ? "نعم، يمكنني التحدث بالإنجليزية، وسأنتقل إليها إذا طلبت ذلك." : subject === "SAUDI" ? "نعم، يمكنني التحدث بأسلوب سعودي طبيعي." : subject === "GULF" ? "نعم، يمكنني التحدث بأسلوب خليجي." : "نعم، يمكنني التحدث بالعربية.",
+      EN_US: subject === "ENGLISH" ? "Yes, I can speak English." : subject === "SAUDI" ? "Yes, I can use a natural Saudi Arabic style." : subject === "GULF" ? "Yes, I can use a Gulf Arabic style." : "Yes, I can speak Arabic. I’ll switch if you ask me to.",
+      FRANCO_ARABIC: subject === "ENGLISH" ? "aywa, a2dar atkallem English. law 3ayez akammel beha 2olly." : subject === "SAUDI" ? "aywa, a2dar akallemak Saudi style tabi3y." : subject === "GULF" ? "aywa, a2dar akallemak Khaliji." : "aywa, a2dar atkallem 3arabi.",
+      MIXED_AR_EN: subject === "ENGLISH" ? "أيوه، أقدر أتكلم English. لو عايزني أكمل بيه قولّي." : subject === "SAUDI" ? "أيوه، أقدر أكلمك بـSaudi style طبيعي." : subject === "GULF" ? "أيوه، أقدر أكلمك Gulf style." : "أيوه، أقدر أتكلم عربي.",
+    });
+  }
+
+  assistantCapabilities(style: NadimLanguageStyle, regionalVariant?: NadimRegionalVariant) {
+    if (style === "AR_GULF" && regionalVariant === "SAUDI") {
+      return "أقدر أفهم احتياجك العقاري، أبحث في المتاح، أقارن الخيارات، وأوضح لك المعلومات الموثقة. وأقدر أطلب لك متابعة أو تواصل بشري إذا احتجت.";
+    }
+    return this.pick(style, {
+      AR_EGYPTIAN: "أقدر أفهم إنت بتدور على إيه، أدور في المتاح، أقارنلك الاختيارات، وأوضحلك الأسعار والتقسيط والمعلومات الموثقة. وأقدر أطلبلك متابعة أو تواصل مع حد لو احتجت.",
+      AR_GULF: "أقدر أفهم احتياجك العقاري، أبحث في المتاح، أقارن الخيارات، وأوضح لك المعلومات الموثقة. وأقدر أطلب لك متابعة أو تواصل بشري إذا احتجت.",
+      AR_FORMAL: "يمكنني فهم احتياجك العقاري، والبحث في المتاح، ومقارنة الخيارات، وشرح المعلومات الموثقة. ويمكنني طلب متابعة أو تواصل بشري عند الحاجة.",
+      EN_US: "I can understand what you need, search verified availability, compare options, and explain verified prices, payment plans, and availability. I can also request follow-up or a human handoff when needed.",
+      FRANCO_ARABIC: "a2dar afham enta btedor 3ala eh, adawar fel available, a2aren el options, w awada7 el verified details. w a2dar atlbolak follow-up aw human handoff law e7tagt.",
+      MIXED_AR_EN: "أقدر أفهم احتياجك، أعمل search في المتاح، أقارن الـoptions، وأوضحلك الـverified details. وأقدر أطلب follow-up أو human handoff لو احتجت.",
+    });
+  }
+
+  smallTalk(style: NadimLanguageStyle, userMessage: string, regionalVariant?: NadimRegionalVariant) {
     const thanks = /(?:شكر[ًاا]?|متشكر|thank\s*you|thanks)/iu.test(userMessage);
     const unsure = /(?:محتار|مش\s+عارف\s+أبدأ|مش\s+عارف\s+ابدأ|don['’]?t know where to start)/iu.test(userMessage);
+    const wellbeing = /(?:كيفك|عامل\s+(?:إيه|ايه|اي)|أخبارك|اخبارك|شلونك|كيف\s+الحال|how\s+are\s+you|how['’]?s\s+it\s+going)/iu.test(userMessage);
+    if (wellbeing) {
+      if (style === "AR_GULF" && regionalVariant === "SAUDI") return "بخير الحمد لله، كيف حالك؟";
+      return this.pick(style, {
+        AR_EGYPTIAN: "تمام الحمد لله، إنت أخبارك إيه؟",
+        AR_GULF: "بخير الحمد لله، كيف حالك؟",
+        AR_FORMAL: "بخير، شكرًا لك. كيف حالك؟",
+        EN_US: "Doing good. How about you?",
+        FRANCO_ARABIC: "tamam el7amdellah, enta a5barak eh?",
+        MIXED_AR_EN: "تمام الحمد لله، إنت عامل إيه؟",
+      });
+    }
     if (thanks) return this.pick(style, {
       AR_EGYPTIAN: "العفو، أنا معاك.",
       AR_GULF: "العفو، أنا معك.",
