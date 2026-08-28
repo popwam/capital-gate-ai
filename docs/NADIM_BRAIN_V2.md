@@ -22,12 +22,12 @@ The first arrow always starts with an inbound customer turn. Nadim does not init
 
 ## Pipeline
 
-1. **Understand** first identifies what the customer is doing, then produces a schema-validated `NadimUnderstanding`. Customer-service intents such as assistant identity/capabilities, language capability questions, explicit language changes, normal conversation, callback, handoff, reset and current-state questions are independent from property inventory. Short references are resolved against active state before `UNKNOWN`; GLM may interpret noisy language, while explicit high-confidence facts still take precedence. Raw model JSON never becomes state without Zod validation.
+1. **Understand** first identifies what the customer is doing, then produces a schema-validated `NadimUnderstanding`. Customer-service intents such as assistant identity/nature/capabilities, language capability questions, explicit language changes, normal conversation, callback, handoff, reset and current-state questions are independent from property inventory. Groq receives a compact window of up to eight successful recent turns plus redacted persisted search/selection/language context, and is preferred for noisy language and contextual references; explicit high-confidence facts still take precedence. Raw model JSON never becomes state without Zod validation.
 2. **State** applies only explicit `SET`, `REMOVE`, `RESET`, and `PRESERVE` operations. Unmentioned constraints survive, and conversational, language, state-query, small-talk, and unknown intents cannot mutate search state. Search results are persisted as IDs, not reconstructed from model memory.
 3. **Plan** maps validated intent and state to typed tool calls. `PROPERTY_SEARCH` runs only when inventory results are requested or a search mutation requires new results. Identity, state queries, rejected relaxations, language requests, callbacks, handoff, greetings, gibberish, and plain resets do not execute it. The planner cannot generate SQL or action success.
 4. **Tools** call trusted application services and PostgreSQL-backed repositories. Tool errors become structured unavailable/not-found results.
 5. **Action policy** permits proposals only for explicit customer requests and checks prerequisites. Execution goes through the private automation API, never directly from model output.
-6. **Compose** receives verified tool/action results. Deterministic responses are used for property truth and action status; the dialogue model is limited to non-factual natural language composition.
+6. **Compose** receives verified tool/action results and the same compact dialogue flow. Groq may vary concise customer-service wording for conversational turns and memory answers, while semantic guards fall back to a deterministic answer if it changes state facts, claims Nadim is human, invents inventory, or reports an unexecuted action. Factual property results and action status remain deterministic.
 7. **Persist** writes updated state and a complete turn trace transactionally.
 
 ## Personality and adaptive language
@@ -68,7 +68,7 @@ The style state is persisted inside the existing `NadimConversation.state` JSON,
 
 Changing language cannot reset locations, budget, bedrooms, selected results, or any other search state. `lastArabicResponseStyle` and `lastArabicRegionalVariant` retain the most recent Arabic voice while English or Franco is active. Thus Egyptian → English → `رد عربي` restores Egyptian, while Saudi → English → `رد عربي` restores `AR_GULF` with `regionalVariant: SAUDI`. Formal Arabic is selected only by an explicit request such as `رد فصحى` or when no prior/locale Arabic dialect exists.
 
-`grammaticalAddress` controls conversational agreement only; it is not customer gender or demographic identity. Strong current-turn forms such as `عايزة` or `3ayza` may set it, explicit address preferences take precedence, conflicting evidence becomes neutral, and Nadim never mentions the detection. The most recent assistant wording is retained as bounded conversation-style context so composition can avoid verbatim repetition without changing facts.
+`grammaticalAddress` controls conversational agreement only; it is not customer gender or demographic identity. Strong current-turn forms such as `عايزة` or `3ayza` may set it, explicit address preferences take precedence, conflicting evidence becomes neutral, and Nadim never mentions the detection. Up to eight recent successful user/assistant turns are loaded from existing `NadimTurn` rows, compacted to intent/goal/tool summaries, and combined with the persisted state as bounded conversation context. Customer identifiers and raw tool payloads are not sent to the dialogue model.
 
 Greeting behavior is contextual:
 
@@ -76,7 +76,7 @@ Greeting behavior is contextual:
 - `Hi` with an English locale or explicit English preference can receive `Hey, I’m Nadim. What are you looking for?`
 - `عايز شقة 3 غرف في التجمع` skips the introduction and answers the request directly.
 
-Assistant identity is deterministic: `اسمك اي`, `انت مين`, `What's your name?`, and `Who are you?` return a brief style-aware Nadim identity response without inventory, state reset, or search execution.
+Assistant identity is fact-bounded: `اسمك اي`, `انت مين`, `What's your name?`, and `Who are you?` return a brief style-aware Nadim identity response without inventory, state reset, or search execution. `ASSISTANT_NATURE` handles `انت انسان؟`, `انت روبوت؟`, and contextual wording such as `يعني كدا انت مو انسان`; Nadim transparently says he is an AI customer-service assistant and a semantic guard rejects any model response that claims he is human.
 
 `ASSISTANT_CAPABILITIES` answers from Nadim's actual real-estate customer-service role: understanding needs, searching verified availability, comparing options, explaining verified facts, and requesting supported follow-up or human contact. It never executes inventory merely to describe those capabilities and never claims an action succeeded. Wellbeing turns such as `كيفك`, `شلونك`, and `how are you?` are `SMALL_TALK`, retain the preferred response style, and do not mutate state.
 
@@ -103,6 +103,8 @@ PostgreSQL data returned through `PropertySearchService`, explicit action-layer 
 
 A search reset clears search and result-selection state. A field removal changes only that field. No-match composition does not mutate or silently widen state.
 
+Conversation-memory questions read deterministic state rather than model memory. `فاكر كنت بدور على اي` and `فاكر وصلنا لفين` summarize the active search; a contextual `السعر كان كام` resolves to the stored budget after that topic; `فاكر اختارت انهي واحدة` resolves the selected result ordinal. If a unit price and search budget are both genuinely plausible, Nadim asks which one the customer means. No inventory search runs for these answers.
+
 `NadimConversation` and `NadimTurn` are separate V2 persistence records. A conversation can resolve through an explicit conversation ID, canonical customer, or channel identity. The same canonical customer can continue from another channel without creating a separate brain.
 
 Inbound turns optionally use `x-idempotency-key`. The API stores the key per channel, a canonical SHA-256 request hash, and the exact response payload. A completed identical retry replays that response with `replayed: true`; different input under the same channel/key returns `409 IDEMPOTENCY_CONFLICT`. A pending concurrent duplicate returns `409 TURN_IN_PROGRESS` and never enters the brain or action layer. Keys are isolated by channel. If the header is absent, a normalized gateway may supply its canonical provider event ID as `metadata.eventId`.
@@ -126,16 +128,16 @@ Property tools reuse `PropertySearchService`; customer/lead lookup uses scoped P
 
 ## Models and fallback
 
-`DialogueProvider` is an OpenAI-compatible provider boundary with completion, streaming, and health operations. V2 uses:
+`DialogueProvider` is an OpenAI-compatible provider boundary with completion, streaming, and health operations. Conversational understanding, composition, and optional streaming use:
 
 ```text
-Amazon Bedrock Mantle GLM 5 (`zai.glm-5`)
-    -> on failure before visible output
 Groq production dialogue model
+    -> on failure before visible output
+Amazon Bedrock Mantle GLM 5 (`zai.glm-5`)
     -> deterministic safe response when no model is available
 ```
 
-If a streaming provider fails after emitting visible output, `DialogueStreamInterruptedError` terminates that response. Groq is not appended, preventing mixed-provider answers. GLM being disabled does not make the API unhealthy. When enabled without credentials, the protected V2 AI health endpoint reports the configuration failure.
+Deterministic planning, tools, state operations, and action policy do not use either dialogue provider as authority. High-confidence trivial turns can skip model understanding and use at most one composition call. If a streaming provider fails after emitting visible output, `DialogueStreamInterruptedError` terminates that response; fallback output is never appended to a partial answer. GLM being disabled does not make the API unhealthy. When enabled without credentials, the protected V2 AI health endpoint reports the configuration failure.
 
 ## Actions
 
@@ -186,8 +188,8 @@ Response:
   "metadata": {
     "requestId": "...",
     "brainVersion": "v2",
-    "modelProvider": "bedrock-glm",
-    "model": "zai.glm-5",
+    "modelProvider": "groq",
+    "model": "<configured-groq-model>",
     "fallbackUsed": false,
     "toolNames": ["PROPERTY_SEARCH"],
     "latencyMs": 42
@@ -205,7 +207,7 @@ The adapter posts a non-streaming WEB turn to `/v2/nadim/turn`, forwards the sub
 
 ## Observability and health
 
-Each persisted turn stores intent, plan, tool results, proposals, executions, model identity, fallback use, latency and error status. A compact structured log contains request/conversation/customer/channel, brain version, tools, model and action outcomes; prompts, messages, credentials and auth headers are not logged.
+Each persisted turn stores intent, response goal, reference resolution, plan, tool results, proposals, executions, model identity, fallback use, latency and error status. A compact structured log contains request/conversation/customer/channel, brain version, response goal, reference-resolution class/confidence, whether recent context was used, conversation stage, tool decision, language style, model/fallback latency, and action outcomes. Prompts, messages, credentials and auth headers are not logged. This contextual-memory pass reuses existing `NadimConversation.state` and `NadimTurn` records and requires no new migration.
 
 The admin-authenticated endpoint `GET /v1/admin/system/nadim-v2-ai-health` reports GLM and Groq status while preserving existing `ai-health` behavior.
 

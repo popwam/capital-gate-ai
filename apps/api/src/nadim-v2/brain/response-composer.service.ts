@@ -1,5 +1,6 @@
 import { Injectable, Optional } from "@nestjs/common";
 import { ExecutedAction, ProposedAction } from "../domain/nadim-action";
+import { conversationStage, NadimConversationContext } from "../domain/nadim-conversation-context";
 import { NadimUnderstanding } from "../domain/nadim-intent";
 import { NadimPlan, NadimToolResult } from "../domain/nadim-plan";
 import { NadimState } from "../domain/nadim-state";
@@ -21,12 +22,28 @@ type CompositionInput = {
   proposedActions: ProposedAction[];
   executedActions: ExecutedAction[];
   previousTurn?: { userMessage: string; assistantReply: string };
+  conversationContext?: NadimConversationContext;
   trace?: { conversationId?: string; requestId?: string };
 };
 
 function dataOf(result?: NadimToolResult) {
   if (!result?.ok || result.data == null) return [];
   return Array.isArray(result.data) ? result.data : [result.data];
+}
+
+function compactCompositionState(state: NadimState, context?: NadimConversationContext) {
+  return {
+    channel: state.channel,
+    locale: state.locale,
+    stage: context?.stage ?? conversationStage(state),
+    search: state.search,
+    selectedUnitId: state.selectedUnitId,
+    selectedProjectId: state.selectedProjectId,
+    recentResultIds: state.lastResultIds.slice(0, 10),
+    pendingClarification: state.pendingClarification,
+    lastOperations: state.lastOperations,
+    languageStyle: state.languageStyle,
+  };
 }
 
 @Injectable()
@@ -52,16 +69,16 @@ export class ResponseComposerService {
       || input.state.languageStyle?.explicitRequestThisTurn
       || input.state.languageStyle?.grammaticalAddressChangedThisTurn
       || input.understanding.intent === "UNKNOWN"
-      || [
-        "GREETING", "ASSISTANT_IDENTITY", "ASSISTANT_CAPABILITIES", "LANGUAGE_CAPABILITY_QUERY",
-        "LANGUAGE_STYLE_CHANGE", "RESET_SEARCH", "CURRENT_SEARCH_QUERY", "CORRECTION",
-      ].includes(input.understanding.intent);
+      || input.understanding.intent === "LANGUAGE_STYLE_CHANGE";
     if (deterministicRequired || !this.dialogue.available()) return { reply: fallback };
     try {
       const model = await this.dialogue.compose({
         userMessage: input.userMessage,
         intent: input.understanding,
-        state: input.state,
+        state: compactCompositionState(input.state, input.conversationContext),
+        recentDialogue: input.conversationContext?.recentTurns ?? [],
+        conversationStage: input.conversationContext?.stage ?? conversationStage(input.state),
+        lastVerifiedToolResultSummary: input.conversationContext?.lastVerifiedToolSummary,
         selectedLanguageStyle: input.state.languageStyle,
         styleProfile: NADIM_STYLE_PROFILES[input.state.languageStyle.preferredResponseStyle],
         personality: NADIM_CORE_PERSONALITY,
@@ -72,15 +89,20 @@ export class ResponseComposerService {
           user: input.previousTurn.userMessage.slice(0, 500),
           assistant: input.previousTurn.assistantReply.slice(0, 1_000),
         } : undefined,
-        responseGoal: verifiedEmptySearch ? "VERIFIED_EMPTY_SEARCH" : input.plan.goal,
+        responseGoal: verifiedEmptySearch ? "VERIFIED_EMPTY_SEARCH" : input.understanding.responseGoal ?? input.plan.goal,
+        referenceResolution: input.understanding.references,
         searchExecution: {
           executed: Boolean(searchResult),
           succeeded: searchResult?.ok === true,
           verifiedResultCount: searchResult?.ok && Array.isArray(searchResult.data) ? searchResult.data.length : undefined,
         },
         actionResults: input.executedActions,
+        deterministicAnswer: fallback,
         deterministicFallback: fallback,
       }, input.trace);
+      if (!this.safeHumanIdentity(model.value)) return { reply: fallback };
+      if (!this.safeAssistantSemantics(model.value, input.understanding.intent)) return { reply: fallback };
+      if (!this.safeStateQuery(model.value, input)) return { reply: fallback };
       if (!this.safeActionClaims(model.value, input.executedActions)) return { reply: fallback };
       if (!this.safeInventoryClaims(model.value, input.toolResults)) return { reply: fallback };
       if (!this.safeStyleSurface(model.value, input.state.languageStyle.preferredResponseStyle)) return { reply: fallback };
@@ -98,6 +120,7 @@ export class ResponseComposerService {
     if (input.proposedActions.length) return this.responseStyle.proposedAction(style, input.proposedActions[0]);
     if (input.understanding.intent === "GREETING") return this.responseStyle.greeting(style, input.state.revision <= 1, input.userMessage);
     if (input.understanding.intent === "ASSISTANT_IDENTITY") return this.responseStyle.assistantIdentity(style);
+    if (input.understanding.intent === "ASSISTANT_NATURE") return this.responseStyle.assistantNature(style, input.state.languageStyle.regionalVariant);
     if (input.understanding.intent === "ASSISTANT_CAPABILITIES") return this.responseStyle.assistantCapabilities(style, input.state.languageStyle.regionalVariant);
     if (input.understanding.intent === "LANGUAGE_CAPABILITY_QUERY") return this.responseStyle.languageCapability(style, input.userMessage, input.state.languageStyle.regionalVariant);
     if (input.understanding.intent === "LANGUAGE_STYLE_CHANGE") return this.responseStyle.languageChanged(style, input.state.languageStyle.regionalVariant);
@@ -157,6 +180,62 @@ export class ResponseComposerService {
   private safeActionClaims(reply: string, actions: ExecutedAction[]) {
     if (actions.some((action) => action.status === "SUCCEEDED")) return true;
     return !/(?:تم\s+(?:الحجز|التسجيل|الإرسال|تأكيد|تنفيذ)|اتسجل|تسجل|booked|reserved|successfully\s+(?:created|sent|scheduled|completed)|request\s+is\s+recorded)/iu.test(reply);
+  }
+
+  private safeHumanIdentity(reply: string) {
+    return !/(?:\bأنا\s+(?:إنسان|انسان|بشر|بني\s+آدم|بني\s+ادم|شخص\s+حقيقي|موظف\s+بشري)\b|\bI(?:['’]m|\s+am)\s+(?:a\s+)?(?:human|real\s+person|human\s+agent)\b)/iu.test(reply);
+  }
+
+  private safeAssistantSemantics(reply: string, intent: NadimUnderstanding["intent"]) {
+    if (intent === "ASSISTANT_IDENTITY") return /(?:نديم|Nadim)/iu.test(reply);
+    if (intent !== "ASSISTANT_NATURE") return true;
+    const transparent = /(?:ذكاء\s+اصطناعي|مساعد\s+(?:افتراضي|رقمي)|\bAI\b|artificial\s+intelligence)/iu.test(reply);
+    return transparent && /(?:نديم|Nadim)/iu.test(reply);
+  }
+
+  private safeStateQuery(reply: string, input: CompositionInput) {
+    if (input.understanding.intent !== "CURRENT_SEARCH_QUERY") return true;
+    const target = input.understanding.stateQuery ?? "SEARCH";
+    const search = input.state.search;
+    if (target === "SELECTED_RESULT") {
+      const ordinal = input.state.selectedUnitId ? input.state.lastResultIds.indexOf(input.state.selectedUnitId) + 1 : 0;
+      if (ordinal > 0) return new RegExp(`(?:^|\\D)${ordinal}(?:\\D|$)`, "u").test(reply);
+      if (input.state.selectedUnitId) return /(?:وحدة\s+محددة|اختيار\s+محفوظ|specific\s+unit|selected\s+unit|wa7da\s+mo3ayana)/iu.test(reply);
+      return /(?:لسه|ما\s+اختر|لم\s+نختر|haven['’]?t\s+selected|not\s+selected|ma\s+e5tarnash)/iu.test(reply);
+    }
+    if (target === "budgetMax") {
+      return search.budgetMax === undefined
+        ? /(?:لسه|ما\s+حدد|لم\s+نحدد|haven['’]?t\s+set|not\s+set|ma\s+7adad)/iu.test(reply)
+        : this.containsAmount(reply, search.budgetMax);
+    }
+    if (target === "bedrooms") {
+      return search.bedrooms === undefined
+        ? /(?:لسه|ما\s+حدد|لم\s+نحدد|haven['’]?t\s+set|not\s+set|ma\s+7adad)/iu.test(reply)
+        : new RegExp(`(?:^|\\D)${search.bedrooms}(?:\\D|$)`, "u").test(reply);
+    }
+    if (target === "locations") {
+      return search.locations.length === 0
+        ? /(?:لسه|ما\s+حدد|لم\s+نحدد|haven['’]?t\s+set|not\s+set|ma\s+7adad)/iu.test(reply)
+        : search.locations.every((location) => reply.toLocaleLowerCase().includes(location.toLocaleLowerCase()));
+    }
+    const expectedChecks = [
+      ...search.locations.map((location) => reply.toLocaleLowerCase().includes(location.toLocaleLowerCase())),
+      ...(search.bedrooms === undefined ? [] : [new RegExp(`(?:^|\\D)${search.bedrooms}(?:\\D|$)`, "u").test(reply)]),
+      ...(search.budgetMax === undefined ? [] : [this.containsAmount(reply, search.budgetMax)]),
+      ...search.propertyTypes.map((type) => type === "Apartment" ? /(?:شقة|apartment|sho2a)/iu.test(reply) : type === "Villa" ? /(?:فيلا|villa)/iu.test(reply) : reply.toLocaleLowerCase().includes(type.toLocaleLowerCase())),
+    ];
+    return expectedChecks.length === 0
+      ? /(?:لسه|ما\s+حدد|لم\s+نحدد|haven['’]?t\s+set|not\s+set|ma\s+7adad)/iu.test(reply)
+      : expectedChecks.every(Boolean);
+  }
+
+  private containsAmount(reply: string, amount: number) {
+    const full = Math.trunc(amount).toLocaleString("en-US");
+    if (reply.includes(full) || reply.includes(String(Math.trunc(amount)))) return true;
+    const millions = amount / 1_000_000;
+    return Number.isInteger(millions)
+      ? new RegExp(`(?:^|\\D)${millions}(?:\\s*(?:مليون|million|m)\\b|(?:\\D|$))`, "iu").test(reply)
+      : reply.includes(String(millions));
   }
 
   private safeInventoryClaims(reply: string, toolResults: NadimToolResult[]) {

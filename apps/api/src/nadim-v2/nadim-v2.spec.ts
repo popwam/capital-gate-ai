@@ -10,6 +10,7 @@ import { StateEngineService } from "./brain/state-engine.service";
 import { ToolExecutorService } from "./brain/tool-executor.service";
 import { UnderstandingService } from "./brain/understanding.service";
 import { NadimUnderstanding } from "./domain/nadim-intent";
+import { conversationStage, NadimConversationContext, NadimRecentTurnContext } from "./domain/nadim-conversation-context";
 import { initialNadimState, NadimState } from "./domain/nadim-state";
 import { NadimV2Controller } from "./nadim-v2.controller";
 import { NadimV2Service } from "./nadim-v2.service";
@@ -488,55 +489,78 @@ test("24 explicit existing conversation continues persisted V2 state", async () 
     customer: { findUnique: async () => null },
     customerChannelIdentity: { findUnique: async () => null },
     nadimConversation: { findUnique: async () => ({ id: "c1", customerId: null, state: stored, channel: "WEB" }) },
-    nadimTurn: { findFirst: async () => ({ userMessage: "عايز شقة", assistantReply: "مش ظاهر حاجة مناسبة." }) },
+    nadimTurn: { findMany: async () => [{
+      userMessage: "عايز شقة",
+      assistantReply: "مش ظاهر حاجة مناسبة.",
+      intent: { intent: "PROPERTY_SEARCH", responseGoal: "SEARCH_VERIFIED_INVENTORY" },
+      plan: { goal: "PROPERTY_SEARCH" },
+      toolResults: [{ tool: "PROPERTY_SEARCH", ok: true, data: [] }],
+    }] },
   };
   const result = await new NadimConversationService(prisma).resolve({ channel: "WEB", conversationId: "c1", message: "كمل" });
   assert.equal(result.state.revision, 4);
   assert.deepEqual(result.state.lastResultIds, ["u1"]);
   assert.deepEqual(result.previousTurn, { userMessage: "عايز شقة", assistantReply: "مش ظاهر حاجة مناسبة." });
+  assert.equal(result.conversationContext.stage, "RESULTS_AVAILABLE");
+  assert.equal(result.conversationContext.recentTurns[0].intent, "PROPERTY_SEARCH");
+  assert.deepEqual(result.conversationContext.lastVerifiedToolSummary, [{ tool: "PROPERTY_SEARCH", ok: true, resultCount: 0, errorCode: undefined }]);
 });
 
 class FakeProvider {
   calls = 0;
+  lastMessages: any[] = [];
   constructor(readonly provider: string, readonly model: string, private readonly response: string | Error, private readonly streamValues: Array<string | Error> = []) {}
   enabled() { return true; }
   configured() { return true; }
-  async complete() { this.calls += 1; if (this.response instanceof Error) throw this.response; return this.response; }
+  async complete(messages: any[]) { this.calls += 1; this.lastMessages = messages; if (this.response instanceof Error) throw this.response; return this.response; }
   async *stream() { this.calls += 1; for (const value of this.streamValues) { if (value instanceof Error) throw value; yield value; } }
   async health() { return { provider: this.provider, enabled: true, configured: true, healthy: true, model: this.model }; }
 }
 
-test("25 GLM success is primary", async () => {
-  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", '{"intent":"GREETING"}');
-  const groq = new FakeProvider("groq", "fallback", "unused");
-  const result = await new DialogueModelService(glm as any, groq as any).understand("hi", state());
-  assert.equal(result.provider, "bedrock-glm");
-  assert.equal(groq.calls, 0);
+test("25 Groq is primary for contextual dialogue and receives compact redacted history", async () => {
+  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", "unused");
+  const groq = new FakeProvider("groq", "llama", '{"intent":"GREETING"}');
+  const current = state({ customerId: "customer-secret", externalUserId: "278425818370206@lid" });
+  const context: NadimConversationContext = {
+    stage: "ACTIVE_SEARCH",
+    recentTurns: [{ user: "صباح الخير", assistant: "أهلًا.", intent: "GREETING", tools: [] }],
+  };
+  const dialogue = new DialogueModelService(glm as any, groq as any);
+  const result = await dialogue.understand("فاكر؟", current, context);
+  assert.equal(result.provider, "groq");
+  assert.equal(glm.calls, 0);
+  const payload = groq.lastMessages.at(-1)?.content as string;
+  assert.match(payload, /صباح الخير/u);
+  assert.match(payload, /ACTIVE_SEARCH/u);
+  assert.doesNotMatch(payload, /customer-secret|278425818370206/u);
+  const composed = await dialogue.compose({ responseGoal: "BRIEF_SMALL_TALK" });
+  assert.equal(composed.provider, "groq");
+  assert.equal(glm.calls, 0);
 });
 
-test("26 GLM failure falls back to Groq", async () => {
-  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", new DialogueProviderError("bedrock-glm", "HTTP_503"));
-  const groq = new FakeProvider("groq", "fallback", '{"intent":"GREETING"}');
+test("26 Groq failure falls back to GLM", async () => {
+  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", '{"intent":"GREETING"}');
+  const groq = new FakeProvider("groq", "primary", new DialogueProviderError("groq", "HTTP_503"));
   const result = await new DialogueModelService(glm as any, groq as any).understand("hi", state());
-  assert.equal(result.provider, "groq");
+  assert.equal(result.provider, "bedrock-glm");
   assert.equal(result.fallbackUsed, true);
 });
 
 test("27 stream failure before a visible token falls back", async () => {
-  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", "", [new Error("before")]);
-  const groq = new FakeProvider("groq", "fallback", "", ["fallback answer"]);
+  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", "", ["fallback answer"]);
+  const groq = new FakeProvider("groq", "primary", "", [new Error("before")]);
   const chunks: string[] = [];
   for await (const item of new DialogueModelService(glm as any, groq as any).composeStream({})) chunks.push(item.chunk);
   assert.deepEqual(chunks, ["fallback answer"]);
 });
 
 test("28 stream failure after output never mixes providers", async () => {
-  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", "", ["partial", new Error("after")]);
-  const groq = new FakeProvider("groq", "fallback", "", ["must-not-appear"]);
+  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", "", ["must-not-appear"]);
+  const groq = new FakeProvider("groq", "primary", "", ["partial", new Error("after")]);
   const iterator = new DialogueModelService(glm as any, groq as any).composeStream({})[Symbol.asyncIterator]();
   assert.equal((await iterator.next()).value.chunk, "partial");
   await assert.rejects(() => iterator.next(), DialogueStreamInterruptedError);
-  assert.equal(groq.calls, 0);
+  assert.equal(glm.calls, 0);
 });
 
 test("29 V2 disabled fails before any pipeline execution", async () => {
@@ -702,4 +726,196 @@ test("multi-turn cheapest search preserves constraints after explicit removal", 
   assert.equal(turn4.search.budgetMax, 10_000_000);
   assert.equal(turn4.search.queryObjective, "CHEAPEST");
   assert.equal(planner.plan(finalIntent, turn4).steps[0].tool, "PROPERTY_SEARCH");
+});
+
+test("assistant nature is transparent, conversational, state-preserving, and tool-free", async () => {
+  const active = state({
+    revision: 3,
+    search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 8_000_000 },
+  });
+  const message = "يعني كدا انت مو انسان";
+  const styled = languageStyles.apply(active, message);
+  const intent = await understand(message, styled);
+  const next = stateEngine.apply(styled, intent, { channel: "WEB" });
+  const plan = planner.plan(intent, next);
+  const response = await composer.compose({ userMessage: message, understanding: intent, state: next, plan, toolResults: [], proposedActions: [], executedActions: [] });
+
+  assert.equal(intent.intent, "ASSISTANT_NATURE");
+  assert.deepEqual(next.search, active.search);
+  assert.deepEqual(plan.steps, []);
+  assert.match(response.reply, /(?:ذكاء\s+اصطناعي|AI)/iu);
+  assert.match(response.reply, /نديم/u);
+  assert.doesNotMatch(response.reply, /أنا\s+إنسان/u);
+
+  const noisyCapabilities = await understand("انت الزائر تقدر تساعدني باي", active);
+  assert.equal(noisyCapabilities.intent, "ASSISTANT_CAPABILITIES");
+  assert.deepEqual(planner.plan(noisyCapabilities, stateEngine.apply(active, noisyCapabilities, { channel: "WEB" })).steps, []);
+});
+
+test("conversation-memory and vague price references resolve from recent dialogue without inventory", async () => {
+  const active = state({
+    revision: 4,
+    search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 8_000_000 },
+  });
+  const memoryContext: NadimConversationContext = {
+    stage: "ACTIVE_SEARCH",
+    recentTurns: [{ user: "عايز شقة 3 غرف في التجمع تحت 8 مليون", assistant: "مش ظاهر حاجة مناسبة.", intent: "PROPERTY_SEARCH", responseGoal: "SEARCH_VERIFIED_INVENTORY", tools: [{ tool: "PROPERTY_SEARCH", ok: true, resultCount: 0 }] }],
+  };
+  const memoryIntent = (await understandingService.understand("طب فاكر انا كنت بدور علي اي", active, {}, memoryContext)).understanding;
+  const afterMemory = stateEngine.apply(active, memoryIntent, { channel: "WEB" });
+  const memoryReply = await composer.compose({ userMessage: "طب فاكر انا كنت بدور علي اي", understanding: memoryIntent, state: afterMemory, plan: planner.plan(memoryIntent, afterMemory), toolResults: [], proposedActions: [], executedActions: [], conversationContext: memoryContext });
+
+  assert.equal(memoryIntent.intent, "CURRENT_SEARCH_QUERY");
+  assert.equal(memoryIntent.stateQuery, "SEARCH");
+  assert.deepEqual(planner.plan(memoryIntent, afterMemory).steps, []);
+  assert.match(memoryReply.reply, /شقة/u);
+  assert.match(memoryReply.reply, /3/u);
+  assert.match(memoryReply.reply, /التجمع/u);
+  assert.match(memoryReply.reply, /8\s*مليون|8,000,000/u);
+
+  const priceContext: NadimConversationContext = {
+    stage: "ACTIVE_SEARCH",
+    recentTurns: [...memoryContext.recentTurns, {
+      user: "طب فاكر انا كنت بدور علي اي",
+      assistant: memoryReply.reply,
+      intent: "CURRENT_SEARCH_QUERY",
+      stateQuery: "SEARCH",
+      responseGoal: "SUMMARIZE_CURRENT_SEARCH",
+      tools: [],
+    }],
+  };
+  const priceIntent = (await understandingService.understand("السعر كان كام", afterMemory, {}, priceContext)).understanding;
+  const afterPrice = stateEngine.apply(afterMemory, priceIntent, { channel: "WEB" });
+  assert.equal(priceIntent.intent, "CURRENT_SEARCH_QUERY");
+  assert.equal(priceIntent.stateQuery, "budgetMax");
+  assert.equal(priceIntent.references?.[0]?.resolvedAs, "SEARCH_BUDGET");
+  assert.equal(priceIntent.recentContextUsed, true);
+  assert.deepEqual(planner.plan(priceIntent, afterPrice).steps, []);
+
+  const ambiguous = state({ ...active, selectedUnitId: "unit-1" });
+  const ambiguousIntent = await understand("السعر كان كام", ambiguous);
+  assert.equal(ambiguousIntent.ambiguity, "PRICE_REFERENCE_AMBIGUOUS");
+  assert.equal(planner.plan(ambiguousIntent, stateEngine.apply(ambiguous, ambiguousIntent, { channel: "WEB" })).clarification, "PRICE_REFERENCE_AMBIGUOUS");
+
+  const selectedState = state({ ...active, selectedUnitId: "unit-2", lastResultIds: ["unit-1", "unit-2"] });
+  const selectedQuery = await understand("فاكر اختارت انهي واحدة", selectedState);
+  const selectedReply = await composer.compose({ userMessage: "فاكر اختارت انهي واحدة", understanding: selectedQuery, state: selectedState, plan: planner.plan(selectedQuery, selectedState), toolResults: [], proposedActions: [], executedActions: [] });
+  assert.equal(selectedQuery.intent, "CURRENT_SEARCH_QUERY");
+  assert.equal(selectedQuery.stateQuery, "SELECTED_RESULT");
+  assert.deepEqual(planner.plan(selectedQuery, selectedState).steps, []);
+  assert.match(selectedReply.reply, /2/u);
+});
+
+test("noisy first-option references use recent results and remain honest without a result list", async () => {
+  const withResults = state({ lastResultIds: ["unit-1", "unit-2"] });
+  const selectedIntent = await understand("الاوليه", withResults);
+  const selected = stateEngine.apply(withResults, selectedIntent, { channel: "WEB" });
+  assert.equal(selected.selectedUnitId, "unit-1");
+  assert.equal(planner.plan(selectedIntent, selected).steps[0]?.tool, "GET_UNIT_FACTS");
+
+  const withoutResults = state();
+  const missingIntent = await understand("الاوليه", withoutResults);
+  const missing = stateEngine.apply(withoutResults, missingIntent, { channel: "WEB" });
+  const missingPlan = planner.plan(missingIntent, missing);
+  const response = await composer.compose({ userMessage: "الاوليه", understanding: missingIntent, state: missing, plan: missingPlan, toolResults: [], proposedActions: [], executedActions: [] });
+  assert.equal(missingPlan.clarification, "RESULT_LIST_EMPTY");
+  assert.deepEqual(missingPlan.steps, []);
+  assert.match(response.reply, /(?:لسه|ما ظهرت|لم تظهر).*(?:اختيارات|خيارات)/u);
+  assert.doesNotMatch(response.reply, /(?:حدد الوحدة|الرقم اللي ظاهر)/u);
+});
+
+test("conversational model composition is active but cannot claim Nadim is human or alter state facts", async () => {
+  const nature: NadimUnderstanding = { intent: "ASSISTANT_NATURE", confidence: 1, operations: [], ordinalReferences: [], actionRequested: false, references: [], needsTool: false, needsClarification: false, recentContextUsed: true };
+  const naturalModel: any = {
+    available: () => true,
+    compose: async () => ({ value: "أيوه، أنا نديم، مساعد ذكاء اصطناعي بساعدك في بحثك العقاري.", provider: "groq", model: "test", fallbackUsed: false, latencyMs: 2 }),
+  };
+  const current = state({ revision: 2 });
+  const natural = await new ResponseComposerService(naturalModel).compose({ userMessage: "انت انسان؟", understanding: nature, state: current, plan: { goal: "ASSISTANT_NATURE", steps: [] }, toolResults: [], proposedActions: [], executedActions: [] });
+  assert.equal(natural.model?.provider, "groq");
+  assert.match(natural.reply, /ذكاء\s+اصطناعي/u);
+
+  const unsafeModel: any = {
+    available: () => true,
+    compose: async () => ({ value: "أنا إنسان واسمي نديم.", provider: "groq", model: "test", fallbackUsed: false, latencyMs: 2 }),
+  };
+  const guarded = await new ResponseComposerService(unsafeModel).compose({ userMessage: "انت انسان؟", understanding: nature, state: current, plan: { goal: "ASSISTANT_NATURE", steps: [] }, toolResults: [], proposedActions: [], executedActions: [] });
+  assert.match(guarded.reply, /ذكاء\s+اصطناعي/u);
+  assert.doesNotMatch(guarded.reply, /أنا\s+إنسان/u);
+
+  const stateQuery: NadimUnderstanding = { intent: "CURRENT_SEARCH_QUERY", confidence: 1, operations: [], ordinalReferences: [], actionRequested: false, stateQuery: "budgetMax", references: [], needsTool: false, needsClarification: false, recentContextUsed: true };
+  const wrongFactModel: any = {
+    available: () => true,
+    compose: async () => ({ value: "الميزانية كانت 12 مليون.", provider: "groq", model: "test", fallbackUsed: false, latencyMs: 2 }),
+  };
+  const budgetState = state({ search: { locations: [], projects: [], developers: [], propertyTypes: [], budgetMax: 8_000_000 } });
+  const grounded = await new ResponseComposerService(wrongFactModel).compose({ userMessage: "الميزانية كام؟", understanding: stateQuery, state: budgetState, plan: { goal: "CURRENT_SEARCH_QUERY", steps: [] }, toolResults: [], proposedActions: [], executedActions: [] });
+  assert.match(grounded.reply, /8\s*مليون|8,000,000/u);
+  assert.doesNotMatch(grounded.reply, /12\s*مليون/u);
+});
+
+test("realistic nine-turn customer-service conversation stays contextual and fact-grounded", async () => {
+  let current = state();
+  const history: NadimRecentTurnContext[] = [];
+  const outputs: Array<{ message: string; reply: string; intent: string; tools: string[] }> = [];
+  let searchExecutions = 0;
+
+  const runTurn = async (message: string) => {
+    const styled = languageStyles.apply(current, message);
+    const context: NadimConversationContext = { stage: conversationStage(styled), recentTurns: history.slice(-8) };
+    const understanding = (await understandingService.understand(message, styled, {}, context)).understanding;
+    let next = stateEngine.apply(styled, understanding, { channel: "WEB" });
+    const plan = planner.plan(understanding, next);
+    const toolResults = plan.steps.map((step) => {
+      assert.equal(step.tool, "PROPERTY_SEARCH");
+      searchExecutions += 1;
+      return { tool: "PROPERTY_SEARCH" as const, ok: true, data: [], latencyMs: 1 };
+    });
+    if (plan.goal === "PROPERTY_SEARCH") next = stateEngine.withResults(next, []);
+    const response = await composer.compose({ userMessage: message, understanding, state: next, plan, toolResults, proposedActions: [], executedActions: [], conversationContext: context });
+    current = stateEngine.withAssistantWording(next, response.reply);
+    history.push({
+      user: message,
+      assistant: response.reply,
+      intent: understanding.intent,
+      stateQuery: understanding.stateQuery,
+      responseGoal: understanding.responseGoal,
+      tools: toolResults.map((result) => ({ tool: result.tool, ok: result.ok, resultCount: 0 })),
+    });
+    outputs.push({ message, reply: response.reply, intent: understanding.intent, tools: plan.steps.map((step) => step.tool) });
+    return outputs.at(-1)!;
+  };
+
+  await runTurn("صباح الخير");
+  await runTurn("تكلم مصري");
+  await runTurn("انت تقدر تساعدني بايه");
+  await runTurn("يعني كدا انت مو انسان");
+  await runTurn("عايز شقة 3 غرف في التجمع تحت 8 مليون");
+  await runTurn("طب فاكر انا كنت بدور علي اي");
+  await runTurn("السعر كان كام");
+  await runTurn("لا خليها 10 مليون");
+  const final = await runTurn("فاكر وصلنا لفين");
+
+  assert.equal(current.revision, 9);
+  assert.equal(current.languageStyle.preferredResponseStyle, "AR_EGYPTIAN");
+  assert.equal(current.search.budgetMax, 10_000_000);
+  assert.equal(current.search.bedrooms, 3);
+  assert.deepEqual(current.search.locations, ["التجمع"]);
+  assert.deepEqual(current.search.propertyTypes, ["Apartment"]);
+  assert.equal(searchExecutions, 2);
+  assert.equal(outputs.some((turn) => turn.intent === "UNKNOWN"), false);
+  assert.deepEqual(outputs.filter((turn) => turn.tools.length > 0).map((turn) => turn.message), [
+    "عايز شقة 3 غرف في التجمع تحت 8 مليون",
+    "لا خليها 10 مليون",
+  ]);
+  assert.equal(outputs[3].intent, "ASSISTANT_NATURE");
+  assert.match(outputs[3].reply, /ذكاء\s+اصطناعي/u);
+  assert.equal(outputs[5].intent, "CURRENT_SEARCH_QUERY");
+  assert.equal(outputs[6].intent, "CURRENT_SEARCH_QUERY");
+  assert.match(outputs[6].reply, /8\s*مليون|8,000,000/u);
+  assert.equal(final.intent, "CURRENT_SEARCH_QUERY");
+  assert.match(final.reply, /شقة/u);
+  assert.match(final.reply, /3/u);
+  assert.match(final.reply, /التجمع/u);
+  assert.match(final.reply, /10\s*مليون|10,000,000/u);
 });

@@ -1,6 +1,7 @@
 import { Injectable, Optional } from "@nestjs/common";
 import { AIUsageService } from "../../providers/ai-usage.service";
-import { NadimUnderstanding } from "../domain/nadim-intent";
+import { NadimConversationContext, conversationStage } from "../domain/nadim-conversation-context";
+import { NADIM_INTENTS } from "../domain/nadim-intent";
 import { NadimState } from "../domain/nadim-state";
 import { NADIM_PERSONALITY_PROMPT } from "../personality/nadim-personality";
 import { BedrockGlmProvider } from "./bedrock-glm.provider";
@@ -21,6 +22,24 @@ function stripFence(value: string) {
   return value.trim().replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "");
 }
 
+function compactState(state: NadimState, context?: NadimConversationContext) {
+  return {
+    channel: state.channel,
+    locale: state.locale,
+    stage: context?.stage ?? conversationStage(state),
+    search: state.search,
+    selectedUnitId: state.selectedUnitId,
+    selectedProjectId: state.selectedProjectId,
+    recentResultIds: state.lastResultIds.slice(0, 10),
+    pendingClarification: state.pendingClarification,
+    responseLanguage: state.languageStyle.preferredResponseStyle,
+    regionalVariant: state.languageStyle.regionalVariant,
+    grammaticalAddress: state.languageStyle.grammaticalAddress,
+    lastSuccessfulStateOperations: state.lastOperations,
+    recentAssistantWording: state.recentAssistantWording?.slice(0, 1_000),
+  };
+}
+
 @Injectable()
 export class DialogueModelService {
   constructor(
@@ -30,28 +49,43 @@ export class DialogueModelService {
   ) {}
 
   private providers() {
-    return [this.glm, this.groq].filter((provider, index, values) => provider.enabled() && values.findIndex((item) => item.provider === provider.provider) === index);
+    // Dialogue work is latency-sensitive and benefits from Groq's conversational
+    // interpretation. GLM remains the configured fallback; neither provider is
+    // allowed to execute tools or mutate state.
+    return [this.groq, this.glm].filter((provider, index, values) => provider.enabled() && values.findIndex((item) => item.provider === provider.provider) === index);
   }
 
   available() {
     return this.providers().length > 0;
   }
 
-  async understand(message: string, state: NadimState, trace: Trace = {}): Promise<DialogueResult<unknown>> {
+  async understand(message: string, state: NadimState, context?: NadimConversationContext, trace: Trace = {}): Promise<DialogueResult<unknown>> {
     const messages: DialogueMessage[] = [
       {
         role: "system",
         content: [
-          "You are Nadim V2's language understanding component, not the decision maker.",
-          "Return one JSON object only. Resolve short current-turn references against currentState before choosing UNKNOWN, while extracting only changes or questions actually expressed this turn.",
-          "Allowed operations are SET, REMOVE, RESET, PRESERVE. Never silently widen or preserve a removed value.",
+          "You interpret the latest message for Nadim, a real-estate AI customer-service assistant. You propose meaning; deterministic code remains the decision maker.",
+          "Read the latest message as human language in the flow of recentDialogue and persistedContext. Resolve pronouns, ordinals, typos, and short follow-ups before considering UNKNOWN.",
+          "Reference priority is: immediate dialogue, selected result, recent result list, active search state, then recent topic. If one meaning dominates, use it. Clarify only when two meanings remain genuinely plausible.",
+          "Return one JSON object only with intent, confidence, operations, ordinalReferences, actionRequested, references, needsTool, needsClarification, and recentContextUsed. You may also return locale, unitReference, projectReference, stateQuery, ambiguity, responseGoal, clarificationReason, and understoodMeaning.",
+          `Intent must be one of: ${NADIM_INTENTS.join(", ")}. Confidence is 0..1 and ordinals are one-based.`,
+          "ASSISTANT_NATURE covers whether Nadim is human, a robot, or AI. Nadim is an AI assistant and must never be interpreted as claiming to be human. Conversation-memory questions use CURRENT_SEARCH_QUERY and deterministic stateQuery fields.",
+          "A question about whether Nadim speaks a language is LANGUAGE_CAPABILITY_QUERY. Only a request to reply in a language is LANGUAGE_STYLE_CHANGE. Input language never changes the persisted response style by itself.",
+          "Allowed operations are SET, REMOVE, RESET, PRESERVE. Extract only changes actually requested in this turn. Never silently widen, invent, or directly apply state.",
           "Allowed state fields: locations, projects, developers, propertyTypes, bedrooms, bathrooms, areaMin, areaMax, budgetMin, budgetMax, currency, downPaymentMax, installmentMonths, installmentPreference, deliveryMaxYears, purpose, finishing, queryObjective, SEARCH. installmentPreference is INSTALLMENTS or LONG_TERM; never invent installmentMonths from vague wording such as long installments.",
-          "Intent must be one of the documented Nadim V2 intents. Confidence is 0..1. Ordinals are one-based. For a CURRENT_SEARCH_QUERY, set stateQuery to the requested field or SEARCH for a summary and return no operations; the answer will be read deterministically from currentState.",
-          "A short dominant reference such as make it 10 million may resolve to an active budget. If multiple references are genuinely plausible, return ambiguity instead of guessing. A rejection of a proposed relaxation preserves state and runs no search. A greeting is GREETING even when state is active.",
-          "Nadim is customer service first; inventory is only for property facts or results. ASSISTANT_IDENTITY, ASSISTANT_CAPABILITIES, LANGUAGE_CAPABILITY_QUERY, LANGUAGE_STYLE_CHANGE, GREETING, SMALL_TALK, callbacks, handoff, state queries, and plain resets do not run property search. A question about whether Nadim speaks a language is LANGUAGE_CAPABILITY_QUERY, never a switch. Only an explicit instruction to respond in a language is LANGUAGE_STYLE_CHANGE. These intents have no search operations. Understanding the current input language never grants permission to change preferredResponseStyle. Unintelligible input is UNKNOWN with no operations even when prior search state exists.",
+          "For CURRENT_SEARCH_QUERY return no operations and set stateQuery to a state field, SEARCH, or SELECTED_RESULT; the answer comes from persistedContext. Conversational intents, identity/nature/capabilities, language turns, greetings, small talk, rejections, and plain memory questions need no inventory tool. Unintelligible input is UNKNOWN with no operations.",
+          "Never invent inventory, prices, availability, payment facts, actions, or customer identity. Do not expose internal IDs in understoodMeaning.",
         ].join(" "),
       },
-      { role: "user", content: JSON.stringify({ message, currentState: state }) },
+      {
+        role: "user",
+        content: JSON.stringify({
+          latestMessage: message,
+          recentDialogue: context?.recentTurns ?? [],
+          persistedContext: compactState(state, context),
+          lastVerifiedToolResultSummary: context?.lastVerifiedToolSummary,
+        }),
+      },
     ];
     return this.call("NADIM_V2_UNDERSTAND", messages, true, (text) => JSON.parse(stripFence(text)), trace);
   }
@@ -60,7 +94,7 @@ export class DialogueModelService {
     const messages: DialogueMessage[] = [
       {
         role: "system",
-        content: `${NADIM_PERSONALITY_PROMPT} Apply the supplied styleProfile exactly. Treat verifiedFacts, current state, searchExecution, and actionResults as read-only. If an action did not SUCCEED, it was not completed.`,
+        content: `${NADIM_PERSONALITY_PROMPT} Answer the current responseGoal as a concise real-estate customer-service conversation. Use recentDialogue to follow the flow and avoid repetition. Apply the supplied styleProfile exactly. Treat deterministicAnswer, verifiedFacts, current state, searchExecution, and actionResults as read-only. Never add a price, availability claim, inventory fact, state change, or successful action. If asked about your nature, say transparently that you are an AI assistant named Nadim and never claim to be human.`,
       },
       { role: "user", content: JSON.stringify(input) },
     ];
@@ -69,7 +103,7 @@ export class DialogueModelService {
 
   async *composeStream(input: Record<string, unknown>): AsyncIterable<{ chunk: string; provider: string; model: string; fallbackUsed: boolean }> {
     const messages: DialogueMessage[] = [
-      { role: "system", content: `${NADIM_PERSONALITY_PROMPT} Follow selectedLanguageStyle exactly. Compose a concise response using only supplied verified facts. Never alter facts, claim unknown inventory, or claim an unconfirmed action.` },
+      { role: "system", content: `${NADIM_PERSONALITY_PROMPT} Follow selectedLanguageStyle exactly. Compose a concise response using only supplied verified facts and recent dialogue. Never alter facts, claim unknown inventory, claim to be human, or claim an unconfirmed action.` },
       { role: "user", content: JSON.stringify(input) },
     ];
     const providers = this.providers();
@@ -124,7 +158,7 @@ export class DialogueModelService {
       success,
       fallbackUsed,
       errorCode,
-      promptVersion: "nadim-v2.0",
+      promptVersion: "nadim-v2.1-contextual",
       conversationId: trace.conversationId,
     });
   }

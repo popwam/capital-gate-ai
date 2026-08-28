@@ -81,13 +81,13 @@ export class LanguageStyleDetectorService {
     const text = message.normalize("NFKC").replace(/[\u064B-\u065F\u0670]/gu, "").trim();
     if (this.languageCapabilityQuery(text)) return undefined;
     const recipient = "(?:\\s+(?:لي|عليا|علي))?";
-    if (new RegExp(`^(?:مصري)$|(?:كمل|رد|كلمني|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?مصري|باللهجة المصرية|back\\s+to\\s+egyptian`, "iu").test(text)) return { style: "AR_EGYPTIAN" };
-    if (new RegExp(`^(?:سعودي)$|(?:كمل|رد|كلمني|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?(?:سعودي|السعودي|السعودية)|بالسعودي(?:ة)?`, "iu").test(text)) return { style: "AR_GULF", regionalVariant: "SAUDI" };
-    if (new RegExp(`^(?:خليجي)$|(?:كمل|رد|كلمني|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?خليجي|باللهجة الخليجية`, "iu").test(text)) return { style: "AR_GULF" };
-    if (new RegExp(`(?:كمل|رد|كلمني|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?(?:فصحى|عربي(?:ة)?\\s+فصحى)|بالفصحى|بالعربية الفصحى`, "iu").test(text)) return { style: "AR_FORMAL" };
-    if (new RegExp(`^(?:عربي(?:ة)?)$|(?:كمل|رد|كلمني|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?عربي(?:ة)?|back\\s+to\\s+arabic`, "iu").test(text)) return { restoreArabic: true };
-    if (new RegExp(`^(?:english)$|(?:رد|كلمني|اتكلم|كمل)${recipient}\\s*(?:ب|بال)?(?:إنجليزي|انجليزي)|(?:continue|reply|explain|answer|speak)\\b[^.?!]{0,60}(?:\\bin english\\b|\\benglish\\b)|english please`, "iu").test(text)) return { style: "EN_US" };
-    if (new RegExp(`^(?:franco)$|(?:رد|كلمني|اتكلم|كمل)${recipient}\\s+(?:ب|بال)?فرانكو|بالفرانكو|\\bkamel\\s+franco\\b`, "iu").test(text)) return { style: "FRANCO_ARABIC" };
+    if (new RegExp(`^(?:مصري)$|(?:كمل|رد|كلمني|تكلم|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?مصري|باللهجة المصرية|back\\s+to\\s+egyptian`, "iu").test(text)) return { style: "AR_EGYPTIAN" };
+    if (new RegExp(`^(?:سعودي)$|(?:كمل|رد|كلمني|تكلم|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?(?:سعودي|السعودي|السعودية)|بالسعودي(?:ة)?`, "iu").test(text)) return { style: "AR_GULF", regionalVariant: "SAUDI" };
+    if (new RegExp(`^(?:خليجي)$|(?:كمل|رد|كلمني|تكلم|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?خليجي|باللهجة الخليجية`, "iu").test(text)) return { style: "AR_GULF" };
+    if (new RegExp(`(?:كمل|رد|كلمني|تكلم|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?(?:فصحى|عربي(?:ة)?\\s+فصحى)|بالفصحى|بالعربية الفصحى`, "iu").test(text)) return { style: "AR_FORMAL" };
+    if (new RegExp(`^(?:عربي(?:ة)?)$|(?:كمل|رد|كلمني|تكلم|اتكلم|خلينا)${recipient}\\s*(?:ب|بال)?عربي(?:ة)?|back\\s+to\\s+arabic`, "iu").test(text)) return { restoreArabic: true };
+    if (new RegExp(`^(?:english)$|(?:رد|كلمني|تكلم|اتكلم|كمل)${recipient}\\s*(?:ب|بال)?(?:إنجليزي|انجليزي)|(?:continue|reply|explain|answer|speak)\\b[^.?!]{0,60}(?:\\bin english\\b|\\benglish\\b)|english please`, "iu").test(text)) return { style: "EN_US" };
+    if (new RegExp(`^(?:franco)$|(?:رد|كلمني|تكلم|اتكلم|كمل)${recipient}\\s+(?:ب|بال)?فرانكو|بالفرانكو|\\bkamel\\s+franco\\b`, "iu").test(text)) return { style: "FRANCO_ARABIC" };
     return undefined;
   }
 

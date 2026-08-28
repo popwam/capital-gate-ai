@@ -10,7 +10,7 @@ export class StateEngineService {
   apply(previous: NadimState, understanding: NadimUnderstanding, identity: { channel: NadimState["channel"]; customerId?: string; externalUserId?: string; locale?: string }) {
     let state = structuredClone(previous);
     const operations = [
-      "GREETING", "ASSISTANT_IDENTITY", "ASSISTANT_CAPABILITIES", "LANGUAGE_CAPABILITY_QUERY",
+      "GREETING", "ASSISTANT_IDENTITY", "ASSISTANT_NATURE", "ASSISTANT_CAPABILITIES", "LANGUAGE_CAPABILITY_QUERY",
       "LANGUAGE_STYLE_CHANGE", "CURRENT_SEARCH_QUERY", "SMALL_TALK", "UNKNOWN",
     ].includes(understanding.intent)
       ? understanding.operations.filter((operation) => operation.operation === "PRESERVE")
@@ -29,7 +29,7 @@ export class StateEngineService {
     if (understanding.ordinalReferences.length) {
       const resolved = understanding.ordinalReferences.map((ordinal) => state.lastResultIds[ordinal - 1]).filter(Boolean);
       if (resolved.length !== understanding.ordinalReferences.length) {
-        state.pendingClarification = { reason: "RESULT_REFERENCE_NOT_FOUND" };
+        state.pendingClarification = { reason: state.lastResultIds.length === 0 ? "RESULT_LIST_EMPTY" : "RESULT_REFERENCE_NOT_FOUND" };
       } else if (understanding.intent === "COMPARISON") {
         state.comparisonUnitIds = [...new Set(resolved)];
       } else {

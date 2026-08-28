@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { NadimConversationContext } from "../domain/nadim-conversation-context";
 import { CurrentSearchQueryTarget, NadimUnderstanding, NadimUnderstandingSchema, StateOperation } from "../domain/nadim-intent";
 import { NadimState } from "../domain/nadim-state";
 import { DialogueModelService } from "../providers/dialogue-model.service";
@@ -63,7 +64,7 @@ function amount(raw: string, scale?: string, implicitMillions = false) {
 function ordinals(text: string) {
   const found: number[] = [];
   const terms: Array<[RegExp, number]> = [
-    [/(?:الأول|الاول|الأولى|الاولى|first)(?=\s|$|[،,.!?])/iu, 1],
+    [/(?:الأول|الاول|الأولى|الاولى|الأوليه|الاوليه|first)(?=\s|$|[،,.!?])/iu, 1],
     [/(?:التاني(?:ة)?|الثاني(?:ة)?|second)(?=\s|$|[،,.!?])/iu, 2],
     [/(?:التالت(?:ة)?|الثالث(?:ة)?|third)(?=\s|$|[،,.!?])/iu, 3],
     [/(?:الرابع(?:ة)?|fourth)(?=\s|$|[،,.!?])/iu, 4],
@@ -82,17 +83,45 @@ function hasActiveSearch(state: NadimState) {
     || state.lastResultIds.length > 0;
 }
 
-function stateQueryTarget(text: string, state: NadimState): CurrentSearchQueryTarget | undefined {
+function stateQueryTarget(text: string, state: NadimState, context?: NadimConversationContext): CurrentSearchQueryTarget | undefined {
   const asksValue = /(?:كام|كم|قد\s*(?:إيه|ايه)|إيش|ايش|وش|what|how\s+(?:much|many)|where)/iu.test(text);
   if (asksValue && /(?:ميزاني[هة]|budget|الحد\s*الأقصى|الحد\s*الاقصى|max(?:imum)?)/iu.test(text)) return "budgetMax";
   if (asksValue && /(?:غرف|غرفة|bedrooms?|rooms?)/iu.test(text)) return "bedrooms";
+  if (/(?:فاكر|تفتكر).{0,24}(?:اخترت|اختارت|حددنا|وقفنا\s+على).{0,18}(?:أنهي|انهي|أي|اي|واحدة|وحدة|اختيار)|which\s+(?:one|option).{0,16}(?:did\s+I|we).{0,12}(?:choose|select)/iu.test(text)) return "SELECTED_RESULT";
   if (/(?:إحنا|احنا|حنا|we).{0,18}(?:بندور|ندور|looking).{0,12}(?:فين|وين|where)|(?:فين|وين|where).{0,15}(?:بندور|ندور|looking)/iu.test(text)) return "locations";
-  if (/(?:المواصفات|تفاصيل\s+البحث).{0,28}(?:إيه|ايه|إيش|ايش|وش|كام|كم)|طلبت\s+(?:إيه|ايه)|what.{0,18}(?:looking for|preferences)|summari[sz]e.{0,15}search|search\s+(?:details|preferences).{0,12}(?:what|which|are)/iu.test(text)) return "SEARCH";
+  if (/(?:فاكر|تفتكر).{0,28}(?:كنت\s+)?(?:بدور|بادور|طالب|عايز|وصلنا)|(?:إحنا|احنا|حنا)\s+كنا\s+بنتكلم\s+(?:في|عن)\s+(?:إيه|ايه|اي)|(?:آخر|اخر)\s+حاجة\s+وقفنا\s+عندها|(?:فاكر\s+)?وصلنا\s+لفين|(?:المواصفات|تفاصيل\s+البحث).{0,28}(?:إيه|ايه|إيش|ايش|وش|كام|كم)|طلبت\s+(?:إيه|ايه)|what.{0,18}(?:looking for|preferences)|summari[sz]e.{0,15}search|search\s+(?:details|preferences).{0,12}(?:what|which|are)|where\s+did\s+we\s+leave\s+off/iu.test(text)) return "SEARCH";
   if (state.search.budgetMax !== undefined && /(?:إحنا|احنا|حنا|we).{0,12}(?:وصلنا|at).{0,8}(?:ل)?(?:كام|كم|what)/iu.test(text)) return "budgetMax";
+  const vaguePastPrice = /^(?:طب\s+)?(?:السعر|سعرها|سعره)\s+(?:كان\s+)?(?:كام|كم)[؟?!.،,\s]*$/iu.test(text);
+  if (vaguePastPrice && state.search.budgetMax !== undefined) {
+    const recent = context?.recentTurns.at(-1);
+    const followsSearchMemory = recent?.intent === "CURRENT_SEARCH_QUERY" && recent.stateQuery === "SEARCH"
+      || /(?:فاكر|كنا|وصلنا|بدور|المواصفات)/iu.test(recent?.user ?? "");
+    if (!state.selectedUnitId || followsSearchMemory) return "budgetMax";
+  }
   return undefined;
 }
 
-function explicitUnderstanding(message: string, state: NadimState): NadimUnderstanding {
+function responseGoal(intent: NadimUnderstanding["intent"], stateQuery?: CurrentSearchQueryTarget) {
+  if (intent === "CURRENT_SEARCH_QUERY") return stateQuery === "SEARCH" ? "SUMMARIZE_CURRENT_SEARCH" : `ANSWER_CURRENT_${stateQuery ?? "SEARCH"}`;
+  if (intent === "ASSISTANT_NATURE") return "EXPLAIN_AI_NATURE_TRANSPARENTLY";
+  if (intent === "ASSISTANT_IDENTITY") return "ANSWER_ASSISTANT_IDENTITY";
+  if (intent === "ASSISTANT_CAPABILITIES") return "EXPLAIN_REAL_ESTATE_SERVICE_CAPABILITIES";
+  if (intent === "GREETING") return "RETURN_GREETING";
+  if (intent === "SMALL_TALK") return "BRIEF_SMALL_TALK";
+  if (intent === "LANGUAGE_STYLE_CHANGE") return "CONFIRM_RESPONSE_STYLE";
+  if (intent === "UNKNOWN") return "CLARIFY_UNCLEAR_MESSAGE";
+  if (intent === "PROPERTY_SEARCH" || intent === "MODIFY_SEARCH") return "SEARCH_VERIFIED_INVENTORY";
+  return intent;
+}
+
+function intentNeedsTool(intent: NadimUnderstanding["intent"]) {
+  return [
+    "PROPERTY_SEARCH", "MODIFY_SEARCH", "COMPARISON", "PROPERTY_QUESTION", "PRICE_QUESTION",
+    "PAYMENT_PLAN_QUESTION", "MEDIA_REQUEST", "LOCATION_QUESTION", "AVAILABILITY_QUESTION",
+  ].includes(intent);
+}
+
+function explicitUnderstanding(message: string, state: NadimState, context?: NadimConversationContext): NadimUnderstanding {
   const rawText = normalizedText(message);
   const text = withFrancoSemanticHints(rawText);
   const lower = text.toLowerCase();
@@ -168,7 +197,7 @@ function explicitUnderstanding(message: string, state: NadimState): NadimUnderst
   const ambiguousRelativeChange = activeSearch
     && /(?:زودها|زوّدها|وسعها|وسّعها|increase it|raise it)\s+(?:شوية|شوي|a (?:bit|little))/iu.test(text)
     && !hasMutation;
-  const queryTarget = stateQueryTarget(text, state);
+  const queryTarget = stateQueryTarget(text, state, context);
   const paymentQuestion = /(?:نظام التقسيط|خطة السداد|خطط السداد|المقدم\s+كام|التقسيط\s+على\s+كام\s*(?:سنة|سنين|شهر)?|payment plan|down payment|how (?:many|long).*(?:installment|year|month))/iu.test(text);
   const addressOnlyRequest = state.languageStyle?.grammaticalAddressChangedThisTurn
     && /(?:صيغة|خاطبني|مؤنث|مذكر|محايد|address me|feminine|masculine|gender[- ]neutral)/iu.test(text);
@@ -193,6 +222,7 @@ function explicitUnderstanding(message: string, state: NadimState): NadimUnderst
   else if (!languageOnly && /(?:كلمني|اتصل بي|اتصلوا|callback|call me)/iu.test(text)) intent = "CALLBACK_REQUEST";
   else if (/(?:سيب بياناتي|مهتم|contact me|lead)/iu.test(text)) intent = "LEAD_REQUEST";
   if (/(?:اسمك\s*(?:إيه|ايه|اي)?|إنت\s+مين|انت\s+مين|مين\s+نديم|what(?:'s| is)\s+your\s+name|who\s+are\s+you)/iu.test(text)) intent = "ASSISTANT_IDENTITY";
+  else if (/(?:إنت|انت|نديم).{0,22}(?:إنسان|انسان|بني\s+آدم|بني\s+ادم|روبوت|ذكاء\s+اصطناعي)|(?:مو|مش|مش\s+كدا|مش\s+كده)\s+(?:إنسان|انسان)|(?:are|aren['’]?t)\s+you\s+(?:a\s+)?(?:human|robot|bot|ai)|so\s+you(?:'re|\s+are)\s+not\s+human/iu.test(text)) intent = "ASSISTANT_NATURE";
   else if (isLanguageCapabilityQuery(text)) intent = "LANGUAGE_CAPABILITY_QUERY";
   else if (isAssistantCapabilitiesQuery(text)) intent = "ASSISTANT_CAPABILITIES";
   else if (isWellbeingSmallTalk(text)) intent = "SMALL_TALK";
@@ -204,8 +234,31 @@ function explicitUnderstanding(message: string, state: NadimState): NadimUnderst
   if (preserveRequest && !hasMutation) intent = "CORRECTION";
   if (ambiguousRelativeChange) intent = "MODIFY_SEARCH";
   if (queryTarget) intent = "CURRENT_SEARCH_QUERY";
+  const vaguePriceReference = /^(?:طب\s+)?(?:السعر|سعرها|سعره)\s+(?:كان\s+)?(?:كام|كم)[؟?!.،,\s]*$/iu.test(text);
+  const priceReferenceAmbiguous = vaguePriceReference
+    && !queryTarget
+    && state.selectedUnitId !== undefined
+    && state.search.budgetMax !== undefined;
   const unintelligible = looksLikeGibberish(rawText);
   if (unintelligible) intent = "UNKNOWN";
+
+  const ordinalUnavailable = references.length > 0 && state.lastResultIds.length === 0;
+  const ambiguity = ambiguousRelativeChange
+    ? "SEARCH_CHANGE_AMOUNT_REQUIRED"
+    : priceReferenceAmbiguous ? "PRICE_REFERENCE_AMBIGUOUS" : undefined;
+  const deterministicReferences: NonNullable<NadimUnderstanding["references"]> = [];
+  if (queryTarget === "budgetMax" && vaguePriceReference) {
+    deterministicReferences.push({ expression: "السعر", resolvedAs: "SEARCH_BUDGET", confidence: 0.9 });
+  } else if (queryTarget === "SEARCH") {
+    deterministicReferences.push({ expression: "conversation memory", resolvedAs: "ACTIVE_SEARCH", confidence: 0.95 });
+  }
+  for (const reference of references) {
+    deterministicReferences.push({
+      expression: `ordinal:${reference}`,
+      resolvedAs: state.lastResultIds[reference - 1] ? "RECENT_RESULT" : "UNRESOLVED",
+      confidence: state.lastResultIds[reference - 1] ? 0.92 : 0.55,
+    });
+  }
 
   return {
     intent,
@@ -216,7 +269,14 @@ function explicitUnderstanding(message: string, state: NadimState): NadimUnderst
     unitReference,
     actionRequested: ["LEAD_REQUEST", "CALLBACK_REQUEST", "VIEWING_REQUEST", "RESERVATION_REQUEST", "HUMAN_HANDOFF"].includes(intent),
     stateQuery: queryTarget,
-    ambiguity: ambiguousRelativeChange ? "SEARCH_CHANGE_AMOUNT_REQUIRED" : undefined,
+    ambiguity,
+    responseGoal: responseGoal(intent, queryTarget),
+    references: deterministicReferences,
+    needsTool: intentNeedsTool(intent) && !ambiguity && !ordinalUnavailable,
+    needsClarification: Boolean(ambiguity || ordinalUnavailable || unintelligible),
+    clarificationReason: ambiguity ?? (ordinalUnavailable ? "RESULT_LIST_EMPTY" : unintelligible ? "UNINTELLIGIBLE" : undefined),
+    understoodMeaning: undefined,
+    recentContextUsed: Boolean(context?.recentTurns.length && (queryTarget || references.length || modifyingSearch)),
   };
 }
 
@@ -224,16 +284,27 @@ function explicitUnderstanding(message: string, state: NadimState): NadimUnderst
 export class UnderstandingService {
   constructor(private readonly dialogue: DialogueModelService) {}
 
-  async understand(message: string, state: NadimState, trace: { conversationId?: string; requestId?: string } = {}): Promise<UnderstandingResult> {
-    const deterministic = explicitUnderstanding(message, state);
+  async understand(
+    message: string,
+    state: NadimState,
+    trace: { conversationId?: string; requestId?: string } = {},
+    context?: NadimConversationContext,
+  ): Promise<UnderstandingResult> {
+    const deterministic = explicitUnderstanding(message, state, context);
     if (!this.dialogue.available()) return { understanding: deterministic };
     if (deterministic.intent === "UNKNOWN" && deterministic.confidence >= 0.8) return { understanding: deterministic };
+    if (deterministic.confidence >= 0.8 && [
+      "GREETING", "ASSISTANT_IDENTITY", "ASSISTANT_NATURE", "ASSISTANT_CAPABILITIES",
+      "LANGUAGE_CAPABILITY_QUERY", "SMALL_TALK",
+    ].includes(deterministic.intent)) {
+      return { understanding: deterministic };
+    }
     if (deterministic.intent === "LANGUAGE_STYLE_CHANGE"
       || (deterministic.intent === "SMALL_TALK" && state.languageStyle.grammaticalAddressChangedThisTurn)) {
       return { understanding: deterministic };
     }
     try {
-      const result = await this.dialogue.understand(message, state, trace);
+      const result = await this.dialogue.understand(message, state, context, trace);
       const parsed = NadimUnderstandingSchema.safeParse(result.value);
       if (!parsed.success) return { understanding: deterministic };
       const explicitFields = new Set(deterministic.operations.map((operation) => operation.field));
@@ -241,7 +312,13 @@ export class UnderstandingService {
         ...parsed.data.operations.filter((operation) => !explicitFields.has(operation.field)),
         ...deterministic.operations,
       ];
-      let intent = deterministic.confidence >= 0.8 ? deterministic.intent : parsed.data.intent;
+      const modelCanResolveContext = Boolean(context?.recentTurns.length)
+        && parsed.data.confidence >= 0.75
+        && (parsed.data.recentContextUsed || (parsed.data.references?.length ?? 0) > 0 || parsed.data.intent === "CURRENT_SEARCH_QUERY");
+      const contextSensitiveIntent = ["UNKNOWN", "PRICE_QUESTION", "PROPERTY_QUESTION"].includes(deterministic.intent);
+      let intent = deterministic.confidence >= 0.8 && !(contextSensitiveIntent && modelCanResolveContext)
+        ? deterministic.intent
+        : parsed.data.intent;
       const stateQuery = deterministic.stateQuery ?? parsed.data.stateQuery;
       const modelRecoveryIsWeak = deterministic.intent === "UNKNOWN"
         && parsed.data.intent !== "UNKNOWN"
@@ -253,11 +330,15 @@ export class UnderstandingService {
       const modelStateQueryHasNoTarget = parsed.data.intent === "CURRENT_SEARCH_QUERY" && !stateQuery;
       if (modelRecoveryIsWeak || modelSearchHasNoMeaning || modelStateQueryHasNoTarget) intent = deterministic.intent;
       if ([
-        "GREETING", "ASSISTANT_IDENTITY", "ASSISTANT_CAPABILITIES", "LANGUAGE_CAPABILITY_QUERY",
+        "GREETING", "ASSISTANT_IDENTITY", "ASSISTANT_NATURE", "ASSISTANT_CAPABILITIES", "LANGUAGE_CAPABILITY_QUERY",
         "LANGUAGE_STYLE_CHANGE", "CURRENT_SEARCH_QUERY", "CORRECTION", "SMALL_TALK", "UNKNOWN",
       ].includes(intent)) {
         mergedOperations = deterministic.operations.filter((operation) => operation.operation === "PRESERVE");
       }
+      const ambiguity = intent === deterministic.intent
+        ? deterministic.ambiguity ?? parsed.data.ambiguity
+        : parsed.data.ambiguity;
+      const references = deterministic.references?.length ? deterministic.references : parsed.data.references ?? [];
       const understanding = {
         ...parsed.data,
         intent,
@@ -267,7 +348,13 @@ export class UnderstandingService {
         ordinalReferences: deterministic.ordinalReferences.length ? deterministic.ordinalReferences : parsed.data.ordinalReferences,
         unitReference: deterministic.unitReference ?? parsed.data.unitReference,
         stateQuery,
-        ambiguity: deterministic.ambiguity ?? parsed.data.ambiguity,
+        ambiguity,
+        responseGoal: parsed.data.responseGoal ?? responseGoal(intent, stateQuery),
+        references,
+        needsTool: intentNeedsTool(intent) && !ambiguity,
+        needsClarification: Boolean(ambiguity || parsed.data.needsClarification),
+        clarificationReason: ambiguity ?? parsed.data.clarificationReason,
+        recentContextUsed: deterministic.recentContextUsed || parsed.data.recentContextUsed,
         // Model output may propose an action-shaped intent, but it cannot grant
         // execution authority. Only explicit deterministic language does that.
         actionRequested: deterministic.actionRequested,

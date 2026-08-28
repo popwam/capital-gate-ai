@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const NADIM_INTENTS = [
-  "GREETING", "ASSISTANT_IDENTITY", "ASSISTANT_CAPABILITIES", "LANGUAGE_CAPABILITY_QUERY", "LANGUAGE_STYLE_CHANGE",
+  "GREETING", "ASSISTANT_IDENTITY", "ASSISTANT_NATURE", "ASSISTANT_CAPABILITIES", "LANGUAGE_CAPABILITY_QUERY", "LANGUAGE_STYLE_CHANGE",
   "PROPERTY_SEARCH", "MODIFY_SEARCH", "COMPARISON", "PROPERTY_QUESTION",
   "PRICE_QUESTION", "PAYMENT_PLAN_QUESTION", "MEDIA_REQUEST", "LOCATION_QUESTION",
   "AVAILABILITY_QUESTION", "LEAD_REQUEST", "CALLBACK_REQUEST", "VIEWING_REQUEST",
@@ -17,12 +17,19 @@ export const STATE_FIELDS = [
 ] as const;
 export type StateField = (typeof STATE_FIELDS)[number];
 export type StateOperation = { operation: "SET" | "REMOVE" | "RESET" | "PRESERVE"; field?: StateField | "SEARCH"; value?: unknown };
-export type CurrentSearchQueryTarget = StateField | "SEARCH";
+export const CURRENT_SEARCH_QUERY_TARGETS = [...STATE_FIELDS, "SEARCH", "SELECTED_RESULT"] as const;
+export type CurrentSearchQueryTarget = (typeof CURRENT_SEARCH_QUERY_TARGETS)[number];
 
 const OperationSchema = z.object({
   operation: z.enum(["SET", "REMOVE", "RESET", "PRESERVE"]),
   field: z.enum([...STATE_FIELDS, "SEARCH"]).optional(),
   value: z.unknown().optional(),
+}).strict();
+
+const ReferenceResolutionSchema = z.object({
+  expression: z.string().min(1).max(100),
+  resolvedAs: z.enum(["ACTIVE_SEARCH", "SEARCH_BUDGET", "SELECTED_UNIT", "SELECTED_PROJECT", "RECENT_RESULT", "RECENT_DIALOGUE", "UNRESOLVED"]),
+  confidence: z.number().min(0).max(1),
 }).strict();
 
 export const NadimUnderstandingSchema = z.object({
@@ -34,8 +41,15 @@ export const NadimUnderstandingSchema = z.object({
   unitReference: z.string().max(120).optional(),
   projectReference: z.string().max(200).optional(),
   actionRequested: z.boolean().default(false),
-  stateQuery: z.enum([...STATE_FIELDS, "SEARCH"]).optional(),
+  stateQuery: z.enum(CURRENT_SEARCH_QUERY_TARGETS).optional(),
   ambiguity: z.string().max(300).optional(),
+  responseGoal: z.string().max(120).optional(),
+  references: z.array(ReferenceResolutionSchema).max(8).optional(),
+  needsTool: z.boolean().optional(),
+  needsClarification: z.boolean().optional(),
+  clarificationReason: z.string().max(300).optional(),
+  understoodMeaning: z.string().max(500).optional(),
+  recentContextUsed: z.boolean().optional(),
 }).strict();
 
 export type NadimUnderstanding = z.infer<typeof NadimUnderstandingSchema>;

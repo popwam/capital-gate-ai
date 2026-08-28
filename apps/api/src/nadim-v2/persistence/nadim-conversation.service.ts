@@ -3,6 +3,8 @@ import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { PrismaService } from "../../database/prisma.service";
 import { NadimTurnDto } from "../dto/nadim-turn.dto";
+import { conversationStage, NadimConversationContext, NadimRecentToolSummary, NadimRecentTurnContext } from "../domain/nadim-conversation-context";
+import { CURRENT_SEARCH_QUERY_TARGETS, NADIM_INTENTS, NadimIntentType } from "../domain/nadim-intent";
 import { NadimTurnResult } from "../domain/nadim-result";
 import { initialNadimState, NadimState } from "../domain/nadim-state";
 
@@ -25,6 +27,54 @@ function canonical(value: unknown): string {
     return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function objectValue(value: Prisma.JsonValue): Record<string, Prisma.JsonValue> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, Prisma.JsonValue>
+    : undefined;
+}
+
+function toolSummary(value: Prisma.JsonValue): NadimRecentToolSummary[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const record = objectValue(item);
+    if (!record || typeof record.tool !== "string" || typeof record.ok !== "boolean") return [];
+    const count = Array.isArray(record.data) ? record.data.length : record.data == null ? 0 : 1;
+    return [{
+      tool: record.tool.slice(0, 80),
+      ok: record.ok,
+      resultCount: count,
+      errorCode: typeof record.errorCode === "string" ? record.errorCode.slice(0, 100) : undefined,
+    }];
+  }).slice(0, 10);
+}
+
+function recentTurnContext(row: {
+  userMessage: string;
+  assistantReply: string;
+  intent: Prisma.JsonValue;
+  plan: Prisma.JsonValue;
+  toolResults: Prisma.JsonValue;
+}): NadimRecentTurnContext {
+  const intent = objectValue(row.intent);
+  const plan = objectValue(row.plan);
+  const intentValue = typeof intent?.intent === "string" && (NADIM_INTENTS as readonly string[]).includes(intent.intent)
+    ? intent.intent as NadimIntentType
+    : undefined;
+  const stateQuery = typeof intent?.stateQuery === "string" && (CURRENT_SEARCH_QUERY_TARGETS as readonly string[]).includes(intent.stateQuery)
+    ? intent.stateQuery as NadimRecentTurnContext["stateQuery"]
+    : undefined;
+  return {
+    user: row.userMessage.slice(0, 500),
+    assistant: row.assistantReply.slice(0, 1_000),
+    intent: intentValue,
+    stateQuery,
+    responseGoal: typeof intent?.responseGoal === "string"
+      ? intent.responseGoal.slice(0, 120)
+      : typeof plan?.goal === "string" ? plan.goal.slice(0, 120) : undefined,
+    tools: toolSummary(row.toolResults),
+  };
 }
 
 export function nadimTurnRequestHash(input: NadimTurnDto) {
@@ -127,12 +177,27 @@ export class NadimConversationService {
     const state = validState(conversation.state)
       ? conversation.state
       : initialNadimState({ channel: input.channel, customerId, externalUserId: input.externalUserId, locale: input.locale });
-    const previousTurn = await this.prisma.nadimTurn.findFirst({
+    const recentRows = await this.prisma.nadimTurn.findMany({
       where: { conversationId: conversation.id, success: true, assistantReply: { not: "" } },
       orderBy: { createdAt: "desc" },
-      select: { userMessage: true, assistantReply: true },
+      take: 8,
+      select: { userMessage: true, assistantReply: true, intent: true, plan: true, toolResults: true },
     });
-    return { conversation, state, customerId, previousTurn: previousTurn ?? undefined };
+    const recentTurns = recentRows.reverse().map(recentTurnContext);
+    const last = recentTurns.at(-1);
+    const lastVerifiedToolSummary = [...recentTurns].reverse().find((turn) => turn.tools.some((tool) => tool.ok))?.tools;
+    const conversationContext: NadimConversationContext = {
+      stage: conversationStage(state),
+      recentTurns,
+      lastVerifiedToolSummary,
+    };
+    return {
+      conversation,
+      state,
+      customerId,
+      previousTurn: last ? { userMessage: last.user, assistantReply: last.assistant } : undefined,
+      conversationContext,
+    };
   }
 
   persist(input: {

@@ -56,6 +56,20 @@ export class ResponseStyleService {
     });
   }
 
+  assistantNature(style: NadimLanguageStyle, regionalVariant?: NadimRegionalVariant) {
+    if (style === "AR_GULF" && regionalVariant === "SAUDI") {
+      return "صحيح، أنا مساعد ذكاء اصطناعي اسمي نديم، ودوري أساعدك في بحثك العقاري مثل خدمة العملاء.";
+    }
+    return this.pick(style, {
+      AR_EGYPTIAN: "أيوه، أنا مساعد ذكاء اصطناعي اسمي نديم، ودوري أتابع معاك في بحثك العقاري زي خدمة العملاء.",
+      AR_GULF: "صحيح، أنا مساعد ذكاء اصطناعي اسمي نديم، ودوري أساعدك في بحثك العقاري مثل خدمة العملاء.",
+      AR_FORMAL: "نعم، أنا مساعد ذكاء اصطناعي اسمي نديم، ودوري مساعدتك في بحثك العقاري بصفتي مساعد خدمة عملاء.",
+      EN_US: "That’s right — I’m Nadim, an AI customer-service assistant for your property search.",
+      FRANCO_ARABIC: "aywa, ana Nadim, AI customer-service assistant w dorri asa3dak fe property search beta3ak.",
+      MIXED_AR_EN: "أيوه، أنا نديم، AI customer-service assistant، ودوري أساعدك في الـproperty search.",
+    });
+  }
+
   languageCapability(style: NadimLanguageStyle, userMessage: string, regionalVariant?: NadimRegionalVariant) {
     const asksEnglish = /(?:إنجليزي|انجليزي|english)/iu.test(userMessage);
     const asksSaudi = /(?:سعودي|السعودية|saudi)/iu.test(userMessage);
@@ -115,12 +129,12 @@ export class ResponseStyleService {
       MIXED_AR_EN: "العفو، أنا معاك.",
     });
     if (unsure) return this.pick(style, {
-      AR_EGYPTIAN: "ولا يهمك. نبدأ بالمكان اللي يناسبك ولا بالميزانية؟",
-      AR_GULF: "ولا يهمك. نبدأ بالموقع المناسب لك أو بالميزانية؟",
-      AR_FORMAL: "لا بأس. هل نبدأ بالموقع المناسب أم بالميزانية؟",
-      EN_US: "No problem. Should we start with the location or your budget?",
-      FRANCO_ARABIC: "wala yhemmak. nebda2 bel location wala el budget?",
-      MIXED_AR_EN: "ولا يهمك. نبدأ بالـlocation ولا الـbudget؟",
+      AR_EGYPTIAN: "ولا يهمك. خلينا نبدأ من أهم حاجة: بتدور للسكن ولا للاستثمار؟",
+      AR_GULF: "ولا يهمك. نبدأ من الأهم: تدور للسكن أو للاستثمار؟",
+      AR_FORMAL: "لا بأس. لنبدأ بالأهم: هل تبحث للسكن أم للاستثمار؟",
+      EN_US: "No problem. Let’s start with the main thing: is this for living or investment?",
+      FRANCO_ARABIC: "wala yhemmak. nebda2 bel aham: btedor lel sakan wala investment?",
+      MIXED_AR_EN: "ولا يهمك. نبدأ بالأهم: للسكن ولا investment؟",
     });
     return this.safeFallback(style);
   }
@@ -152,6 +166,22 @@ export class ResponseStyleService {
       EN_US: "I couldn’t resolve that option. Tell me the number you see.",
       FRANCO_ARABIC: "mesh 2ader a7aded anhy option. 2olly el rakam el zaher 3andak.",
       MIXED_AR_EN: "مش قادر أحدد أنهي option. قولّي الرقم اللي ظاهر عندك.",
+    });
+    if (reason === "RESULT_LIST_EMPTY") return this.pick(style, {
+      AR_EGYPTIAN: "لسه ما ظهرش عندنا اختيارات عشان يبقى فيه أول واحدة.",
+      AR_GULF: "ما ظهرت عندنا خيارات إلى الآن عشان يكون فيه خيار أول.",
+      AR_FORMAL: "لم تظهر لدينا خيارات بعد حتى يكون هناك خيار أول.",
+      EN_US: "We don’t have a result list yet, so there isn’t a first option to select.",
+      FRANCO_ARABIC: "lessa ma zaharsh options 3ashan yeb2a fe awel wa7da.",
+      MIXED_AR_EN: "لسه ما ظهرش options عشان يبقى فيه first choice.",
+    });
+    if (reason === "PRICE_REFERENCE_AMBIGUOUS") return this.pick(style, {
+      AR_EGYPTIAN: "تقصد الميزانية اللي كنا محددينها ولا سعر وحدة معينة؟",
+      AR_GULF: "تقصد الميزانية اللي حددناها أو سعر وحدة معينة؟",
+      AR_FORMAL: "هل تقصد الميزانية التي حددناها أم سعر وحدة معينة؟",
+      EN_US: "Do you mean the budget we set, or the price of a specific unit?",
+      FRANCO_ARABIC: "ta2sed el budget elli 7adadnaha wala se3r wa7da mo3ayana?",
+      MIXED_AR_EN: "تقصد الـbudget اللي حددناه ولا price لوحدة معينة؟",
     });
     if (reason === "COMPARISON_SELECTION_REQUIRED") return this.pick(style, {
       AR_EGYPTIAN: "اختار وحدتين من اللي ظهروا عشان أقارنهم بسرعة.",
@@ -385,6 +415,33 @@ export class ResponseStyleService {
   }
 
   currentSearch(style: NadimLanguageStyle, state: NadimState, target: CurrentSearchQueryTarget = "SEARCH") {
+    if (target === "SELECTED_RESULT") {
+      const ordinal = state.selectedUnitId ? state.lastResultIds.indexOf(state.selectedUnitId) + 1 : 0;
+      if (ordinal > 0) return this.pick(style, {
+        AR_EGYPTIAN: `كنت مختار الاختيار رقم ${ordinal}.`,
+        AR_GULF: `كنت مختار الخيار رقم ${ordinal}.`,
+        AR_FORMAL: `كنت قد اخترت الخيار رقم ${ordinal}.`,
+        EN_US: `You selected option ${ordinal}.`,
+        FRANCO_ARABIC: `enta kont me5tar option ${ordinal}.`,
+        MIXED_AR_EN: `كنت مختار option ${ordinal}.`,
+      });
+      if (state.selectedUnitId) return this.pick(style, {
+        AR_EGYPTIAN: "أيوه، فيه وحدة محددة عندي، بس مش ضمن قائمة اختيارات ظاهرة دلوقتي.",
+        AR_GULF: "إيه، عندي وحدة محددة، لكنها مو ضمن قائمة خيارات ظاهرة حاليًا.",
+        AR_FORMAL: "نعم، لدي وحدة محددة، لكنها ليست ضمن قائمة خيارات ظاهرة حاليًا.",
+        EN_US: "Yes, there is a selected unit, but it isn’t in the current visible result list.",
+        FRANCO_ARABIC: "aywa, fe wa7da mo3ayana bas mesh fe current visible options.",
+        MIXED_AR_EN: "أيوه، فيه specific unit محددة، بس مش في الـcurrent list.",
+      });
+      return this.pick(style, {
+        AR_EGYPTIAN: "لسه ما اخترناش وحدة معينة.",
+        AR_GULF: "ما اخترنا وحدة معينة إلى الآن.",
+        AR_FORMAL: "لم نختر وحدة معينة بعد.",
+        EN_US: "We haven’t selected a specific unit yet.",
+        FRANCO_ARABIC: "lessa ma e5tarnash wa7da mo3ayana.",
+        MIXED_AR_EN: "لسه ما اخترناش specific unit.",
+      });
+    }
     if (target === "budgetMax") {
       const value = this.money(state.search.budgetMax, state.search.currency, style, style === "EN_US" || style === "MIXED_AR_EN");
       return value ? this.pick(style, {

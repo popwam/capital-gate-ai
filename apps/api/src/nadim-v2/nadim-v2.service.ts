@@ -56,7 +56,7 @@ export class NadimV2Service {
     try {
     const trace = { requestId, conversationId: resolved.conversation.id };
     const styledPrevious = this.languageStyles.apply(resolved.state, input.message, input.locale);
-    const understood = await this.understanding.understand(input.message, styledPrevious, trace);
+    const understood = await this.understanding.understand(input.message, styledPrevious, trace, resolved.conversationContext);
     let state = this.stateEngine.apply(styledPrevious, understood.understanding, {
       channel: input.channel,
       customerId: resolved.customerId,
@@ -87,6 +87,7 @@ export class NadimV2Service {
       proposedActions,
       executedActions,
       previousTurn: resolved.previousTurn,
+      conversationContext: resolved.conversationContext,
       trace,
     });
     state = this.stateEngine.withAssistantWording(state, composed.reply);
@@ -135,7 +136,7 @@ export class NadimV2Service {
       claimedTurnId,
       response,
     });
-    this.logger.log(`NadimV2Turn ${JSON.stringify({ requestId, conversationId: resolved.conversation.id, customerId: state.customerId ?? null, channel: input.channel, brainVersion: "v2", intent: understood.understanding.intent, languageStyle: state.languageStyle.preferredResponseStyle, tools: plan.steps.map((step) => step.tool), modelProvider: model?.provider ?? "deterministic", model: model?.model ?? null, fallbackUsed, toolLatencyMs: toolResults.reduce((sum, result) => sum + result.latencyMs, 0), proposedActions: proposedActions.map((action) => action.type), actionResults: executedActions.map((action) => ({ type: action.type, status: action.status, errorCode: action.errorCode })), success: true, latencyMs })}`);
+    this.logger.log(`NadimV2Turn ${JSON.stringify({ requestId, conversationId: resolved.conversation.id, customerId: state.customerId ?? null, channel: input.channel, brainVersion: "v2", intent: understood.understanding.intent, responseGoal: understood.understanding.responseGoal ?? plan.goal, referenceResolution: (understood.understanding.references ?? []).map((reference) => ({ resolvedAs: reference.resolvedAs, confidence: reference.confidence })), recentContextUsed: understood.understanding.recentContextUsed ?? false, conversationStage: resolved.conversationContext?.stage ?? null, languageStyle: state.languageStyle.preferredResponseStyle, toolDecision: plan.steps.length ? "EXECUTE" : plan.clarification ? "CLARIFY" : "NO_TOOL", tools: plan.steps.map((step) => step.tool), modelProvider: model?.provider ?? "deterministic", model: model?.model ?? null, fallbackUsed, modelLatencyMs: (understood.model?.latencyMs ?? 0) + (composed.model?.latencyMs ?? 0), toolLatencyMs: toolResults.reduce((sum, result) => sum + result.latencyMs, 0), proposedActions: proposedActions.map((action) => action.type), actionResults: executedActions.map((action) => ({ type: action.type, status: action.status, errorCode: action.errorCode })), success: true, latencyMs })}`);
     return response;
     } catch (error) {
       if (claimedTurnId) {

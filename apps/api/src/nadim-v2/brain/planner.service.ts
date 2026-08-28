@@ -7,7 +7,7 @@ import { NadimState } from "../domain/nadim-state";
 export class PlannerService {
   plan(understanding: NadimUnderstanding, state: NadimState): NadimPlan {
     if (state.pendingClarification) {
-      return { goal: understanding.intent, steps: [], clarification: "RESULT_REFERENCE_NOT_FOUND" };
+      return { goal: understanding.intent, steps: [], clarification: state.pendingClarification.reason };
     }
     if (understanding.ambiguity) {
       return { goal: understanding.intent, steps: [], clarification: understanding.ambiguity };
