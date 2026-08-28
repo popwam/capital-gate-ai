@@ -346,6 +346,11 @@ test("natural multi-word conversation degrades safely when semantic providers ar
   assert.equal(understood.understanding.classificationSource, "DETERMINISTIC_SAFE_FALLBACK");
   assert.equal(understood.understanding.unknownReason, "SEMANTIC_MODEL_UNAVAILABLE");
   assert.deepEqual(plan.steps, []);
+
+  const metaphor = await new UnderstandingService(unavailable).understand("نفسي أملك بس لسه الصورة مش واضحة", state());
+  assert.equal(metaphor.understanding.intent, "CONVERSATION");
+  assert.notEqual(metaphor.understanding.intent, "MEDIA_REQUEST");
+  assert.deepEqual(planner.plan(metaphor.understanding, state()).steps, []);
 });
 
 test("turn observability separates understanding diagnostics from composition and redacts meaning", async () => {

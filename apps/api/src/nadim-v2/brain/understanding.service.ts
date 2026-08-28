@@ -227,6 +227,7 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
   const languageOnly = Boolean(state.languageStyle?.explicitRequestThisTurn || addressOnlyRequest)
     && !hasMutation
     && !/(?:شقة|فيلا|وحدة|مشروع|سعر|ميزانية|تقسيط|مقدم|غرف|حمام|مساحة|متاح|صور|معاينة|حجز|apartment|villa|unit|project|price|budget|payment|bedroom|bathroom|area|available|media|viewing|reservation)/iu.test(text);
+  const mediaRequest = /(?:وريني|ابعت(?:لي)?|هات|عايز|عاوز|أبي|ابي|أبغى|ابغى|show(?:\s+me)?|send(?:\s+me)?).{0,24}(?:الصور|الصورة|صور|صورة|photos?|images?|media)|^(?:صور|صورة|photos?|images?|media)[؟?!.،,\s]*$/iu.test(text);
   let intent: NadimUnderstanding["intent"] = "UNKNOWN";
   if (/^(?:اهلا|أهلا|أهلين|هلا|السلام عليكم|صباح الخير|مساء الخير|hi|hello|hey)(?=\s|$|[،,.!?])/iu.test(text)) intent = "GREETING";
   if (hasSearch && (hasMutation || explicitSearchExecution)) intent = "PROPERTY_SEARCH";
@@ -234,7 +235,7 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
   else if (hasMutation) intent = activeSearch ? "MODIFY_SEARCH" : discoveryOnlyMutation ? "CONVERSATION" : "PROPERTY_SEARCH";
   if (reset) intent = broadResetSearch ? "PROPERTY_SEARCH" : "RESET_SEARCH";
   if (/(?:قارن|مقارنة|compare)/iu.test(text)) intent = "COMPARISON";
-  else if (/(?:صور|صورة|photos?|images?|media)/iu.test(text)) intent = "MEDIA_REQUEST";
+  else if (mediaRequest) intent = "MEDIA_REQUEST";
   else if (paymentQuestion && !["PROPERTY_SEARCH", "MODIFY_SEARCH"].includes(intent)) intent = "PAYMENT_PLAN_QUESTION";
   else if (/(?:السعر|سعرها|سعره|price|how much)/iu.test(text)) intent = "PRICE_QUESTION";
   else if (/(?:متاح|متاحة|availability|available)/iu.test(text) && !["PROPERTY_SEARCH", "MODIFY_SEARCH"].includes(intent)) intent = "AVAILABILITY_QUESTION";
