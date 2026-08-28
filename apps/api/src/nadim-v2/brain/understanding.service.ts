@@ -1,6 +1,12 @@
 import { Injectable } from "@nestjs/common";
 import { NadimConversationContext } from "../domain/nadim-conversation-context";
-import { CurrentSearchQueryTarget, NadimUnderstanding, NadimUnderstandingSchema, StateOperation } from "../domain/nadim-intent";
+import {
+  CurrentSearchQueryTarget,
+  NadimSemanticInterpretation,
+  NadimSemanticInterpretationSchema,
+  NadimUnderstanding,
+  StateOperation,
+} from "../domain/nadim-intent";
 import { NadimState } from "../domain/nadim-state";
 import { DialogueModelService } from "../providers/dialogue-model.service";
 
@@ -38,8 +44,18 @@ function withFrancoSemanticHints(value: string) {
 
 function looksLikeGibberish(value: string) {
   const compact = value.trim();
+  const latinToken = /^[a-z]{8,}$/iu.test(compact) ? compact.toLowerCase() : undefined;
+  const vowelRatio = latinToken
+    ? (latinToken.match(/[aeiouy]/gu)?.length ?? 0) / latinToken.length
+    : 1;
   return (!/[\p{L}\d]/u.test(compact) && compact.length > 0)
-    || (/^[a-z]{4,}$/iu.test(compact) && !/[aeiouy]/iu.test(compact));
+    || (/^[a-z]{4,}$/iu.test(compact) && !/[aeiouy]/iu.test(compact))
+    || Boolean(latinToken && vowelRatio < 0.3 && /[bcdfghjklmnpqrstvwxz]{4,}/iu.test(latinToken));
+}
+
+function looksLikeNaturalConversation(value: string) {
+  const tokens = value.normalize("NFKC").match(/[\p{L}\d]+/gu) ?? [];
+  return tokens.length >= 2 && tokens.some((token) => /\p{L}/u.test(token));
 }
 
 function isLanguageCapabilityQuery(text: string) {
@@ -108,6 +124,7 @@ function responseGoal(intent: NadimUnderstanding["intent"], stateQuery?: Current
   if (intent === "ASSISTANT_CAPABILITIES") return "EXPLAIN_REAL_ESTATE_SERVICE_CAPABILITIES";
   if (intent === "GREETING") return "RETURN_GREETING";
   if (intent === "SMALL_TALK") return "BRIEF_SMALL_TALK";
+  if (intent === "CONVERSATION") return "RESPOND_HELPFULLY_TO_CONVERSATION";
   if (intent === "LANGUAGE_STYLE_CHANGE") return "CONFIRM_RESPONSE_STYLE";
   if (intent === "UNKNOWN") return "CLARIFY_UNCLEAR_MESSAGE";
   if (intent === "PROPERTY_SEARCH" || intent === "MODIFY_SEARCH") return "SEARCH_VERIFIED_INVENTORY";
@@ -128,6 +145,7 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
   const operations: StateOperation[] = [];
   const activeSearch = hasActiveSearch(state);
   const modifyingSearch = /(?:خليها|خليه|خليهم|خلها|خلهم|نفس(?:ها|ه)?|نفس المواصفات|غي[ّ]?ر|عد[ّ]?ل|بدل|make it|make them|change|instead)/iu.test(text);
+  const hasSearch = /(?:عايز|عاوز|أبي|ابي|أبغى|ابغى|ودي|بدور|دورلي|وريني|ابحث|find|show me|looking for|\bneed\b|search)/iu.test(text);
   const reset = /(?:ابد[أا]\s+(?:بحث|من جديد|من الأول|من الاول)|بحث جديد|نبدأ\s+من\s+(?:جديد|الأول|الاول)|سيب\s+اللي\s+فات|reset|new search|start over)/iu.test(text);
   const broadResetSearch = reset && /(?:امشي\s+(?:أي|اي)\s+حاجة|سيب\s+(?:كل\s+)?(?:الخيارات|المواصفات)\s+مفتوحة|anything|any(?:thing)?\s+(?:is\s+)?fine|search broadly)/iu.test(text);
   if (reset) operations.push({ operation: "RESET", field: "SEARCH" });
@@ -136,8 +154,11 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
   const openLocation = activeSearch && state.search.locations.length > 0
     && /(?:سيب|خلي|خل)\s+(?:المكان|الموقع)\s+(?:مفتوح|أي\s+مكان|اي\s+مكان)|(?:anywhere|any location|leave (?:the )?location open)/iu.test(text);
   const removeLocation = (locations.length > 0 && /(?:مش مهم|فكك من|شيل|الغي|الغى|انس|بدون|remove|not important)/iu.test(text)) || openLocation;
+  const locationIsConstraint = hasSearch
+    || modifyingSearch
+    || /(?:شقة|فيلا|وحدة|مشروع|apartment|villa|unit|project)/iu.test(text);
   if (removeLocation) operations.push({ operation: "REMOVE", field: "locations" });
-  else if (locations.length) operations.push({ operation: "SET", field: "locations", value: locations.slice(0, 3) });
+  else if (locations.length && locationIsConstraint) operations.push({ operation: "SET", field: "locations", value: locations.slice(0, 3) });
 
   const bedroom = text.match(/(?:(?:خليها|خليه|خليهم|خلها|خلهم|make it|make them)\s*)?(\d{1,2})\s*-?\s*(?:غرف(?:ة)?|rooms?|bed(?:room)?s?)/iu)
     ?? text.match(/(?:غرف(?:ة)?|rooms?|bed(?:room)?s?)\s*(\d{1,2})/iu);
@@ -183,7 +204,6 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
   // "من الأول" is a reset idiom, not an ordinal selection.
   const references = reset ? [] : ordinals(text);
   const unitReference = text.match(/\b(?:unit|وحدة)\s*[:#-]?\s*([\p{L}\d][\p{L}\d_\-/ ]{1,40})/iu)?.[1]?.trim();
-  const hasSearch = /(?:عايز|عاوز|أبي|ابي|أبغى|ابغى|ودي|بدور|دورلي|وريني|ابحث|find|show me|looking for|\bneed\b|search)/iu.test(text);
   const resultSelection = references.length > 0 && state.lastResultIds.length > 0;
   const paymentPreferenceContext = hasSearch || (hasActiveSearch(state) && modifyingSearch);
   if (paymentPreferenceContext && /(?:تقسيط طويل|مدة أطول|مدة اطول|long(?:er)? installments?)/iu.test(text)) {
@@ -192,6 +212,9 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
     operations.push({ operation: "SET", field: "installmentPreference", value: "INSTALLMENTS" });
   }
   const hasMutation = operations.some((operation) => operation.operation !== "PRESERVE") && !reset;
+  const discoveryOnlyMutation = hasMutation
+    && operations.every((operation) => operation.operation === "PRESERVE" || operation.field === "purpose");
+  const explicitSearchExecution = /(?:دورلي|وريني|ابحث|find|show me|search)/iu.test(text);
   const preserveRequest = activeSearch && /(?:لا\s+توس[ّ]?ع\s+(?:الخيارات|البحث)|خليك\s+على\s+نفس\s+المواصفات|نفس\s+المواصفات(?:\s*$)|keep\s+(?:it|the search)\s+(?:the )?same|don['’]?t\s+(?:widen|broaden|relax))/iu.test(text);
   if (preserveRequest) operations.unshift({ operation: "PRESERVE", field: "SEARCH" });
   const ambiguousRelativeChange = activeSearch
@@ -206,8 +229,9 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
     && !/(?:شقة|فيلا|وحدة|مشروع|سعر|ميزانية|تقسيط|مقدم|غرف|حمام|مساحة|متاح|صور|معاينة|حجز|apartment|villa|unit|project|price|budget|payment|bedroom|bathroom|area|available|media|viewing|reservation)/iu.test(text);
   let intent: NadimUnderstanding["intent"] = "UNKNOWN";
   if (/^(?:اهلا|أهلا|أهلين|هلا|السلام عليكم|صباح الخير|مساء الخير|hi|hello|hey)(?=\s|$|[،,.!?])/iu.test(text)) intent = "GREETING";
-  if (hasSearch) intent = "PROPERTY_SEARCH";
-  else if (hasMutation) intent = activeSearch ? "MODIFY_SEARCH" : "PROPERTY_SEARCH";
+  if (hasSearch && (hasMutation || explicitSearchExecution)) intent = "PROPERTY_SEARCH";
+  else if (hasSearch) intent = "CONVERSATION";
+  else if (hasMutation) intent = activeSearch ? "MODIFY_SEARCH" : discoveryOnlyMutation ? "CONVERSATION" : "PROPERTY_SEARCH";
   if (reset) intent = broadResetSearch ? "PROPERTY_SEARCH" : "RESET_SEARCH";
   if (/(?:قارن|مقارنة|compare)/iu.test(text)) intent = "COMPARISON";
   else if (/(?:صور|صورة|photos?|images?|media)/iu.test(text)) intent = "MEDIA_REQUEST";
@@ -260,6 +284,8 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
     });
   }
 
+  const understood = intent !== "UNKNOWN";
+  const classificationSource = unintelligible ? "DETERMINISTIC_GIBBERISH" : "DETERMINISTIC_EXPLICIT";
   return {
     intent,
     confidence: unintelligible ? 0.95 : intent === "UNKNOWN" ? 0.35 : 0.9,
@@ -275,9 +301,50 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
     needsTool: intentNeedsTool(intent) && !ambiguity && !ordinalUnavailable,
     needsClarification: Boolean(ambiguity || ordinalUnavailable || unintelligible),
     clarificationReason: ambiguity ?? (ordinalUnavailable ? "RESULT_LIST_EMPTY" : unintelligible ? "UNINTELLIGIBLE" : undefined),
-    understoodMeaning: undefined,
+    understoodMeaning: intent === "CONVERSATION" && hasSearch ? "The customer is expressing broad property interest and needs guided discovery." : undefined,
     recentContextUsed: Boolean(context?.recentTurns.length && (queryTarget || references.length || modifyingSearch)),
+    understood,
+    conversationalType: intent === "CONVERSATION" ? "DISCOVERY" : intent === "UNKNOWN" ? "CLARIFICATION" : "STRUCTURED_REQUEST",
+    classificationSource,
+    unknownReason: intent === "UNKNOWN" ? (unintelligible ? "GIBBERISH_OR_CORRUPTION" : "NO_EXPLICIT_DETERMINISTIC_MATCH") : undefined,
   };
+}
+
+function semanticFallback(
+  deterministic: NadimUnderstanding,
+  message: string,
+  reason: string,
+  source: NadimUnderstanding["classificationSource"] = "DETERMINISTIC_SAFE_FALLBACK",
+): NadimUnderstanding {
+  if (deterministic.intent !== "UNKNOWN" || !looksLikeNaturalConversation(message)) {
+    return { ...deterministic, classificationSource: source, unknownReason: deterministic.intent === "UNKNOWN" ? reason : undefined };
+  }
+  return {
+    ...deterministic,
+    intent: "CONVERSATION",
+    confidence: 0.5,
+    operations: [],
+    ordinalReferences: [],
+    actionRequested: false,
+    ambiguity: undefined,
+    responseGoal: "CONTINUE_CONVERSATION_SAFELY",
+    references: [],
+    needsTool: false,
+    needsClarification: false,
+    clarificationReason: undefined,
+    understoodMeaning: "Natural-language conversation; semantic model interpretation was unavailable.",
+    recentContextUsed: false,
+    understood: true,
+    conversationalType: "CONVERSATION",
+    classificationSource: source,
+    unknownReason: reason,
+  };
+}
+
+function semanticIntent(semantic: NadimSemanticInterpretation): NadimUnderstanding["intent"] {
+  if (!semantic.understood) return "UNKNOWN";
+  if (!semantic.proposedIntent || semantic.proposedIntent === "UNKNOWN") return "CONVERSATION";
+  return semantic.proposedIntent;
 }
 
 @Injectable()
@@ -291,7 +358,9 @@ export class UnderstandingService {
     context?: NadimConversationContext,
   ): Promise<UnderstandingResult> {
     const deterministic = explicitUnderstanding(message, state, context);
-    if (!this.dialogue.available()) return { understanding: deterministic };
+    if (!this.dialogue.available()) {
+      return { understanding: semanticFallback(deterministic, message, "SEMANTIC_MODEL_UNAVAILABLE") };
+    }
     if (deterministic.intent === "UNKNOWN" && deterministic.confidence >= 0.8) return { understanding: deterministic };
     if (deterministic.confidence >= 0.8 && [
       "GREETING", "ASSISTANT_IDENTITY", "ASSISTANT_NATURE", "ASSISTANT_CAPABILITIES",
@@ -305,63 +374,91 @@ export class UnderstandingService {
     }
     try {
       const result = await this.dialogue.understand(message, state, context, trace);
-      const parsed = NadimUnderstandingSchema.safeParse(result.value);
-      if (!parsed.success) return { understanding: deterministic };
+      const parsed = NadimSemanticInterpretationSchema.safeParse(result.value);
+      const model = { provider: result.provider, model: result.model, fallbackUsed: result.fallbackUsed, latencyMs: result.latencyMs };
+      if (!parsed.success) {
+        return { understanding: semanticFallback(deterministic, message, "INVALID_SEMANTIC_INTERPRETATION", "MODEL_REJECTED"), model };
+      }
+      const semantic = parsed.data;
       const explicitFields = new Set(deterministic.operations.map((operation) => operation.field));
+      const modelOperationsAllowed = semantic.understood
+        && semantic.confidence >= 0.75
+        && ["DISCOVERY", "STRUCTURED_REQUEST"].includes(semantic.conversationalType);
       let mergedOperations = [
-        ...parsed.data.operations.filter((operation) => !explicitFields.has(operation.field)),
+        ...(modelOperationsAllowed ? semantic.proposedStateOperations.filter((operation) => !explicitFields.has(operation.field)) : []),
         ...deterministic.operations,
       ];
       const modelCanResolveContext = Boolean(context?.recentTurns.length)
-        && parsed.data.confidence >= 0.75
-        && (parsed.data.recentContextUsed || (parsed.data.references?.length ?? 0) > 0 || parsed.data.intent === "CURRENT_SEARCH_QUERY");
+        && semantic.confidence >= 0.75
+        && (semantic.recentContextUsed || semantic.references.length > 0 || semantic.proposedIntent === "CURRENT_SEARCH_QUERY");
       const contextSensitiveIntent = ["UNKNOWN", "PRICE_QUESTION", "PROPERTY_QUESTION"].includes(deterministic.intent);
+      const proposedIntent = semanticIntent(semantic);
+      const semanticCorrectsConversationalFalsePositive = proposedIntent === "CONVERSATION"
+        && semantic.confidence >= 0.85
+        && deterministic.operations.length === 0
+        && !deterministic.actionRequested
+        && ["CONVERSATION", "DISCOVERY", "REACTION", "ACKNOWLEDGEMENT"].includes(semantic.conversationalType);
       let intent = deterministic.confidence >= 0.8 && !(contextSensitiveIntent && modelCanResolveContext)
         ? deterministic.intent
-        : parsed.data.intent;
-      const stateQuery = deterministic.stateQuery ?? parsed.data.stateQuery;
+        : proposedIntent;
+      if (semanticCorrectsConversationalFalsePositive) intent = "CONVERSATION";
+      if (deterministic.intent === "CONVERSATION" && semantic.understood) intent = proposedIntent;
+      const stateQuery = deterministic.stateQuery ?? semantic.stateQuery ?? undefined;
       const modelRecoveryIsWeak = deterministic.intent === "UNKNOWN"
-        && parsed.data.intent !== "UNKNOWN"
-        && parsed.data.confidence < 0.7;
-      const modelSearchHasNoMeaning = deterministic.intent === "UNKNOWN"
-        && ["PROPERTY_SEARCH", "MODIFY_SEARCH"].includes(parsed.data.intent)
-        && parsed.data.operations.length === 0
-        && !parsed.data.ambiguity;
-      const modelStateQueryHasNoTarget = parsed.data.intent === "CURRENT_SEARCH_QUERY" && !stateQuery;
-      if (modelRecoveryIsWeak || modelSearchHasNoMeaning || modelStateQueryHasNoTarget) intent = deterministic.intent;
+        && proposedIntent !== "UNKNOWN"
+        && semantic.confidence < 0.7;
+      const modelSearchHasNoMeaning = ["UNKNOWN", "CONVERSATION"].includes(deterministic.intent)
+        && ["PROPERTY_SEARCH", "MODIFY_SEARCH"].includes(proposedIntent)
+        && deterministic.operations.length === 0
+        && semantic.proposedStateOperations.length === 0
+        && !semantic.clarification.required;
+      const modelStateQueryHasNoTarget = proposedIntent === "CURRENT_SEARCH_QUERY" && !stateQuery;
+      if (modelRecoveryIsWeak || modelSearchHasNoMeaning || modelStateQueryHasNoTarget) intent = "CONVERSATION";
+      if (!semantic.understood) intent = "UNKNOWN";
       if ([
         "GREETING", "ASSISTANT_IDENTITY", "ASSISTANT_NATURE", "ASSISTANT_CAPABILITIES", "LANGUAGE_CAPABILITY_QUERY",
         "LANGUAGE_STYLE_CHANGE", "CURRENT_SEARCH_QUERY", "CORRECTION", "SMALL_TALK", "UNKNOWN",
       ].includes(intent)) {
         mergedOperations = deterministic.operations.filter((operation) => operation.operation === "PRESERVE");
       }
-      const ambiguity = intent === deterministic.intent
-        ? deterministic.ambiguity ?? parsed.data.ambiguity
-        : parsed.data.ambiguity;
-      const references = deterministic.references?.length ? deterministic.references : parsed.data.references ?? [];
-      const understanding = {
-        ...parsed.data,
+      const semanticClarification = semantic.clarification.required ? semantic.clarification.reason ?? "SEMANTIC_CLARIFICATION_REQUIRED" : undefined;
+      const ambiguity = deterministic.ambiguity ?? (intent === "UNKNOWN" ? undefined : semanticClarification);
+      const references = deterministic.references?.length ? deterministic.references : semantic.references;
+      const selectedSemanticIntent = intent === proposedIntent || (intent === "CONVERSATION" && proposedIntent === "UNKNOWN");
+      const deterministicSelected = intent === deterministic.intent
+        && deterministic.confidence >= 0.8
+        && !semanticCorrectsConversationalFalsePositive
+        && !(contextSensitiveIntent && modelCanResolveContext);
+      const understanding: NadimUnderstanding = {
         intent,
-        confidence: Math.max(parsed.data.confidence, deterministic.confidence),
-        locale: deterministic.locale ?? parsed.data.locale,
+        confidence: Math.max(semantic.confidence, deterministic.confidence),
+        locale: deterministic.locale ?? semantic.locale ?? undefined,
         operations: mergedOperations,
-        ordinalReferences: deterministic.ordinalReferences.length ? deterministic.ordinalReferences : parsed.data.ordinalReferences,
-        unitReference: deterministic.unitReference ?? parsed.data.unitReference,
+        ordinalReferences: deterministic.ordinalReferences.length ? deterministic.ordinalReferences : semantic.ordinalReferences,
+        unitReference: deterministic.unitReference ?? semantic.unitReference ?? undefined,
+        projectReference: semantic.projectReference ?? undefined,
         stateQuery,
         ambiguity,
-        responseGoal: parsed.data.responseGoal ?? responseGoal(intent, stateQuery),
+        responseGoal: selectedSemanticIntent ? semantic.responseGoal : responseGoal(intent, stateQuery),
         references,
         needsTool: intentNeedsTool(intent) && !ambiguity,
-        needsClarification: Boolean(ambiguity || parsed.data.needsClarification),
-        clarificationReason: ambiguity ?? parsed.data.clarificationReason,
-        recentContextUsed: deterministic.recentContextUsed || parsed.data.recentContextUsed,
+        needsClarification: Boolean(ambiguity || (intent === "UNKNOWN" && semantic.clarification.required)),
+        clarificationReason: ambiguity ?? (semantic.clarification.required ? semantic.clarification.reason ?? undefined : undefined),
+        recentContextUsed: Boolean(deterministic.recentContextUsed || semantic.recentContextUsed),
+        understoodMeaning: semantic.understoodMeaning,
+        understood: semantic.understood,
+        conversationalType: semantic.conversationalType,
+        classificationSource: deterministicSelected
+          ? "DETERMINISTIC_EXPLICIT"
+          : intent === "CONVERSATION" || intent === "UNKNOWN" ? "MODEL_SEMANTIC" : "MODEL_STRUCTURED",
+        unknownReason: intent === "UNKNOWN" ? semantic.clarification.reason ?? "MODEL_COULD_NOT_INTERPRET" : undefined,
         // Model output may propose an action-shaped intent, but it cannot grant
         // execution authority. Only explicit deterministic language does that.
         actionRequested: deterministic.actionRequested,
       };
-      return { understanding, model: { provider: result.provider, model: result.model, fallbackUsed: result.fallbackUsed, latencyMs: result.latencyMs } };
+      return { understanding, model };
     } catch {
-      return { understanding: deterministic };
+      return { understanding: semanticFallback(deterministic, message, "SEMANTIC_MODEL_CALL_FAILED") };
     }
   }
 }

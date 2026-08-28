@@ -203,7 +203,16 @@ test("noisy budget questions use semantic understanding with active state and ne
       modelCalls += 1;
       suppliedBudget = current.search.budgetMax;
       return {
-        value: { intent: "CURRENT_SEARCH_QUERY", confidence: 0.93, operations: [{ operation: "SET", field: "budgetMax", value: 99_000_000 }], ordinalReferences: [], actionRequested: false, stateQuery: "budgetMax" },
+        value: {
+          understood: true,
+          understoodMeaning: "The customer is asking for the currently stored maximum budget.",
+          responseGoal: "ANSWER_CURRENT_BUDGET",
+          conversationalType: "STRUCTURED_REQUEST",
+          proposedIntent: "CURRENT_SEARCH_QUERY",
+          proposedStateOperations: [{ operation: "SET", field: "budgetMax", value: 99_000_000 }],
+          references: [], toolNeed: { required: false }, clarification: { required: false },
+          confidence: 0.93, stateQuery: "budgetMax", ordinalReferences: [], recentContextUsed: true,
+        },
         provider: "test", model: "semantic-test", fallbackUsed: false, latencyMs: 1,
       };
     },
@@ -517,9 +526,24 @@ class FakeProvider {
   async health() { return { provider: this.provider, enabled: true, configured: true, healthy: true, model: this.model }; }
 }
 
+const semanticGreetingJson = JSON.stringify({
+  understood: true,
+  understoodMeaning: "The customer is greeting Nadim.",
+  responseGoal: "RETURN_THE_GREETING_BRIEFLY",
+  conversationalType: "CONVERSATION",
+  proposedIntent: null,
+  proposedStateOperations: [],
+  references: [],
+  toolNeed: { required: false },
+  clarification: { required: false },
+  confidence: 0.96,
+  ordinalReferences: [],
+  recentContextUsed: true,
+});
+
 test("25 Groq is primary for contextual dialogue and receives compact redacted history", async () => {
   const glm = new FakeProvider("bedrock-glm", "zai.glm-5", "unused");
-  const groq = new FakeProvider("groq", "llama", '{"intent":"GREETING"}');
+  const groq = new FakeProvider("groq", "llama", semanticGreetingJson);
   const current = state({ customerId: "customer-secret", externalUserId: "278425818370206@lid" });
   const context: NadimConversationContext = {
     stage: "ACTIVE_SEARCH",
@@ -533,13 +557,14 @@ test("25 Groq is primary for contextual dialogue and receives compact redacted h
   assert.match(payload, /صباح الخير/u);
   assert.match(payload, /ACTIVE_SEARCH/u);
   assert.doesNotMatch(payload, /customer-secret|278425818370206/u);
+  assert.match(String(groq.lastMessages[0]?.content), /Ordinary meaningful conversation does not need a dedicated intent/u);
   const composed = await dialogue.compose({ responseGoal: "BRIEF_SMALL_TALK" });
   assert.equal(composed.provider, "groq");
   assert.equal(glm.calls, 0);
 });
 
 test("26 Groq failure falls back to GLM", async () => {
-  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", '{"intent":"GREETING"}');
+  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", semanticGreetingJson);
   const groq = new FakeProvider("groq", "primary", new DialogueProviderError("groq", "HTTP_503"));
   const result = await new DialogueModelService(glm as any, groq as any).understand("hi", state());
   assert.equal(result.provider, "bedrock-glm");
@@ -580,7 +605,15 @@ test("model output alone cannot authorize an action", async () => {
   const model: any = {
     available: () => true,
     understand: async () => ({
-      value: { intent: "VIEWING_REQUEST", confidence: 0.99, operations: [], ordinalReferences: [], actionRequested: true },
+      value: {
+        understood: true,
+        understoodMeaning: "The customer may be asking to arrange a viewing.",
+        responseGoal: "HANDLE_VIEWING_REQUEST",
+        conversationalType: "STRUCTURED_REQUEST",
+        proposedIntent: "VIEWING_REQUEST",
+        proposedStateOperations: [], references: [], toolNeed: { required: false }, clarification: { required: false },
+        confidence: 0.99, ordinalReferences: [], recentContextUsed: false,
+      },
       provider: "test",
       model: "test",
       fallbackUsed: false,

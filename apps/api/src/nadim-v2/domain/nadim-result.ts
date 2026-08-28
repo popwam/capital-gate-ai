@@ -21,6 +21,15 @@ export type NadimTurnResult = {
     modelProvider?: string;
     model?: string;
     fallbackUsed: boolean;
+    understandingModelProvider?: string;
+    understandingModel?: string;
+    understandingFallbackUsed: boolean;
+    classificationSource?: string;
+    understoodMeaning?: string;
+    responseGoal?: string;
+    unknownReason?: string;
+    recentContextUsed: boolean;
+    toolDecision: "EXECUTE" | "CLARIFY" | "NO_TOOL";
     toolNames: string[];
     latencyMs: number;
   };

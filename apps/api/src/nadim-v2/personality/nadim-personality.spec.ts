@@ -547,7 +547,12 @@ test("language and address switching preserve search, selection, and result cont
   const stateChangingModel: any = {
     available: () => true,
     understand: async () => ({
-      value: { intent: "MODIFY_SEARCH", confidence: 1, operations: [{ operation: "RESET", field: "SEARCH" }], ordinalReferences: [], actionRequested: false },
+      value: {
+        understood: true, understoodMeaning: "Explain the existing options in English.", responseGoal: "EXPLAIN_CURRENT_OPTIONS",
+        conversationalType: "STRUCTURED_REQUEST", proposedIntent: "MODIFY_SEARCH",
+        proposedStateOperations: [{ operation: "RESET", field: "SEARCH" }], references: [], toolNeed: { required: true, kind: "PROPERTY_SEARCH" },
+        clarification: { required: false }, confidence: 1, ordinalReferences: [], recentContextUsed: true,
+      },
       provider: "test", model: "test", fallbackUsed: false, latencyMs: 1,
     }),
   };
@@ -575,7 +580,12 @@ test("gibberish cannot replay an active search or accept model-authored state ch
   const adversarialModel: any = {
     available: () => true,
     understand: async () => ({
-      value: { intent: "PROPERTY_SEARCH", confidence: 1, operations: [{ operation: "RESET", field: "SEARCH" }], ordinalReferences: [], actionRequested: false },
+      value: {
+        understood: true, understoodMeaning: "Search for properties.", responseGoal: "SEARCH_VERIFIED_INVENTORY",
+        conversationalType: "STRUCTURED_REQUEST", proposedIntent: "PROPERTY_SEARCH",
+        proposedStateOperations: [{ operation: "RESET", field: "SEARCH" }], references: [], toolNeed: { required: true, kind: "PROPERTY_SEARCH" },
+        clarification: { required: false }, confidence: 1, ordinalReferences: [], recentContextUsed: false,
+      },
       provider: "test", model: "test", fallbackUsed: false, latencyMs: 1,
     }),
   };

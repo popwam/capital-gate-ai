@@ -11,6 +11,15 @@ import { NadimTurnDto } from "./dto/nadim-turn.dto";
 import { LanguageStyleDetectorService } from "./personality/language-style-detector.service";
 import { nadimTurnRequestHash, NadimConversationService } from "./persistence/nadim-conversation.service";
 
+function safeDiagnosticMeaning(value?: string) {
+  if (!value) return undefined;
+  return value
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/gu, "[email]")
+    .replace(/(?:\+?\d[\d\s().-]{6,}\d)/gu, "[phone]")
+    .replace(/\b[\w-]{32,}\b/gu, "[identifier]")
+    .slice(0, 240);
+}
+
 @Injectable()
 export class NadimV2Service {
   private readonly logger = new Logger(NadimV2Service.name);
@@ -93,6 +102,8 @@ export class NadimV2Service {
     state = this.stateEngine.withAssistantWording(state, composed.reply);
     const model = composed.model ?? understood.model;
     const fallbackUsed = Boolean(understood.model?.fallbackUsed || composed.model?.fallbackUsed);
+    const understoodMeaning = safeDiagnosticMeaning(understood.understanding.understoodMeaning);
+    const toolDecision = plan.steps.length ? "EXECUTE" as const : plan.clarification ? "CLARIFY" as const : "NO_TOOL" as const;
     const latencyMs = Date.now() - started;
     const response: NadimTurnResult = {
       ok: true,
@@ -111,6 +122,15 @@ export class NadimV2Service {
         modelProvider: model?.provider,
         model: model?.model,
         fallbackUsed,
+        understandingModelProvider: understood.model?.provider,
+        understandingModel: understood.model?.model,
+        understandingFallbackUsed: Boolean(understood.model?.fallbackUsed),
+        classificationSource: understood.understanding.classificationSource,
+        understoodMeaning,
+        responseGoal: understood.understanding.responseGoal,
+        unknownReason: understood.understanding.unknownReason,
+        recentContextUsed: Boolean(understood.understanding.recentContextUsed),
+        toolDecision,
         toolNames: plan.steps.map((step) => step.tool),
         latencyMs,
       },
@@ -136,7 +156,7 @@ export class NadimV2Service {
       claimedTurnId,
       response,
     });
-    this.logger.log(`NadimV2Turn ${JSON.stringify({ requestId, conversationId: resolved.conversation.id, customerId: state.customerId ?? null, channel: input.channel, brainVersion: "v2", intent: understood.understanding.intent, responseGoal: understood.understanding.responseGoal ?? plan.goal, referenceResolution: (understood.understanding.references ?? []).map((reference) => ({ resolvedAs: reference.resolvedAs, confidence: reference.confidence })), recentContextUsed: understood.understanding.recentContextUsed ?? false, conversationStage: resolved.conversationContext?.stage ?? null, languageStyle: state.languageStyle.preferredResponseStyle, toolDecision: plan.steps.length ? "EXECUTE" : plan.clarification ? "CLARIFY" : "NO_TOOL", tools: plan.steps.map((step) => step.tool), modelProvider: model?.provider ?? "deterministic", model: model?.model ?? null, fallbackUsed, modelLatencyMs: (understood.model?.latencyMs ?? 0) + (composed.model?.latencyMs ?? 0), toolLatencyMs: toolResults.reduce((sum, result) => sum + result.latencyMs, 0), proposedActions: proposedActions.map((action) => action.type), actionResults: executedActions.map((action) => ({ type: action.type, status: action.status, errorCode: action.errorCode })), success: true, latencyMs })}`);
+    this.logger.log(`NadimV2Turn ${JSON.stringify({ requestId, conversationId: resolved.conversation.id, customerId: state.customerId ?? null, channel: input.channel, brainVersion: "v2", intent: understood.understanding.intent, classificationSource: understood.understanding.classificationSource ?? "UNSPECIFIED", unknownReason: understood.understanding.unknownReason ?? null, understoodMeaning: understoodMeaning ?? null, responseGoal: understood.understanding.responseGoal ?? plan.goal, referenceResolution: (understood.understanding.references ?? []).map((reference) => ({ resolvedAs: reference.resolvedAs, confidence: reference.confidence })), recentContextUsed: understood.understanding.recentContextUsed ?? false, conversationStage: resolved.conversationContext?.stage ?? null, languageStyle: state.languageStyle.preferredResponseStyle, toolDecision, tools: plan.steps.map((step) => step.tool), understandingModelProvider: understood.model?.provider ?? "deterministic", understandingModel: understood.model?.model ?? null, understandingFallbackUsed: understood.model?.fallbackUsed ?? false, modelProvider: model?.provider ?? "deterministic", model: model?.model ?? null, fallbackUsed, modelLatencyMs: (understood.model?.latencyMs ?? 0) + (composed.model?.latencyMs ?? 0), toolLatencyMs: toolResults.reduce((sum, result) => sum + result.latencyMs, 0), proposedActions: proposedActions.map((action) => action.type), actionResults: executedActions.map((action) => ({ type: action.type, status: action.status, errorCode: action.errorCode })), success: true, latencyMs })}`);
     return response;
     } catch (error) {
       if (claimedTurnId) {
