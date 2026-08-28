@@ -8,7 +8,10 @@ import { ActionPolicyService } from "./brain/action-policy.service";
 import { PlannerService } from "./brain/planner.service";
 import { ResponseComposerService } from "./brain/response-composer.service";
 import { StateEngineService } from "./brain/state-engine.service";
+import { ConversationControlService } from "./brain/conversation-control.service";
 import { ToolExecutorService } from "./brain/tool-executor.service";
+import { ToolLoopService } from "./brain/tool-loop.service";
+import { DeterministicTimeService } from "./brain/deterministic-time.service";
 import { UnderstandingService } from "./brain/understanding.service";
 import { NadimV2Controller } from "./nadim-v2.controller";
 import { NadimV2Service } from "./nadim-v2.service";
@@ -32,8 +35,11 @@ import { NadimGatewayGuard } from "./security/nadim-gateway.guard";
     DialogueModelService,
     UnderstandingService,
     StateEngineService,
+    ConversationControlService,
     PlannerService,
     ToolExecutorService,
+    ToolLoopService,
+    DeterministicTimeService,
     AutomationActionClient,
     ActionPolicyService,
     ResponseComposerService,

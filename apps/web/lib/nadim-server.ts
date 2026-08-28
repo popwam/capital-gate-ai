@@ -17,6 +17,7 @@ export type NadimWebTurnInput = {
   displayMessage?: string;
   locale?: string;
   eventId: string;
+  controlCommand?: "REQUEST_HUMAN_HANDOFF" | "RETURN_TO_AI" | "REQUEST_CONVERSATION_DELETION" | "CONFIRM_CONVERSATION_DELETION";
 };
 
 export type NadimWebTurnResult = {
@@ -28,7 +29,10 @@ export type NadimWebTurnResult = {
     content: string;
     toolPayload?: Record<string, unknown> | null;
     createdAt: string;
-  };
+  } | null;
+  suppressReply: boolean;
+  mode: "AI" | "HUMAN" | "PAUSED";
+  deleted?: boolean;
   state?: { languageStyle?: { preferredResponseStyle?: string } };
 };
 
@@ -41,6 +45,9 @@ type NadimUpstreamResult = {
   state?: { languageStyle?: { preferredResponseStyle?: string } };
   version?: unknown;
   replayed?: unknown;
+  suppressReply?: unknown;
+  mode?: unknown;
+  deleted?: unknown;
 };
 const rateWindows = new Map<string, RateWindow>();
 
@@ -82,6 +89,10 @@ export function parseNadimWebTurnInput(value: unknown): NadimWebTurnInput {
   const locale = typeof input.locale === "string" && input.locale.trim()
     ? requiredText(input.locale, "locale", 35)
     : undefined;
+  const controlCommands = ["REQUEST_HUMAN_HANDOFF", "RETURN_TO_AI", "REQUEST_CONVERSATION_DELETION", "CONFIRM_CONVERSATION_DELETION"] as const;
+  const controlCommand = typeof input.controlCommand === "string" && (controlCommands as readonly string[]).includes(input.controlCommand)
+    ? input.controlCommand as NadimWebTurnInput["controlCommand"]
+    : undefined;
   return {
     legacyConversationId: requiredText(input.legacyConversationId, "legacyConversationId", 200),
     conversationId,
@@ -92,6 +103,7 @@ export function parseNadimWebTurnInput(value: unknown): NadimWebTurnInput {
       : undefined,
     locale,
     eventId: requiredText(input.eventId, "eventId", 200),
+    controlCommand,
   };
 }
 
@@ -201,6 +213,7 @@ export async function forwardNadimWebTurn(
         ...(input.conversationId ? { conversationId: input.conversationId } : {}),
         externalUserId,
         message: input.message,
+        ...(input.controlCommand ? { controlCommand: input.controlCommand } : {}),
         ...(input.locale ? { locale: input.locale } : {}),
         metadata: { eventId: input.eventId, webConversationId: input.legacyConversationId },
       }),
@@ -222,6 +235,12 @@ export async function forwardNadimWebTurn(
     throw new NadimWebAdapterError(502, "Nadim returned an invalid response", "INVALID_NADIM_RESPONSE", requestId, "upstream_validation");
   }
 
+  const suppressReply = result.suppressReply === true;
+  const mode = result.mode === "HUMAN" || result.mode === "PAUSED" ? result.mode : "AI";
+  if (result.deleted === true) {
+    return { conversationId: result.conversationId, reply: result.reply, message: null, state: result.state, suppressReply: false, mode, deleted: true };
+  }
+
   const persistUrl = `${apiUrl}/v1/internal/web-chat/persist`;
   try {
     const persisted = await fetcher(persistUrl, {
@@ -232,7 +251,7 @@ export async function forwardNadimWebTurn(
         nadimConversationId: result.conversationId,
         eventId: input.eventId,
         userMessage: input.displayMessage ?? input.message,
-        assistantReply: result.reply,
+        ...(suppressReply ? { suppressReply: true } : { assistantReply: result.reply }),
         resultMetadata: {
           intent: result.intent,
           languageStyle: result.state?.languageStyle,
@@ -245,14 +264,16 @@ export async function forwardNadimWebTurn(
     });
     const message = await persisted.json();
     if (!persisted.ok || !message) throw safeUpstreamError(persisted.status, message, persisted.headers.get("x-request-id") ?? requestId, "conversation_persist");
-    return { conversationId: result.conversationId, reply: result.reply, message, state: result.state };
+    return { conversationId: result.conversationId, reply: result.reply, message: suppressReply ? null : message, state: result.state, suppressReply, mode };
   } catch (error) {
     logNadimAdapterFailure(error, { stage: "conversation_persist", requestId, conversationId: result.conversationId, upstreamUrl: persistUrl });
     return {
       conversationId: result.conversationId,
       reply: result.reply,
-      message: synthesizedMessage(input, result.reply),
+      message: suppressReply ? null : synthesizedMessage(input, result.reply),
       state: result.state,
+      suppressReply,
+      mode,
     };
   }
 }

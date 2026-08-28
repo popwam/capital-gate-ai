@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { NadimUnderstanding } from "../domain/nadim-intent";
-import { NadimPlan } from "../domain/nadim-plan";
+import { NADIM_TOOLS, NadimPlan, NadimToolName } from "../domain/nadim-plan";
 import { NadimState } from "../domain/nadim-state";
 
 @Injectable()
@@ -11,6 +11,22 @@ export class PlannerService {
     }
     if (understanding.ambiguity) {
       return { goal: understanding.intent, steps: [], clarification: understanding.ambiguity };
+    }
+    if (understanding.proposedToolCalls) {
+      if (understanding.needsClarification || understanding.stateQueries?.length) {
+        return { goal: understanding.responseGoal ?? "CLARIFY", steps: [], clarification: understanding.clarificationReason };
+      }
+      const steps = understanding.proposedToolCalls.flatMap((proposal) => {
+        if (!(NADIM_TOOLS as readonly string[]).includes(proposal.tool)) return [];
+        const tool = proposal.tool as NadimToolName;
+        const arguments_ = { ...proposal.arguments };
+        if (["GET_UNIT_FACTS", "GET_PAYMENT_PLAN", "GET_AVAILABILITY", "GET_MEDIA", "GET_LOCATION"].includes(tool)
+          && !arguments_.unitId && state.selectedUnitId) arguments_.unitId = state.selectedUnitId;
+        if (tool === "COMPARE_PROPERTIES" && !arguments_.unitIds) arguments_.unitIds = state.comparisonUnitIds;
+        if (tool === "PROPERTY_SEARCH") arguments_.limit = Math.min(10, Math.max(1, Number(arguments_.limit ?? 5)));
+        return [{ tool, arguments: arguments_ }];
+      }).slice(0, 2);
+      return { goal: understanding.responseGoal ?? understanding.intent, steps };
     }
     const selectedUnitId = state.selectedUnitId;
     const unitArguments = selectedUnitId ? { unitId: selectedUnitId } : understanding.unitReference ? { unitReference: understanding.unitReference } : undefined;

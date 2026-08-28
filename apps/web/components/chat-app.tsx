@@ -12,7 +12,7 @@ import { textDirection } from "@/lib/text-direction";
 
 type MessageKind = "text" | "properties" | "media" | "documents" | "map" | "lead_prompt" | "lead_created" | "conversation_closed";
 type Message = { id: string; role: "user" | "assistant"; text: string; kind?: MessageKind; payload?: any };
-type Conversation = { id: string; title: string; updatedAt: string; messages: Message[]; nadimConversationId?: string; closed?: boolean };
+type Conversation = { id: string; title: string; updatedAt: string; messages: Message[]; nadimConversationId?: string; mode?: "AI" | "HUMAN" | "PAUSED"; closed?: boolean };
 type ActionSend = (value: string, displayValue?: string) => void;
 
 const starters = [
@@ -47,7 +47,7 @@ export default function ChatApp() {
     const saved = localStorage.getItem("cgai-conversations");
     if (saved) try { setConversations(JSON.parse(saved)); } catch { /* cache is optional */ }
     conversationsApi.list().then(items => {
-      const incoming = items.map(c => ({ id: c.id, title: c.title || "New conversation", updatedAt: new Date(c.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }), messages: [] as Message[], nadimConversationId: c.nadimConversationId ?? undefined, closed: Boolean(c.closed) }));
+      const incoming = items.map(c => ({ id: c.id, title: c.title || "New conversation", updatedAt: new Date(c.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }), messages: [] as Message[], nadimConversationId: c.nadimConversationId ?? undefined, mode: c.mode ?? "AI", closed: Boolean(c.closed) }));
       setConversations(current => mergeConversationIndex(current, incoming, locallyCreatedIdsRef.current));
       const savedActiveId = localStorage.getItem("cgai-active-conversation");
       if (savedActiveId && incoming.some(conversation => conversation.id === savedActiveId)) setActiveId(savedActiveId);
@@ -93,7 +93,7 @@ export default function ChatApp() {
     setConversations(prev => appendUniqueMessage(prev.map(c => c.id === id ? { ...c, updatedAt: "Now" } : c), id, message));
   }
 
-  async function send(value = input, displayValue?: string) {
+  async function send(value = input, displayValue?: string, controlCommand?: "REQUEST_HUMAN_HANDOFF" | "RETURN_TO_AI") {
     const clean = value.trim();
     const visible = (displayValue ?? value).trim();
     if (!clean || generating || active?.closed) return;
@@ -111,7 +111,7 @@ export default function ChatApp() {
         id = created.id;
         locallyCreatedIdsRef.current.add(id);
         skipHistoryOnceRef.current.add(id);
-        setConversations(prev => [{ id, title: created.title || title, updatedAt: "الآن", messages: [userMessage], closed: false }, ...prev.filter(c => c.id !== id)]);
+        setConversations(prev => [{ id, title: created.title || title, updatedAt: "الآن", messages: [userMessage], mode: "AI", closed: false }, ...prev.filter(c => c.id !== id)]);
         setActiveId(id);
         setFreshMessages([]);
         setFreshTitle("");
@@ -124,9 +124,16 @@ export default function ChatApp() {
         ...(visible !== clean ? { displayMessage: visible } : {}),
         locale: lang === "AR" ? "ar" : "en-US",
         eventId,
+        ...(controlCommand ? { controlCommand } : {}),
       });
-      append(id, normalizeMessage(completed.message));
-      setConversations(prev => prev.map(c => c.id === id ? { ...c, nadimConversationId: completed.conversationId } : c));
+      if (completed.deleted) {
+        setConversations(prev => prev.filter(c => c.id !== id));
+        setActiveId("fresh");
+        setFreshMessages([]);
+        return;
+      }
+      if (completed.message) append(id, normalizeMessage(completed.message));
+      setConversations(prev => prev.map(c => c.id === id ? { ...c, nadimConversationId: completed.conversationId, mode: completed.mode } : c));
       const responseStyle = String(completed.state?.languageStyle?.preferredResponseStyle ?? "");
       if (responseStyle === "EN_US" || responseStyle === "FRANCO_ARABIC") setLang("EN");
       else if (responseStyle.startsWith("AR_")) setLang("AR");
@@ -139,7 +146,14 @@ export default function ChatApp() {
   }
 
   async function removeConversation(id: string) {
+    if (!window.confirm(isArabic ? "حذف المحادثة وذاكرتها نهائيًا؟" : "Delete this conversation and its memory permanently?")) return;
     try { await conversationsApi.remove(id); setConversations(prev => prev.filter(c => c.id !== id)); if (activeId === id) setActiveId("fresh"); } catch (error) { setConnectionError(error instanceof Error ? error.message : "Delete failed"); }
+  }
+  function requestHuman() {
+    void send(isArabic ? "عايز أكمل مع حد من الفريق" : "I want to continue with a team member", undefined, "REQUEST_HUMAN_HANDOFF");
+  }
+  function returnToNadim() {
+    void send(isArabic ? "رجّع نديم للمحادثة" : "Return Nadim to the conversation", undefined, "RETURN_TO_AI");
   }
   async function renameConversation(id: string, current: string) { const title = window.prompt("Rename conversation", current)?.trim(); if (!title) return; try { await conversationsApi.rename(id, title); setConversations(prev => prev.map(c => c.id === id ? {...c,title} : c)); } catch (error) { setConnectionError(error instanceof Error ? error.message : "Rename failed"); } }
 
@@ -163,6 +177,8 @@ export default function ChatApp() {
           <div className="flex items-center gap-2">
             <span className="hidden items-center gap-1.5 text-[11px] font-medium sm:flex" style={{ color: 'var(--ink-tertiary)' }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: 'var(--success)' }}/>{isArabic ? "مخزون موثق" : "Verified inventory"}</span>
             <button onClick={() => setLang(lang === "EN" ? "AR" : "EN")} className="btn-ghost grid h-11 min-w-11 place-items-center rounded-lg px-2 text-[11px] font-bold" aria-label={lang === "EN" ? "التبديل إلى العربية" : "Switch to English"}>{lang === "EN" ? "AR" : "EN"}</button>
+            {active && active.mode !== "HUMAN" && <button onClick={requestHuman} disabled={generating} className="btn-ghost hidden h-9 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold disabled:opacity-50 sm:flex" aria-label={isArabic ? "التحدث مع أحد أعضاء الفريق" : "Talk to a team member"}><MessageSquareText size={14}/>{isArabic ? "تحدث مع الفريق" : "Talk to human"}</button>}
+            {active && active.mode !== "HUMAN" && <button onClick={requestHuman} disabled={generating} className="btn-ghost grid h-11 w-11 place-items-center rounded-lg disabled:opacity-50 sm:hidden" aria-label={isArabic ? "التحدث مع أحد أعضاء الفريق" : "Talk to a team member"}><MessageSquareText size={17}/></button>}
             <button onClick={newChat} className="grid h-11 w-11 place-items-center rounded-lg hover:bg-[var(--surface-inset)] lg:hidden" aria-label={isArabic ? "محادثة جديدة" : "New conversation"}><Plus size={17}/></button>
           </div>
         </header>
@@ -176,7 +192,7 @@ export default function ChatApp() {
           )}
         </div>
         {connectionError && <div className="absolute bottom-[132px] left-1/2 z-30 -translate-x-1/2 rounded-full px-4 py-2 text-[11px] font-semibold text-white" style={{ background: 'var(--error-text)', boxShadow: 'var(--shadow-lg)' }}>{connectionError}</div>}
-        {active?.closed ? <ClosedComposer isArabic={isArabic} onNew={newChat}/> : <Composer input={input} setInput={setInput} send={() => send()} disabled={generating} isArabic={isArabic}/>}
+        {active?.closed ? <ClosedComposer isArabic={isArabic} onNew={newChat}/> : active?.mode === "HUMAN" ? <HumanHandoffComposer isArabic={isArabic} onReturn={returnToNadim} disabled={generating}/> : <Composer input={input} setInput={setInput} send={() => send()} disabled={generating} isArabic={isArabic}/>}
       </section>
     </main>
   );
@@ -320,6 +336,10 @@ function LeadHint({created,action,onAction,isArabic}:{created:boolean;action?:an
 
 function ClosedComposer({isArabic,onNew}:{isArabic:boolean;onNew:()=>void}) {
   return <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-8 sm:px-6" style={{ background: 'linear-gradient(to top, var(--surface-base), var(--surface-base) 64%, transparent)' }}><div className="pointer-events-auto mx-auto flex max-w-[820px] items-center justify-between gap-3 rounded-xl border border-[var(--warning-border)] bg-white p-3"><p className="text-[13px]" style={{ color: 'var(--ink-secondary)' }}>{isArabic?"المحادثة دي انتهت.":"This conversation has ended."}</p><button onClick={onNew} className="btn-primary min-h-10 shrink-0 rounded-lg px-3 text-[12px] font-bold text-white" style={{ background: 'var(--forest)' }}>{isArabic?"محادثة جديدة":"New conversation"}</button></div></div>;
+}
+
+function HumanHandoffComposer({isArabic,onReturn,disabled}:{isArabic:boolean;onReturn:()=>void;disabled:boolean}) {
+  return <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-8 sm:px-6" style={{ background: 'linear-gradient(to top, var(--surface-base), var(--surface-base) 64%, transparent)' }}><div className="pointer-events-auto mx-auto flex max-w-[820px] items-center justify-between gap-3 rounded-xl border border-[var(--border-default)] bg-white p-3"><div><p className="text-[13px] font-bold" style={{ color: 'var(--ink-primary)' }}>{isArabic?"المحادثة مع الفريق البشري":"A team member owns this conversation"}</p><p className="mt-0.5 text-[11px]" style={{ color: 'var(--ink-tertiary)' }}>{isArabic?"نديم مش هيرد لحد ما ترجّعه للمحادثة.":"Nadim will stay silent until you return control."}</p></div><button disabled={disabled} onClick={onReturn} className="btn-primary min-h-10 shrink-0 rounded-lg px-3 text-[12px] font-bold text-white disabled:opacity-50" style={{ background: 'var(--forest)' }}>{isArabic?"رجّع نديم":"Return Nadim"}</button></div></div>;
 }
 
 function Composer({ input, setInput, send, disabled, isArabic }: {input:string;setInput:(v:string)=>void;send:()=>void;disabled:boolean;isArabic:boolean}) {

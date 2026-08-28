@@ -14,10 +14,10 @@ export class ConversationsService {
   }
   async list(rawToken: string) {
     const device = await this.devices.resolve(rawToken);
-    const rows = await this.prisma.conversation.findMany({ where: { deviceId: device.id }, orderBy: { updatedAt: "desc" }, select: { id: true, title: true, detectedLanguage: true, nadimConversationId: true, createdAt: true, updatedAt: true, state: { select: { searchContext: true } }, _count: { select: { messages: true } } } });
+    const rows = await this.prisma.conversation.findMany({ where: { deviceId: device.id }, orderBy: { updatedAt: "desc" }, select: { id: true, title: true, detectedLanguage: true, nadimConversationId: true, nadimConversation: { select: { mode: true } }, createdAt: true, updatedAt: true, state: { select: { searchContext: true } }, _count: { select: { messages: true } } } });
     return rows.map((row) => {
       const context = row.state?.searchContext as any;
-      return { ...row, closed: Boolean(context?.presentation?.conversationClosed), state: undefined };
+      return { ...row, mode: row.nadimConversation?.mode ?? "AI", nadimConversation: undefined, closed: Boolean(context?.presentation?.conversationClosed), state: undefined };
     });
   }
   async create(rawToken: string, title?: string) {

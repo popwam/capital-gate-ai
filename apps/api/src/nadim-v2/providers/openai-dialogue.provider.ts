@@ -73,13 +73,14 @@ export abstract class OpenAICompatibleDialogueProvider implements DialogueProvid
   }
 
   async health(): Promise<DialogueHealth> {
-    if (!this.enabled()) return { provider: this.provider, enabled: false, configured: this.configured(), healthy: true, model: this.model || null };
-    if (!this.configured()) return { provider: this.provider, enabled: true, configured: false, healthy: false, model: this.model || null, errorCode: "NOT_CONFIGURED" };
+    const started = Date.now();
+    if (!this.enabled()) return { provider: this.provider, enabled: false, configured: this.configured(), healthy: false, model: this.model || null, errorCode: "DISABLED", latencyMs: 0 };
+    if (!this.configured()) return { provider: this.provider, enabled: true, configured: false, healthy: false, model: this.model || null, errorCode: "NOT_CONFIGURED", latencyMs: 0 };
     try {
       await this.complete([{ role: "user", content: "Reply with OK." }]);
-      return { provider: this.provider, enabled: true, configured: true, healthy: true, model: this.model };
+      return { provider: this.provider, enabled: true, configured: true, healthy: true, model: this.model, latencyMs: Date.now() - started };
     } catch (error) {
-      return { provider: this.provider, enabled: true, configured: true, healthy: false, model: this.model, errorCode: error instanceof DialogueProviderError ? error.code : "NETWORK" };
+      return { provider: this.provider, enabled: true, configured: true, healthy: false, model: this.model, errorCode: error instanceof DialogueProviderError ? error.code : "NETWORK", latencyMs: Date.now() - started };
     }
   }
 }

@@ -1,5 +1,6 @@
 import type { CurrentSearchQueryTarget, NadimIntentType } from "./nadim-intent";
 import type { NadimState } from "./nadim-state";
+import type { NadimConversationMode } from "./nadim-action";
 
 export type NadimConversationStage = "DISCOVERY" | "ACTIVE_SEARCH" | "RESULTS_AVAILABLE" | "RESULT_SELECTED";
 
@@ -20,9 +21,13 @@ export type NadimRecentTurnContext = {
 };
 
 export type NadimConversationContext = {
+  mode?: NadimConversationMode;
   stage: NadimConversationStage;
   recentTurns: NadimRecentTurnContext[];
   lastVerifiedToolSummary?: NadimRecentToolSummary[];
+  summary?: Record<string, unknown>;
+  customerContext?: Record<string, unknown>;
+  pendingDeletion?: { requestedAt: string; expiresAt: string };
 };
 
 export function conversationStage(state: NadimState): NadimConversationStage {

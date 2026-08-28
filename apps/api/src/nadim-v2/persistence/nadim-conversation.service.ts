@@ -6,6 +6,7 @@ import { NadimTurnDto } from "../dto/nadim-turn.dto";
 import { conversationStage, NadimConversationContext, NadimRecentToolSummary, NadimRecentTurnContext } from "../domain/nadim-conversation-context";
 import { CURRENT_SEARCH_QUERY_TARGETS, NADIM_INTENTS, NadimIntentType } from "../domain/nadim-intent";
 import { NadimTurnResult } from "../domain/nadim-result";
+import { NadimConversationMode } from "../domain/nadim-action";
 import { initialNadimState, NadimState } from "../domain/nadim-state";
 
 function json(value: unknown) {
@@ -32,6 +33,12 @@ function canonical(value: unknown): string {
 function objectValue(value: Prisma.JsonValue): Record<string, Prisma.JsonValue> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, Prisma.JsonValue>
+    : undefined;
+}
+
+function plainObject(value: Prisma.JsonValue | null | undefined): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
     : undefined;
 }
 
@@ -89,7 +96,12 @@ export class NadimConversationService {
     const existing = await this.prisma.nadimTurn.findUnique({
       where: { channel_idempotencyKey: { channel, idempotencyKey } },
     });
-    return existing ? this.replay(existing, requestHash) : null;
+    if (existing) return this.replay(existing, requestHash);
+    const deletion = await this.prisma.nadimDeletionReceipt.findUnique({
+      where: { channel_idempotencyKey: { channel, idempotencyKey } },
+    });
+    if (deletion) return this.replay(deletion, requestHash);
+    return null;
   }
 
   async claimIdempotent(input: {
@@ -144,12 +156,15 @@ export class NadimConversationService {
       throw new ConflictException({ code: "NADIM_CUSTOMER_IDENTITY_CONFLICT", message: "Customer and channel identity conflict", safe: true });
     }
     const resolvedCustomerId = explicitCustomer?.id ?? channelIdentity?.customerId;
+    const supportsLifecycleFilter = typeof this.prisma.nadimConversation.findFirst === "function";
     let conversation = input.conversationId
-      ? await this.prisma.nadimConversation.findUnique({ where: { id: input.conversationId } })
+      ? supportsLifecycleFilter
+        ? await this.prisma.nadimConversation.findFirst({ where: { id: input.conversationId, deletedAt: null } })
+        : await this.prisma.nadimConversation.findUnique({ where: { id: input.conversationId } })
       : resolvedCustomerId
-        ? await this.prisma.nadimConversation.findFirst({ where: { customerId: resolvedCustomerId }, orderBy: { updatedAt: "desc" } })
+        ? await this.prisma.nadimConversation.findFirst({ where: { customerId: resolvedCustomerId, deletedAt: null }, orderBy: { updatedAt: "desc" } })
         : input.externalUserId
-          ? await this.prisma.nadimConversation.findFirst({ where: { channel: input.channel, externalUserId: input.externalUserId }, orderBy: { updatedAt: "desc" } })
+          ? await this.prisma.nadimConversation.findFirst({ where: { channel: input.channel, externalUserId: input.externalUserId, deletedAt: null }, orderBy: { updatedAt: "desc" } })
           : null;
     if (input.conversationId && !conversation) throw new NotFoundException({ code: "NADIM_CONVERSATION_NOT_FOUND", message: "Nadim conversation not found", safe: true });
     if (conversation?.customerId && resolvedCustomerId && conversation.customerId !== resolvedCustomerId) {
@@ -178,18 +193,22 @@ export class NadimConversationService {
       ? conversation.state
       : initialNadimState({ channel: input.channel, customerId, externalUserId: input.externalUserId, locale: input.locale });
     const recentRows = await this.prisma.nadimTurn.findMany({
-      where: { conversationId: conversation.id, success: true, assistantReply: { not: "" } },
+      where: { conversationId: conversation.id, success: true },
       orderBy: { createdAt: "desc" },
-      take: 8,
+      take: 12,
       select: { userMessage: true, assistantReply: true, intent: true, plan: true, toolResults: true },
     });
     const recentTurns = recentRows.reverse().map(recentTurnContext);
     const last = recentTurns.at(-1);
     const lastVerifiedToolSummary = [...recentTurns].reverse().find((turn) => turn.tools.some((tool) => tool.ok))?.tools;
     const conversationContext: NadimConversationContext = {
+      mode: conversation.mode as NadimConversationMode,
       stage: conversationStage(state),
       recentTurns,
       lastVerifiedToolSummary,
+      summary: plainObject(conversation.summary),
+      customerContext: plainObject(conversation.customerContext),
+      pendingDeletion: plainObject(conversation.pendingDeletion) as NadimConversationContext["pendingDeletion"],
     };
     return {
       conversation,
@@ -197,7 +216,55 @@ export class NadimConversationService {
       customerId,
       previousTurn: last ? { userMessage: last.user, assistantReply: last.assistant } : undefined,
       conversationContext,
+      mode: conversation.mode as NadimConversationMode,
     };
+  }
+
+  async setMode(conversationId: string, mode: NadimConversationMode) {
+    return this.prisma.nadimConversation.update({
+      where: { id: conversationId },
+      data: { mode, modeChangedAt: new Date() },
+    });
+  }
+
+  async requestDeletion(conversationId: string, now = new Date()) {
+    const pending = {
+      requestedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 10 * 60_000).toISOString(),
+    };
+    await this.prisma.nadimConversation.update({ where: { id: conversationId }, data: { pendingDeletion: json(pending) } });
+    return pending;
+  }
+
+  async clearDeletionRequest(conversationId: string) {
+    await this.prisma.nadimConversation.update({ where: { id: conversationId }, data: { pendingDeletion: Prisma.DbNull } });
+  }
+
+  async deleteConfirmed(input: {
+    conversationId: string;
+    channel: string;
+    idempotencyKey: string;
+    requestHash: string;
+    response: NadimTurnResult;
+  }) {
+    await this.prisma.$transaction(async (transaction) => {
+      const conversation = await transaction.nadimConversation.findUnique({
+        where: { id: input.conversationId },
+        select: { id: true, webConversation: { select: { id: true } } },
+      });
+      if (!conversation) return;
+      await transaction.nadimDeletionReceipt.create({ data: {
+        channel: input.channel,
+        idempotencyKey: input.idempotencyKey,
+        requestHash: input.requestHash,
+        conversationId: input.conversationId,
+        responsePayload: json(input.response),
+      } });
+      if (conversation.webConversation) {
+        await transaction.conversation.delete({ where: { id: conversation.webConversation.id } });
+      }
+      await transaction.nadimConversation.delete({ where: { id: conversation.id } });
+    });
   }
 
   persist(input: {
@@ -220,6 +287,7 @@ export class NadimConversationService {
     requestHash?: string;
     claimedTurnId?: string;
     response: NadimTurnResult;
+    customerContextUpdates?: Record<string, string | number | boolean | null>;
   }) {
     const turnData = {
       requestId: input.requestId,
@@ -241,7 +309,10 @@ export class NadimConversationService {
       latencyMs: input.latencyMs,
       errorCode: null,
     };
-    return this.prisma.$transaction([
+    const currentCustomerContext = input.customerContextUpdates && Object.keys(input.customerContextUpdates).length
+      ? this.prisma.nadimConversation.findUnique({ where: { id: input.conversationId }, select: { customerContext: true } })
+      : Promise.resolve(null);
+    return currentCustomerContext.then((current) => this.prisma.$transaction([
       this.prisma.nadimConversation.update({
         where: { id: input.conversationId },
         data: {
@@ -250,15 +321,29 @@ export class NadimConversationService {
           customerId: input.state.customerId,
           externalUserId: input.state.externalUserId,
           locale: input.state.locale,
+          customerContext: input.customerContextUpdates && Object.keys(input.customerContextUpdates).length
+            ? json({ ...plainObject(current?.customerContext), ...input.customerContextUpdates })
+            : undefined,
+          summary: json({
+            activeSearch: input.state.search,
+            selectedUnitId: input.state.selectedUnitId ?? null,
+            selectedProjectId: input.state.selectedProjectId ?? null,
+            lastUnderstoodMeaning: typeof (input.intent as { understoodMeaning?: unknown })?.understoodMeaning === "string"
+              ? (input.intent as { understoodMeaning: string }).understoodMeaning.slice(0, 500)
+              : null,
+            responseGoal: typeof (input.intent as { responseGoal?: unknown })?.responseGoal === "string"
+              ? (input.intent as { responseGoal: string }).responseGoal.slice(0, 220)
+              : null,
+          }),
         },
       }),
       input.claimedTurnId
         ? this.prisma.nadimTurn.update({ where: { id: input.claimedTurnId }, data: turnData })
         : this.prisma.nadimTurn.create({ data: { conversationId: input.conversationId, ...turnData } }),
-    ]);
+    ]));
   }
 
-  private replay(existing: { requestHash: string | null; responsePayload: Prisma.JsonValue | null; errorCode: string | null }, requestHash: string): NadimTurnResult {
+  private replay(existing: { requestHash: string | null; responsePayload: Prisma.JsonValue | null; errorCode?: string | null }, requestHash: string): NadimTurnResult {
     if (existing.requestHash !== requestHash) {
       throw new ConflictException({ code: "IDEMPOTENCY_CONFLICT", message: "The idempotency key was already used for a different request", safe: true });
     }

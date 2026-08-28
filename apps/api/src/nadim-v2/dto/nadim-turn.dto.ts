@@ -3,6 +3,8 @@ import { IsIn, IsObject, IsOptional, IsString, MaxLength, MinLength } from "clas
 
 export const NADIM_CHANNELS = ["WEB", "WHATSAPP", "PHONE", "N8N"] as const;
 export type NadimChannel = (typeof NADIM_CHANNELS)[number];
+export const NADIM_CONTROL_COMMANDS = ["REQUEST_HUMAN_HANDOFF", "RETURN_TO_AI", "REQUEST_CONVERSATION_DELETION", "CONFIRM_CONVERSATION_DELETION"] as const;
+export type NadimControlCommand = (typeof NADIM_CONTROL_COMMANDS)[number];
 
 const trim = ({ value }: { value: unknown }) => typeof value === "string" ? value.trim() : value;
 
@@ -27,4 +29,7 @@ export class NadimTurnDto {
 
   @IsOptional() @IsObject()
   metadata?: Record<string, unknown>;
+
+  @IsOptional() @IsIn(NADIM_CONTROL_COMMANDS)
+  controlCommand?: NadimControlCommand;
 }

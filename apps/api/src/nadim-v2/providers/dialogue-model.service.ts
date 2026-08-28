@@ -1,11 +1,21 @@
 import { Injectable, Optional } from "@nestjs/common";
 import { AIUsageService } from "../../providers/ai-usage.service";
+import { NADIM_ACTIONS, NADIM_CONTROL_ACTIONS } from "../domain/nadim-action";
+import { NadimBrainDecisionSchema } from "../domain/nadim-brain-decision";
 import { NadimConversationContext, conversationStage } from "../domain/nadim-conversation-context";
-import { NADIM_INTENTS } from "../domain/nadim-intent";
+import { NADIM_INTENTS, NadimSemanticInterpretationSchema } from "../domain/nadim-intent";
+import { NADIM_TOOLS } from "../domain/nadim-plan";
 import { NadimState } from "../domain/nadim-state";
 import { NADIM_PERSONALITY_PROMPT } from "../personality/nadim-personality";
 import { BedrockGlmProvider } from "./bedrock-glm.provider";
-import { DialogueMessage, DialogueProvider, DialogueProviderError, DialogueStreamInterruptedError } from "./dialogue-provider";
+import {
+  DialogueMessage,
+  DialogueProvider,
+  DialogueProviderAttempt,
+  DialogueProviderChainError,
+  DialogueProviderError,
+  DialogueStreamInterruptedError,
+} from "./dialogue-provider";
 import { GroqDialogueProvider } from "./groq-dialogue.provider";
 
 export type DialogueResult<T> = {
@@ -13,7 +23,9 @@ export type DialogueResult<T> = {
   provider: string;
   model: string;
   fallbackUsed: boolean;
+  fallbackStage: "NONE" | "SECONDARY_PROVIDER";
   latencyMs: number;
+  attempts: DialogueProviderAttempt[];
 };
 
 type Trace = { conversationId?: string; requestId?: string };
@@ -26,19 +38,40 @@ function compactState(state: NadimState, context?: NadimConversationContext) {
   return {
     channel: state.channel,
     locale: state.locale,
+    ownershipMode: context?.mode ?? "AI",
     stage: context?.stage ?? conversationStage(state),
-    search: state.search,
+    activeSearch: state.search,
     selectedUnitId: state.selectedUnitId,
     selectedProjectId: state.selectedProjectId,
     recentResultIds: state.lastResultIds.slice(0, 10),
     pendingClarification: state.pendingClarification,
+    pendingDeletion: context?.pendingDeletion,
     responseLanguage: state.languageStyle.preferredResponseStyle,
     regionalVariant: state.languageStyle.regionalVariant,
     grammaticalAddress: state.languageStyle.grammaticalAddress,
     lastSuccessfulStateOperations: state.lastOperations,
     recentAssistantWording: state.recentAssistantWording?.slice(0, 1_000),
+    conversationSummary: context?.summary,
+    customerContext: context?.customerContext,
   };
 }
+
+const decisionInstructions = [
+  "You are the primary conversation brain for Nadim, an AI real-estate customer-service agent. Interpret ordinary human language before considering labels.",
+  "Return one JSON object matching this contract: understood, understoodMeaning, conversationalGoal, responsePlan, conversationalType, intent, references, proposedStateOperations, proposedToolCalls, proposedActions, customerContextUpdates, stateQueries, responseStyleRequest, needsClarification, clarificationReason, locale, recentContextUsed, confidence.",
+  "intent is optional execution and analytics metadata, never the center of the dialogue. A meaningful response may need no intent, state operation, tool, or action.",
+  `When useful, intent is one of ${NADIM_INTENTS.join(", ")}. conversationalType is CONVERSATION, DISCOVERY, REACTION, ACKNOWLEDGEMENT, STRUCTURED_REQUEST, or CLARIFICATION.`,
+  "Resolve pronouns, ordinals, ellipsis, corrections, noisy spelling, and references from recent dialogue, selected result, recent verified results, active search, customer context, then summary. Clarify only when competing meanings remain genuinely plausible.",
+  "Customer background belongs in customerContextUpdates and is not an active search constraint until the customer expresses it as a preference.",
+  "State operations are proposals only: SET, REMOVE, RESET, PRESERVE. Do not invent a constraint or claim an operation succeeded.",
+  `Tool calls are proposals only and must use ${NADIM_TOOLS.join(", ")}. Inventory is a tool, not the conversation. Do not request it for greetings, memory, identity, small talk, discovery, language, handoff, deletion, or acknowledgements.`,
+  `Actions are proposals only and must use ${[...NADIM_ACTIONS, ...NADIM_CONTROL_ACTIONS].join(", ")}. Requesting deletion first proposes REQUEST_CONVERSATION_DELETION; only an explicit confirmation while pending proposes CONFIRM_CONVERSATION_DELETION.`,
+  "A human handoff request proposes HUMAN_HANDOFF. A clear request to resume Nadim while ownershipMode is HUMAN proposes RETURN_TO_AI. Never assume either action succeeded.",
+  "For time questions, propose GET_CURRENT_TIME. Never guess the current time or timezone.",
+  "Input language does not change sticky response language. Set responseStyleRequest only when the customer explicitly asks for a supported response language or dialect; otherwise use null.",
+  "Nadim is an AI assistant and must be honest about that. Never invent inventory, prices, availability, payment facts, customer identity, action success, or internal IDs.",
+  "Set understood=false only when the message genuinely has no recoverable conversational meaning.",
+].join(" ");
 
 @Injectable()
 export class DialogueModelService {
@@ -49,55 +82,55 @@ export class DialogueModelService {
   ) {}
 
   private providers() {
-    // Dialogue work is latency-sensitive and benefits from Groq's conversational
-    // interpretation. GLM remains the configured fallback; neither provider is
-    // allowed to execute tools or mutate state.
-    return [this.groq, this.glm].filter((provider, index, values) => provider.enabled() && values.findIndex((item) => item.provider === provider.provider) === index);
+    return [this.glm, this.groq].filter((provider, index, values) =>
+      provider.enabled() && provider.configured()
+      && values.findIndex((item) => item.provider === provider.provider) === index);
   }
 
   available() {
     return this.providers().length > 0;
   }
 
-  async understand(message: string, state: NadimState, context?: NadimConversationContext, trace: Trace = {}): Promise<DialogueResult<unknown>> {
+  decide(message: string, state: NadimState, context?: NadimConversationContext, trace: Trace = {}) {
     const messages: DialogueMessage[] = [
-      {
-        role: "system",
-        content: [
-          "You semantically interpret the latest message for Nadim, a real-estate customer-service assistant. Start with what the person means and what a helpful next response should accomplish; deterministic code remains the decision maker.",
-          "Read the latest message as ordinary human language in the flow of recentDialogue and persistedContext. Resolve paraphrases, pronouns, reactions, incomplete thoughts, ordinals, and typos before treating it as unclear.",
-          "Reference priority is: immediate dialogue, selected result, recent result list, active search state, then recent topic. If one meaning dominates, use it. Clarify only when two meanings remain genuinely plausible.",
-          "Return one JSON object only with: understood, understoodMeaning, responseGoal, conversationalType, proposedIntent, proposedStateOperations, references, toolNeed, clarification, confidence, locale, stateQuery, ordinalReferences, unitReference, projectReference, and recentContextUsed.",
-          "conversationalType is one of CONVERSATION, DISCOVERY, REACTION, ACKNOWLEDGEMENT, STRUCTURED_REQUEST, CLARIFICATION. confidence is 0..1 and ordinals are one-based. Use null for inapplicable optional scalar fields.",
-          `proposedIntent is optional execution metadata and, when needed, must be one of: ${NADIM_INTENTS.join(", ")}. Ordinary meaningful conversation does not need a dedicated intent: use proposedIntent null and describe its meaning and response goal.`,
-          "Set understood=false only for genuinely unintelligible or corrupted text, not merely because wording lacks a predefined intent. A conversational response may be useful with no facts, state operation, or tool.",
-          "ASSISTANT_NATURE covers whether Nadim is human, a robot, or AI. Nadim is an AI assistant and must never be interpreted as claiming to be human. Conversation-memory questions use CURRENT_SEARCH_QUERY and deterministic stateQuery fields.",
-          "A question about whether Nadim speaks a language is LANGUAGE_CAPABILITY_QUERY. Only a request to reply in a language is LANGUAGE_STYLE_CHANGE. Input language never changes the persisted response style by itself.",
-          "Allowed proposedStateOperations are SET, REMOVE, RESET, PRESERVE. Extract only changes actually requested in this turn. Customer background or context is not a search constraint until the person expresses it as a preference. Never silently widen, invent, or directly apply state.",
-          "Allowed state fields: locations, projects, developers, propertyTypes, bedrooms, bathrooms, areaMin, areaMax, budgetMin, budgetMax, currency, downPaymentMax, installmentMonths, installmentPreference, deliveryMaxYears, purpose, finishing, queryObjective, SEARCH. installmentPreference is INSTALLMENTS or LONG_TERM; never invent installmentMonths from vague wording such as long installments.",
-          "For CURRENT_SEARCH_QUERY return no operations and set stateQuery to a state field, SEARCH, or SELECTED_RESULT; the answer comes from persistedContext. Conversation, discovery, reactions, identity/nature/capabilities, language turns, greetings, small talk, rejections, acknowledgements, and plain memory questions need no inventory tool.",
-          "A broad desire to buy or rent without usable constraints is discovery, not an inventory search. Ask one useful next question. Reactions to an option do not mutate search state unless the latest message actually requests a change. A request to contact someone is action-shaped, but only deterministic policy may authorize execution.",
-          "Never invent inventory, prices, availability, payment facts, actions, or customer identity. Do not expose internal IDs in understoodMeaning.",
-        ].join(" "),
-      },
-      {
-        role: "user",
-        content: JSON.stringify({
-          latestMessage: message,
-          recentDialogue: context?.recentTurns ?? [],
-          persistedContext: compactState(state, context),
-          lastVerifiedToolResultSummary: context?.lastVerifiedToolSummary,
-        }),
-      },
+      { role: "system", content: decisionInstructions },
+      { role: "user", content: JSON.stringify({
+        latestMessage: message,
+        recentDialogue: context?.recentTurns ?? [],
+        persistedContext: compactState(state, context),
+        lastVerifiedToolResultSummary: context?.lastVerifiedToolSummary,
+        availableTools: NADIM_TOOLS,
+        availableActions: [...NADIM_ACTIONS, ...NADIM_CONTROL_ACTIONS],
+      }) },
     ];
-    return this.call("NADIM_V2_UNDERSTAND", messages, true, (text) => JSON.parse(stripFence(text)), trace);
+    return this.call("NADIM_V2_BRAIN_DECISION", messages, true, (text) =>
+      NadimBrainDecisionSchema.parse(JSON.parse(stripFence(text))), trace);
   }
 
-  async compose(input: Record<string, unknown>, trace: Trace = {}): Promise<DialogueResult<string>> {
+  continueAfterTools(input: Record<string, unknown>, trace: Trace = {}) {
+    const messages: DialogueMessage[] = [
+      { role: "system", content: `${decisionInstructions} This is a bounded continuation after verified tool output. Do not repeat a completed tool call. Propose another tool only when the verified result makes it necessary; otherwise make proposedToolCalls empty and update the response plan.` },
+      { role: "user", content: JSON.stringify(input) },
+    ];
+    return this.call("NADIM_V2_TOOL_CONTINUATION", messages, true, (text) =>
+      NadimBrainDecisionSchema.parse(JSON.parse(stripFence(text))), trace);
+  }
+
+  // Rollback/admin compatibility only. Public V2 turns use decide().
+  understand(message: string, state: NadimState, context?: NadimConversationContext, trace: Trace = {}) {
+    const messages: DialogueMessage[] = [
+      { role: "system", content: `Semantically interpret the message for Nadim. Ordinary meaningful conversation does not need a dedicated intent. Return the existing Nadim semantic JSON contract. proposedIntent may be one of ${NADIM_INTENTS.join(", ")}.` },
+      { role: "user", content: JSON.stringify({ latestMessage: message, recentDialogue: context?.recentTurns ?? [], persistedContext: compactState(state, context) }) },
+    ];
+    return this.call("NADIM_V2_UNDERSTAND_COMPAT", messages, true, (text) =>
+      NadimSemanticInterpretationSchema.parse(JSON.parse(stripFence(text))), trace);
+  }
+
+  compose(input: Record<string, unknown>, trace: Trace = {}): Promise<DialogueResult<string>> {
     const messages: DialogueMessage[] = [
       {
         role: "system",
-        content: `${NADIM_PERSONALITY_PROMPT} Answer the current responseGoal as a concise real-estate customer-service conversation. Use recentDialogue to follow the flow and avoid repetition. Apply the supplied styleProfile exactly. Treat deterministicAnswer, verifiedFacts, current state, searchExecution, and actionResults as read-only. Never add a price, availability claim, inventory fact, state change, or successful action. If asked about your nature, say transparently that you are an AI assistant named Nadim and never claim to be human.`,
+        content: `${NADIM_PERSONALITY_PROMPT} Follow responsePlan and responseGoal as one natural customer-service reply. Use the sticky styleProfile. Treat deterministic state, verified facts, tool outcomes, control outcomes, and action results as read-only truth. Never invent a fact or successful action. Do not claim no inventory unless a successful PROPERTY_SEARCH returned an empty list. Say honestly that Nadim is an AI assistant when asked.`,
       },
       { role: "user", content: JSON.stringify(input) },
     ];
@@ -106,7 +139,7 @@ export class DialogueModelService {
 
   async *composeStream(input: Record<string, unknown>): AsyncIterable<{ chunk: string; provider: string; model: string; fallbackUsed: boolean }> {
     const messages: DialogueMessage[] = [
-      { role: "system", content: `${NADIM_PERSONALITY_PROMPT} Follow selectedLanguageStyle exactly. Compose a concise response using only supplied verified facts and recent dialogue. Never alter facts, claim unknown inventory, claim to be human, or claim an unconfirmed action.` },
+      { role: "system", content: `${NADIM_PERSONALITY_PROMPT} Compose using only supplied verified facts. Never alter facts or claim an unconfirmed action.` },
       { role: "user", content: JSON.stringify(input) },
     ];
     const providers = this.providers();
@@ -129,13 +162,14 @@ export class DialogueModelService {
     throw lastError ?? new DialogueProviderError("none", "NOT_CONFIGURED", false);
   }
 
-  health() {
-    return Promise.all([this.glm.health(), this.groq.health()]);
+  async health() {
+    const results = await Promise.all([this.glm.health(), this.groq.health()]);
+    return results.map((result) => ({ ...result, priority: result.provider === this.glm.provider ? "PRIMARY" as const : "SECONDARY" as const }));
   }
 
   private async call<T>(taskType: string, messages: DialogueMessage[], jsonMode: boolean, map: (text: string) => T, trace: Trace): Promise<DialogueResult<T>> {
     const providers = this.providers();
-    let lastError: unknown;
+    const attempts: DialogueProviderAttempt[] = [];
     for (let index = 0; index < providers.length; index += 1) {
       const provider = providers[index];
       const started = Date.now();
@@ -143,26 +177,19 @@ export class DialogueModelService {
         const value = map(await provider.complete(messages, jsonMode));
         const latencyMs = Date.now() - started;
         void this.recordUsage(provider, taskType, latencyMs, true, index > 0, undefined, trace);
-        return { value, provider: provider.provider, model: provider.model, fallbackUsed: index > 0, latencyMs };
+        return { value, provider: provider.provider, model: provider.model, fallbackUsed: index > 0, fallbackStage: index > 0 ? "SECONDARY_PROVIDER" : "NONE", latencyMs, attempts };
       } catch (error) {
-        lastError = error;
-        void this.recordUsage(provider, taskType, Date.now() - started, false, index > 0, error instanceof DialogueProviderError ? error.code : "INVALID_OUTPUT", trace);
+        const latencyMs = Date.now() - started;
+        const errorCategory = error instanceof DialogueProviderError ? error.code : "INVALID_OUTPUT";
+        attempts.push({ provider: provider.provider, model: provider.model, latencyMs, errorCategory });
+        void this.recordUsage(provider, taskType, latencyMs, false, index > 0, errorCategory, trace);
       }
     }
-    throw lastError ?? new DialogueProviderError("none", "NOT_CONFIGURED", false);
+    if (!providers.length) attempts.push({ provider: "none", model: "none", latencyMs: 0, errorCategory: "NOT_CONFIGURED" });
+    throw new DialogueProviderChainError(attempts);
   }
 
   private recordUsage(provider: DialogueProvider, taskType: string, latencyMs: number, success: boolean, fallbackUsed: boolean, errorCode: string | undefined, trace: Trace) {
-    return this.usage?.record({
-      provider: provider.provider,
-      model: provider.model,
-      taskType,
-      latencyMs,
-      success,
-      fallbackUsed,
-      errorCode,
-      promptVersion: "nadim-v2.1-contextual",
-      conversationId: trace.conversationId,
-    });
+    return this.usage?.record({ provider: provider.provider, model: provider.model, taskType, latencyMs, success, fallbackUsed, errorCode, promptVersion: "nadim-v2.2-ai-brain", conversationId: trace.conversationId });
   }
 }

@@ -1,9 +1,10 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { StructuredIntent } from "../../providers/ai-provider";
 import { PrismaService } from "../../database/prisma.service";
 import { PropertySearchService } from "../../property-search.service";
 import { NadimPlan, NadimToolResult } from "../domain/nadim-plan";
 import { NadimSearchState, NadimState } from "../domain/nadim-state";
+import { DeterministicTimeService } from "./deterministic-time.service";
 
 function serialize<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -79,7 +80,15 @@ function searchIntent(search: NadimSearchState, locale: string): StructuredInten
 
 @Injectable()
 export class ToolExecutorService {
-  constructor(private readonly properties: PropertySearchService, private readonly prisma: PrismaService) {}
+  private readonly time: DeterministicTimeService;
+
+  constructor(
+    private readonly properties: PropertySearchService,
+    private readonly prisma: PrismaService,
+    @Optional() time?: DeterministicTimeService,
+  ) {
+    this.time = time ?? new DeterministicTimeService();
+  }
 
   async execute(plan: NadimPlan, state: NadimState) {
     const results: NadimToolResult[] = [];
@@ -96,6 +105,7 @@ export class ToolExecutorService {
   }
 
   private async executeOne(tool: NadimPlan["steps"][number]["tool"], args: Record<string, unknown>, state: NadimState): Promise<unknown> {
+    if (tool === "GET_CURRENT_TIME") return this.time.now(state.locale, args.timeZone);
     if (tool === "PROPERTY_SEARCH") {
       const units = await this.properties.searchProperties(searchIntent(state.search, state.locale), Number(args.limit ?? 5));
       return units.map(compactUnit);
@@ -128,6 +138,7 @@ export class ToolExecutorService {
   }
 
   private errorCode(error: unknown) {
+    if ((error as { code?: string })?.code === "TIMEZONE_REQUIRED") return "TIMEZONE_REQUIRED";
     const status = (error as { status?: number; getStatus?: () => number })?.getStatus?.() ?? (error as { status?: number })?.status;
     if (status === 404) return "VERIFIED_DATA_NOT_FOUND";
     return "TOOL_EXECUTION_FAILED";

@@ -541,9 +541,9 @@ const semanticGreetingJson = JSON.stringify({
   recentContextUsed: true,
 });
 
-test("25 Groq is primary for contextual dialogue and receives compact redacted history", async () => {
-  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", "unused");
-  const groq = new FakeProvider("groq", "llama", semanticGreetingJson);
+test("25 GLM is primary for contextual dialogue and receives compact redacted history", async () => {
+  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", semanticGreetingJson);
+  const groq = new FakeProvider("groq", "llama", "unused");
   const current = state({ customerId: "customer-secret", externalUserId: "278425818370206@lid" });
   const context: NadimConversationContext = {
     stage: "ACTIVE_SEARCH",
@@ -551,41 +551,41 @@ test("25 Groq is primary for contextual dialogue and receives compact redacted h
   };
   const dialogue = new DialogueModelService(glm as any, groq as any);
   const result = await dialogue.understand("فاكر؟", current, context);
-  assert.equal(result.provider, "groq");
-  assert.equal(glm.calls, 0);
-  const payload = groq.lastMessages.at(-1)?.content as string;
+  assert.equal(result.provider, "bedrock-glm");
+  assert.equal(groq.calls, 0);
+  const payload = glm.lastMessages.at(-1)?.content as string;
   assert.match(payload, /صباح الخير/u);
   assert.match(payload, /ACTIVE_SEARCH/u);
   assert.doesNotMatch(payload, /customer-secret|278425818370206/u);
-  assert.match(String(groq.lastMessages[0]?.content), /Ordinary meaningful conversation does not need a dedicated intent/u);
+  assert.match(String(glm.lastMessages[0]?.content), /Ordinary meaningful conversation does not need a dedicated intent/u);
   const composed = await dialogue.compose({ responseGoal: "BRIEF_SMALL_TALK" });
-  assert.equal(composed.provider, "groq");
-  assert.equal(glm.calls, 0);
+  assert.equal(composed.provider, "bedrock-glm");
+  assert.equal(groq.calls, 0);
 });
 
-test("26 Groq failure falls back to GLM", async () => {
-  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", semanticGreetingJson);
-  const groq = new FakeProvider("groq", "primary", new DialogueProviderError("groq", "HTTP_503"));
+test("26 GLM failure falls back to Groq", async () => {
+  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", new DialogueProviderError("bedrock-glm", "HTTP_503"));
+  const groq = new FakeProvider("groq", "secondary", semanticGreetingJson);
   const result = await new DialogueModelService(glm as any, groq as any).understand("hi", state());
-  assert.equal(result.provider, "bedrock-glm");
+  assert.equal(result.provider, "groq");
   assert.equal(result.fallbackUsed, true);
 });
 
 test("27 stream failure before a visible token falls back", async () => {
-  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", "", ["fallback answer"]);
-  const groq = new FakeProvider("groq", "primary", "", [new Error("before")]);
+  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", "", [new Error("before")]);
+  const groq = new FakeProvider("groq", "secondary", "", ["fallback answer"]);
   const chunks: string[] = [];
   for await (const item of new DialogueModelService(glm as any, groq as any).composeStream({})) chunks.push(item.chunk);
   assert.deepEqual(chunks, ["fallback answer"]);
 });
 
 test("28 stream failure after output never mixes providers", async () => {
-  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", "", ["must-not-appear"]);
-  const groq = new FakeProvider("groq", "primary", "", ["partial", new Error("after")]);
+  const glm = new FakeProvider("bedrock-glm", "zai.glm-5", "", ["partial", new Error("after")]);
+  const groq = new FakeProvider("groq", "secondary", "", ["must-not-appear"]);
   const iterator = new DialogueModelService(glm as any, groq as any).composeStream({})[Symbol.asyncIterator]();
   assert.equal((await iterator.next()).value.chunk, "partial");
   await assert.rejects(() => iterator.next(), DialogueStreamInterruptedError);
-  assert.equal(glm.calls, 0);
+  assert.equal(groq.calls, 0);
 });
 
 test("29 V2 disabled fails before any pipeline execution", async () => {
@@ -632,7 +632,8 @@ test("GLM health is safe when disabled and explicit when credentials are missing
   process.env.BEDROCK_GLM_ENABLED = "false";
   delete process.env.BEDROCK_API_KEY;
   const disabled = await new BedrockGlmProvider().health();
-  assert.equal(disabled.healthy, true);
+    assert.equal(disabled.healthy, false);
+    assert.equal(disabled.errorCode, "DISABLED");
   assert.equal(disabled.enabled, false);
   process.env.BEDROCK_GLM_ENABLED = "true";
   const missing = await new BedrockGlmProvider().health();

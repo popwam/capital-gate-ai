@@ -1,5 +1,6 @@
 import type { ExecutedAction, ProposedAction } from "./nadim-action";
 import type { NadimState } from "./nadim-state";
+import type { NadimConversationMode } from "./nadim-action";
 
 export type NadimTurnResult = {
   ok: true;
@@ -7,6 +8,9 @@ export type NadimTurnResult = {
   replayed: boolean;
   conversationId: string;
   reply: string;
+  suppressReply: boolean;
+  mode: NadimConversationMode;
+  deleted?: boolean;
   intent: {
     type: string;
     confidence: number;
@@ -32,5 +36,14 @@ export type NadimTurnResult = {
     toolDecision: "EXECUTE" | "CLARIFY" | "NO_TOOL";
     toolNames: string[];
     latencyMs: number;
+    brainProvider?: string;
+    brainModel?: string;
+    brainExecution: "PRIMARY_AI" | "SECONDARY_AI" | "DETERMINISTIC_OUTAGE_FALLBACK" | "DETERMINISTIC_POLICY";
+    fallbackStage: "NONE" | "UNDERSTAND" | "TOOL_LOOP" | "COMPOSE" | "PROVIDER_OUTAGE";
+    providerLatencyMs: number;
+    providerErrorCategory?: string;
+    contextUsed: string[];
+    actionDecision: "EXECUTE" | "PROPOSE" | "NO_ACTION" | "SUPPRESS";
+    toolIterations: number;
   };
 };

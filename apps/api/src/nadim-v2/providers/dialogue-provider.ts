@@ -6,6 +6,8 @@ export type DialogueHealth = {
   healthy: boolean;
   model: string | null;
   errorCode?: string;
+  latencyMs?: number;
+  priority?: "PRIMARY" | "SECONDARY";
 };
 
 export interface DialogueProvider {
@@ -21,6 +23,19 @@ export interface DialogueProvider {
 export class DialogueProviderError extends Error {
   constructor(readonly provider: string, readonly code: string, readonly retryable = true) {
     super(`${provider} dialogue request failed (${code})`);
+  }
+}
+
+export type DialogueProviderAttempt = {
+  provider: string;
+  model: string;
+  latencyMs: number;
+  errorCategory: string;
+};
+
+export class DialogueProviderChainError extends Error {
+  constructor(readonly attempts: DialogueProviderAttempt[]) {
+    super("No configured Nadim dialogue provider completed the request");
   }
 }
 

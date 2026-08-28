@@ -375,7 +375,7 @@ test("the response model receives personality, selected style, and verified fact
     proposedActions: [{ type: "CREATE_VIEWING_REQUEST", reason: "requested", payload: { unitId: "unit-1" } }],
     executedActions: [],
   });
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
   assert.match(proposed.reply, /hasn.t been confirmed/u);
 });
 

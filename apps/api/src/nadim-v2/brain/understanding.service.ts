@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { NadimBrainDecision } from "../domain/nadim-brain-decision";
 import { NadimConversationContext } from "../domain/nadim-conversation-context";
 import {
   CurrentSearchQueryTarget,
@@ -9,10 +10,14 @@ import {
 } from "../domain/nadim-intent";
 import { NadimState } from "../domain/nadim-state";
 import { DialogueModelService } from "../providers/dialogue-model.service";
+import { DialogueProviderChainError } from "../providers/dialogue-provider";
 
 export type UnderstandingResult = {
   understanding: NadimUnderstanding;
-  model?: { provider: string; model: string; fallbackUsed: boolean; latencyMs: number };
+  model?: { provider: string; model: string; fallbackUsed: boolean; latencyMs: number; fallbackStage?: string };
+  brainDecision?: NadimBrainDecision;
+  providerErrorCategory?: string;
+  providerLatencyMs?: number;
 };
 
 const LOCATION_TERMS = [
@@ -358,9 +363,81 @@ export class UnderstandingService {
     trace: { conversationId?: string; requestId?: string } = {},
     context?: NadimConversationContext,
   ): Promise<UnderstandingResult> {
+    const dialogue = this.dialogue as DialogueModelService & {
+      decide?: DialogueModelService["decide"];
+    };
+    if (this.dialogue.available() && typeof dialogue.decide === "function") {
+      try {
+        const result = await dialogue.decide(message, state, context, trace);
+        const decision = result.value;
+        const operationsAllowed = decision.understood
+          && decision.confidence >= 0.72
+          && ["DISCOVERY", "STRUCTURED_REQUEST"].includes(decision.conversationalType);
+        const intent = !decision.understood
+          ? "UNKNOWN"
+          : decision.intent && decision.intent !== "UNKNOWN" ? decision.intent : "CONVERSATION";
+        const stateQueries = decision.stateQueries;
+        const stateQuery = stateQueries[0];
+        const operations = operationsAllowed && !stateQueries.length
+          ? decision.proposedStateOperations
+          : decision.proposedStateOperations.filter((operation) => operation.operation === "PRESERVE");
+        const understanding: NadimUnderstanding = {
+          intent,
+          confidence: decision.confidence,
+          locale: decision.locale ?? undefined,
+          operations,
+          ordinalReferences: [],
+          unitReference: this.referenceArgument(decision, "unitReference"),
+          projectReference: this.referenceArgument(decision, "projectReference"),
+          actionRequested: false,
+          stateQuery,
+          responseGoal: decision.conversationalGoal,
+          responsePlan: decision.responsePlan,
+          references: decision.references,
+          needsTool: decision.proposedToolCalls.length > 0,
+          needsClarification: decision.needsClarification,
+          clarificationReason: decision.clarificationReason ?? undefined,
+          understoodMeaning: decision.understoodMeaning,
+          recentContextUsed: decision.recentContextUsed,
+          understood: decision.understood,
+          conversationalType: decision.conversationalType,
+          classificationSource: decision.intent ? "MODEL_STRUCTURED" : "MODEL_SEMANTIC",
+          unknownReason: decision.understood ? undefined : decision.clarificationReason ?? "MODEL_COULD_NOT_INTERPRET",
+          proposedToolCalls: decision.proposedToolCalls,
+          proposedActions: decision.proposedActions,
+          customerContextUpdates: Object.fromEntries(Object.entries(decision.customerContextUpdates)
+            .filter(([key]) => /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(key))
+            .slice(0, 20)),
+          stateQueries,
+          responseStyleRequest: decision.responseStyleRequest,
+        };
+        return {
+          understanding,
+          brainDecision: decision,
+          model: { provider: result.provider, model: result.model, fallbackUsed: result.fallbackUsed, latencyMs: result.latencyMs, fallbackStage: result.fallbackStage },
+          providerLatencyMs: result.latencyMs + result.attempts.reduce((sum, attempt) => sum + attempt.latencyMs, 0),
+          providerErrorCategory: result.attempts.at(-1)?.errorCategory,
+        };
+      } catch (error) {
+        const deterministic = explicitUnderstanding(message, state, context);
+        const category = error instanceof DialogueProviderChainError
+          ? error.attempts.at(-1)?.errorCategory ?? "PROVIDER_CHAIN_FAILED"
+          : "BRAIN_DECISION_FAILED";
+        const latency = error instanceof DialogueProviderChainError
+          ? error.attempts.reduce((sum, attempt) => sum + attempt.latencyMs, 0)
+          : 0;
+        return {
+          understanding: semanticFallback(deterministic, message, "PRIMARY_BRAIN_UNAVAILABLE"),
+          providerErrorCategory: category,
+          providerLatencyMs: latency,
+        };
+      }
+    }
+    // The scenario-oriented interpreter is now isolated to explicit outage and
+    // rollback compatibility. It never competes with a healthy AI decision.
     const deterministic = explicitUnderstanding(message, state, context);
     if (!this.dialogue.available()) {
-      return { understanding: semanticFallback(deterministic, message, "SEMANTIC_MODEL_UNAVAILABLE") };
+      return { understanding: semanticFallback(deterministic, message, "SEMANTIC_MODEL_UNAVAILABLE"), providerErrorCategory: "NOT_CONFIGURED", providerLatencyMs: 0 };
     }
     if (deterministic.intent === "UNKNOWN" && deterministic.confidence >= 0.8) return { understanding: deterministic };
     if (deterministic.confidence >= 0.8 && [
@@ -461,5 +538,13 @@ export class UnderstandingService {
     } catch {
       return { understanding: semanticFallback(deterministic, message, "SEMANTIC_MODEL_CALL_FAILED") };
     }
+  }
+
+  private referenceArgument(decision: NadimBrainDecision, key: "unitReference" | "projectReference") {
+    for (const call of decision.proposedToolCalls) {
+      const value = call.arguments[key];
+      if (typeof value === "string" && value.trim()) return value.trim().slice(0, 200);
+    }
+    return undefined;
   }
 }

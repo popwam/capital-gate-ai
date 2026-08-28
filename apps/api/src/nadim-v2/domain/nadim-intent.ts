@@ -38,7 +38,7 @@ const OperationSchema = z.object({
 
 const ReferenceResolutionSchema = z.object({
   expression: z.string().min(1).max(100),
-  resolvedAs: z.enum(["ACTIVE_SEARCH", "SEARCH_BUDGET", "SELECTED_UNIT", "SELECTED_PROJECT", "RECENT_RESULT", "RECENT_DIALOGUE", "UNRESOLVED"]),
+  resolvedAs: z.enum(["ACTIVE_SEARCH", "SEARCH_BUDGET", "SELECTED_UNIT", "SELECTED_PROJECT", "RECENT_RESULT", "RECENT_DIALOGUE", "CUSTOMER_CONTEXT", "UNRESOLVED"]),
   confidence: z.number().min(0).max(1),
 }).strict();
 
@@ -81,7 +81,8 @@ export const NadimUnderstandingSchema = z.object({
   actionRequested: z.boolean().default(false),
   stateQuery: z.enum(CURRENT_SEARCH_QUERY_TARGETS).optional(),
   ambiguity: z.string().max(300).optional(),
-  responseGoal: z.string().max(120).optional(),
+  responseGoal: z.string().max(220).optional(),
+  responsePlan: z.array(z.string().min(1).max(240)).max(8).optional(),
   references: z.array(ReferenceResolutionSchema).max(8).optional(),
   needsTool: z.boolean().optional(),
   needsClarification: z.boolean().optional(),
@@ -92,6 +93,22 @@ export const NadimUnderstandingSchema = z.object({
   conversationalType: z.enum(NADIM_CONVERSATIONAL_TYPES).optional(),
   classificationSource: z.enum(NADIM_CLASSIFICATION_SOURCES).optional(),
   unknownReason: z.string().max(300).optional(),
+  proposedToolCalls: z.array(z.object({
+    tool: z.string().min(1).max(80),
+    arguments: z.record(z.unknown()).default({}),
+    reason: z.string().max(240).optional(),
+  }).strict()).max(4).optional(),
+  proposedActions: z.array(z.object({
+    type: z.string().min(1).max(80),
+    reason: z.string().max(240),
+    payload: z.record(z.unknown()).default({}),
+  }).strict()).max(4).optional(),
+  customerContextUpdates: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
+  stateQueries: z.array(z.enum(CURRENT_SEARCH_QUERY_TARGETS)).max(12).optional(),
+  responseStyleRequest: z.object({
+    style: z.enum(["AR_EGYPTIAN", "AR_GULF", "AR_FORMAL", "EN_US", "FRANCO_ARABIC", "MIXED_AR_EN", "UNKNOWN"]),
+    regionalVariant: z.enum(["SAUDI"]).nullish(),
+  }).strict().nullish(),
 }).strict();
 
 export type NadimUnderstanding = z.infer<typeof NadimUnderstandingSchema>;

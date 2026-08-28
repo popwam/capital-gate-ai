@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Headers, Post, UseGuards } from "@nestjs/common";
-import { IsNotEmpty, IsObject, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
+import { IsBoolean, IsNotEmpty, IsObject, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import { NadimGatewayGuard } from "./nadim-v2/security/nadim-gateway.guard";
 import { WebChatPersistenceService } from "./web-chat-persistence.service";
 
@@ -8,7 +8,8 @@ class PersistNadimWebTurnDto {
   @IsString() @MinLength(1) @MaxLength(200) nadimConversationId!: string;
   @IsString() @MinLength(1) @MaxLength(200) eventId!: string;
   @IsString() @IsNotEmpty() @MaxLength(8_000) userMessage!: string;
-  @IsString() @IsNotEmpty() @MaxLength(32_000) assistantReply!: string;
+  @IsOptional() @IsString() @IsNotEmpty() @MaxLength(32_000) assistantReply?: string;
+  @IsOptional() @IsBoolean() suppressReply?: boolean;
   @IsOptional() @IsObject() resultMetadata?: Record<string, unknown>;
 }
 

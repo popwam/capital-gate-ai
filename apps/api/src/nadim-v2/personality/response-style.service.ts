@@ -517,6 +517,18 @@ export class ResponseStyleService {
         MIXED_AR_EN: pending ? "الـrequest لسه ما اتنفذش، فمش هقول إنه confirmed." : "محصلش confirmation، فمش هقول إن الـrequest اتسجل.",
       });
     }
+    if (action.type === "HUMAN_HANDOFF") return this.pick(style, {
+      AR_EGYPTIAN: "تمام، هوقف ردودي دلوقتي عشان حد من الفريق يكمل معاك.", AR_GULF: "تمام، بوقف ردودي الآن عشان يكمل معك أحد من الفريق.", AR_FORMAL: "تم تحويل المحادثة إلى أحد أعضاء الفريق، وسأتوقف عن الرد الآن.", EN_US: "Done — I’ll stop replying so a team member can take over.", FRANCO_ARABIC: "tamam, hwa2af raddy 3ashan 7ad men el team yekamel ma3ak.", MIXED_AR_EN: "تمام، هوقف الـAI replies عشان حد من الـteam يكمل معاك.",
+    });
+    if (action.type === "RETURN_TO_AI") return this.pick(style, {
+      AR_EGYPTIAN: "تمام، نديم رجع يكمل معاك.", AR_GULF: "تمام، نديم رجع يكمل معك.", AR_FORMAL: "عاد نديم لمتابعة المحادثة معك.", EN_US: "Nadim is back in the conversation.", FRANCO_ARABIC: "tamam, Nadim rege3 yekamel ma3ak.", MIXED_AR_EN: "تمام، Nadim رجع يكمل معاك.",
+    });
+    if (action.type === "REQUEST_CONVERSATION_DELETION") return this.pick(style, {
+      AR_EGYPTIAN: "قبل ما أمسح المحادثة وذاكرتها، أكدلي إنك عايز تكمل الحذف.", AR_GULF: "قبل ما أحذف المحادثة وذاكرتها، أكد لي إنك تبي تكمل الحذف.", AR_FORMAL: "قبل حذف المحادثة وذاكرتها، يرجى تأكيد رغبتك في المتابعة.", EN_US: "Please confirm that you want this conversation and its memory deleted.", FRANCO_ARABIC: "2akedly enak 3ayz temsa7 el conversation w zakretha.", MIXED_AR_EN: "أكدلي إنك عايز تمسح الـconversation وذاكرتها.",
+    });
+    if (action.type === "CONFIRM_CONVERSATION_DELETION") return this.pick(style, {
+      AR_EGYPTIAN: "تم حذف المحادثة وذاكرتها.", AR_GULF: "تم حذف المحادثة وذاكرتها.", AR_FORMAL: "تم حذف المحادثة وذاكرتها.", EN_US: "The conversation and its memory have been deleted.", FRANCO_ARABIC: "el conversation w zakretha etmasa7o.", MIXED_AR_EN: "تم حذف الـconversation وذاكرتها.",
+    });
     if (action.type === "CREATE_VIEWING_REQUEST") return this.pick(style, {
       AR_EGYPTIAN: "تمام، طلب المعاينة اتسجل.", AR_GULF: "تمام، تسجل طلب المعاينة.", AR_FORMAL: "تم تسجيل طلب المعاينة.", EN_US: "Your viewing request is recorded.", FRANCO_ARABIC: "tamam, viewing request etsegel.", MIXED_AR_EN: "تمام، الـviewing request اتسجل.",
     });

@@ -22,6 +22,25 @@ export class LanguageStyleDetectorService {
     return { ...state, languageStyle: this.detect(message, state.languageStyle, localeHint ?? state.locale) };
   }
 
+  applySemanticRequest(state: NadimState, request?: { style: NadimLanguageStyle; regionalVariant?: NadimRegionalVariant | null }): NadimState {
+    if (!request || request.style === "UNKNOWN") return state;
+    const previous = state.languageStyle;
+    const outputIsArabic = request.style.startsWith("AR_");
+    return {
+      ...state,
+      languageStyle: {
+        ...previous,
+        preferredResponseStyle: request.style,
+        regionalVariant: request.regionalVariant ?? undefined,
+        lastArabicResponseStyle: outputIsArabic ? request.style : previous.lastArabicResponseStyle,
+        lastArabicRegionalVariant: outputIsArabic ? request.regionalVariant ?? undefined : previous.lastArabicRegionalVariant,
+        explicitOverride: true,
+        explicitRequestThisTurn: true,
+        changedThisTurn: previous.preferredResponseStyle !== request.style || previous.regionalVariant !== request.regionalVariant,
+      },
+    };
+  }
+
   detect(message: string, previous?: NadimLanguageStyleState, localeHint?: string): NadimLanguageStyleState {
     const detectedAddress = this.grammaticalAddress(message, previous);
     const address = {

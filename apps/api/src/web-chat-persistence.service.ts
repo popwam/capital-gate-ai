@@ -10,7 +10,8 @@ type PersistNadimWebTurn = {
   deviceToken: string;
   eventId: string;
   userMessage: string;
-  assistantReply: string;
+  assistantReply?: string;
+  suppressReply?: boolean;
   resultMetadata?: Record<string, unknown>;
 };
 
@@ -32,32 +33,34 @@ export class WebChatPersistenceService {
 
     const userId = messageId(input.eventId, "user");
     const assistantId = messageId(input.eventId, "assistant");
+    const messages: Prisma.MessageCreateManyInput[] = [
+      { id: userId, conversationId: conversation.id, role: "USER", content: input.userMessage },
+    ];
+    if (!input.suppressReply && input.assistantReply) messages.push({
+      id: assistantId,
+      conversationId: conversation.id,
+      role: "ASSISTANT",
+      content: input.assistantReply,
+      toolPayload: JSON.parse(JSON.stringify({
+        type: "nadim_v2",
+        brainVersion: "v2",
+        nadimConversationId: input.nadimConversationId,
+        eventId: input.eventId,
+        ...(input.resultMetadata ? { metadata: input.resultMetadata } : {}),
+      })) as Prisma.InputJsonValue,
+    });
     await this.prisma.$transaction([
       this.prisma.conversation.update({
         where: { id: conversation.id },
         data: { nadimConversationId: input.nadimConversationId },
       }),
       this.prisma.message.createMany({
-        data: [
-          { id: userId, conversationId: conversation.id, role: "USER", content: input.userMessage },
-          {
-            id: assistantId,
-            conversationId: conversation.id,
-            role: "ASSISTANT",
-            content: input.assistantReply,
-            toolPayload: JSON.parse(JSON.stringify({
-              type: "nadim_v2",
-              brainVersion: "v2",
-              nadimConversationId: input.nadimConversationId,
-              eventId: input.eventId,
-              ...(input.resultMetadata ? { metadata: input.resultMetadata } : {}),
-            })) as Prisma.InputJsonValue,
-          },
-        ],
+        data: messages,
         skipDuplicates: true,
       }),
     ]);
 
+    if (input.suppressReply) return this.prisma.message.findUniqueOrThrow({ where: { id: userId } });
     return this.prisma.message.findUniqueOrThrow({ where: { id: assistantId } });
   }
 }

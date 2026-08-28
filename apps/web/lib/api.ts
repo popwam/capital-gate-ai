@@ -1,8 +1,8 @@
 const API_ROUTE = "/api/backend/v1";
 
-export type ApiConversation = { id: string; title: string | null; detectedLanguage?: string | null; nadimConversationId?: string | null; createdAt: string; updatedAt: string; closed?: boolean; _count?: { messages: number } };
+export type ApiConversation = { id: string; title: string | null; detectedLanguage?: string | null; nadimConversationId?: string | null; mode?: "AI" | "HUMAN" | "PAUSED"; createdAt: string; updatedAt: string; closed?: boolean; _count?: { messages: number } };
 export type ApiMessage = { id: string; role: "USER" | "ASSISTANT"; content: string; toolPayload?: Record<string, unknown> | null; createdAt: string };
-export type NadimWebTurnResponse = { conversationId: string; reply: string; message: ApiMessage; state?: { languageStyle?: { preferredResponseStyle?: string } } };
+export type NadimWebTurnResponse = { conversationId: string; reply: string; message: ApiMessage | null; state?: { languageStyle?: { preferredResponseStyle?: string } }; suppressReply: boolean; mode: "AI" | "HUMAN" | "PAUSED"; deleted?: boolean };
 
 export type AdminMutationState = "saving" | "saved" | "error";
 export type AdminMutationDetail = { id: string; state: AdminMutationState; method: string; path: string; message?: string; requestId?: string };
@@ -135,7 +135,7 @@ export const conversationsApi = {
 };
 
 export const nadimWebApi = {
-  async turn(input: { legacyConversationId: string; conversationId?: string; message: string; displayMessage?: string; locale?: string; eventId: string }): Promise<NadimWebTurnResponse> {
+  async turn(input: { legacyConversationId: string; conversationId?: string; message: string; displayMessage?: string; locale?: string; eventId: string; controlCommand?: "REQUEST_HUMAN_HANDOFF" | "RETURN_TO_AI" | "REQUEST_CONVERSATION_DELETION" | "CONFIRM_CONVERSATION_DELETION" }): Promise<NadimWebTurnResponse> {
     const response = await fetch("/api/nadim/turn", {
       method: "POST",
       headers: { "content-type": "application/json" },

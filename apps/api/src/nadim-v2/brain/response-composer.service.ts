@@ -7,10 +7,13 @@ import { NadimState } from "../domain/nadim-state";
 import { NADIM_CORE_PERSONALITY, NADIM_STYLE_PROFILES } from "../personality/nadim-personality";
 import { ResponseStyleService } from "../personality/response-style.service";
 import { DialogueModelService } from "../providers/dialogue-model.service";
+import { DialogueProviderChainError } from "../providers/dialogue-provider";
 
 export type CompositionResult = {
   reply: string;
   model?: { provider: string; model: string; fallbackUsed: boolean; latencyMs: number };
+  providerErrorCategory?: string;
+  providerLatencyMs: number;
 };
 
 type CompositionInput = {
@@ -61,16 +64,7 @@ export class ResponseComposerService {
     const fallback = this.deterministic(input);
     const verifiedEmptySearch = this.verifiedEmptySearch(input);
     const searchResult = input.toolResults.find((result) => result.tool === "PROPERTY_SEARCH");
-    const deterministicRequired = (!verifiedEmptySearch && input.plan.steps.length > 0)
-      || (!verifiedEmptySearch && input.plan.goal === "PROPERTY_SEARCH")
-      || Boolean(input.plan.clarification)
-      || input.proposedActions.length > 0
-      || input.executedActions.length > 0
-      || input.state.languageStyle?.explicitRequestThisTurn
-      || input.state.languageStyle?.grammaticalAddressChangedThisTurn
-      || input.understanding.intent === "UNKNOWN"
-      || input.understanding.intent === "LANGUAGE_STYLE_CHANGE";
-    if (deterministicRequired || !this.dialogue.available()) return { reply: fallback };
+    if (!this.dialogue.available()) return { reply: fallback, providerErrorCategory: "NOT_CONFIGURED", providerLatencyMs: 0 };
     try {
       const model = await this.dialogue.compose({
         userMessage: input.userMessage,
@@ -90,6 +84,7 @@ export class ResponseComposerService {
           assistant: input.previousTurn.assistantReply.slice(0, 1_000),
         } : undefined,
         responseGoal: verifiedEmptySearch ? "VERIFIED_EMPTY_SEARCH" : input.understanding.responseGoal ?? input.plan.goal,
+        responsePlan: input.understanding.responsePlan,
         referenceResolution: input.understanding.references,
         searchExecution: {
           executed: Boolean(searchResult),
@@ -100,16 +95,33 @@ export class ResponseComposerService {
         deterministicAnswer: fallback,
         deterministicFallback: fallback,
       }, input.trace);
-      if (!this.safeHumanIdentity(model.value)) return { reply: fallback };
-      if (!this.safeAssistantSemantics(model.value, input.understanding.intent)) return { reply: fallback };
-      if (!this.safeStateQuery(model.value, input)) return { reply: fallback };
-      if (!this.safeActionClaims(model.value, input.executedActions)) return { reply: fallback };
-      if (!this.safeInventoryClaims(model.value, input.toolResults)) return { reply: fallback };
-      if (!this.safeStyleSurface(model.value, input.state.languageStyle.preferredResponseStyle)) return { reply: fallback };
-      if (verifiedEmptySearch && !this.safeNoMatchComposition(model.value)) return { reply: fallback };
-      return { reply: model.value, model: { provider: model.provider, model: model.model, fallbackUsed: model.fallbackUsed, latencyMs: model.latencyMs } };
-    } catch {
-      return { reply: fallback };
+      const attempts = model.attempts ?? [];
+      const providerLatencyMs = model.latencyMs + attempts.reduce((sum, attempt) => sum + attempt.latencyMs, 0);
+      const rejected = !this.safeHumanIdentity(model.value)
+        || !this.safeAssistantSemantics(model.value, input.understanding.intent)
+        || !this.safeStateQuery(model.value, input)
+        || !this.safeActionClaims(model.value, input.executedActions)
+        || !this.safeProposedActionStatus(model.value, input.proposedActions, input.executedActions)
+        || !this.safeInventoryClaims(model.value, input.toolResults)
+        || !this.safeStyleSurface(model.value, input.state.languageStyle.preferredResponseStyle)
+        || (verifiedEmptySearch && !this.safeNoMatchComposition(model.value));
+      if (rejected) return { reply: fallback, providerErrorCategory: "SAFETY_VALIDATION_REJECTED", providerLatencyMs };
+      return {
+        reply: model.value,
+        model: { provider: model.provider, model: model.model, fallbackUsed: model.fallbackUsed, latencyMs: model.latencyMs },
+        providerErrorCategory: attempts.at(-1)?.errorCategory,
+        providerLatencyMs,
+      };
+    } catch (error) {
+      return {
+        reply: fallback,
+        providerErrorCategory: error instanceof DialogueProviderChainError
+          ? error.attempts.at(-1)?.errorCategory ?? "PROVIDER_CHAIN_FAILED"
+          : "COMPOSITION_FAILED",
+        providerLatencyMs: error instanceof DialogueProviderChainError
+          ? error.attempts.reduce((sum, attempt) => sum + attempt.latencyMs, 0)
+          : 0,
+      };
     }
   }
 
@@ -178,8 +190,20 @@ export class ResponseComposerService {
   }
 
   private safeActionClaims(reply: string, actions: ExecutedAction[]) {
-    if (actions.some((action) => action.status === "SUCCEEDED")) return true;
-    return !/(?:تم\s+(?:الحجز|التسجيل|الإرسال|تأكيد|تنفيذ)|اتسجل|تسجل|booked|reserved|successfully\s+(?:created|sent|scheduled|completed)|request\s+is\s+recorded)/iu.test(reply);
+    const succeeded = new Set(actions.filter((action) => action.status === "SUCCEEDED").map((action) => action.type));
+    const claimsDeletion = /(?:تم|جرى|اتعمل|اتمسح|deleted|removed).{0,30}(?:حذف|مسح|المحادثة|conversation|memory|ذاكرة)|(?:حذفت|مسحت).{0,20}(?:المحادثة|ذاكرة)/iu.test(reply);
+    if (claimsDeletion && !succeeded.has("CONFIRM_CONVERSATION_DELETION")) return false;
+    const claimsHandoff = /(?:حوّلت|حولت|تم التحويل|الفريق.{0,20}(?:هيكمل|سيكمل)|team member.{0,20}(?:take over|continue)|human.{0,20}(?:take over|joined))/iu.test(reply);
+    if (claimsHandoff && !succeeded.has("HUMAN_HANDOFF")) return false;
+    const claimsBooking = /(?:تم\s+(?:الحجز|تسجيل المعاينة)|اتحجز|اتسجلت المعاينة|booked|reserved|viewing.{0,20}(?:recorded|confirmed))/iu.test(reply);
+    if (claimsBooking && !succeeded.has("CREATE_VIEWING_REQUEST") && !succeeded.has("CREATE_RESERVATION_REQUEST")) return false;
+    if (succeeded.size) return true;
+    return !/(?:تم\s+(?:الحجز|التسجيل|الإرسال|تأكيد|تنفيذ)|اتسجل|تسجل|booked|reserved|successfully\s+(?:created|sent|scheduled|completed)|request\s+is\s+recorded|I(?:['’]ve|\s+have)\s+(?:saved|recorded|scheduled)|(?:interest|follow-?up|callback|customer\s+details).{0,24}(?:saved|recorded|scheduled|created|confirmed))/iu.test(reply);
+  }
+
+  private safeProposedActionStatus(reply: string, proposals: ProposedAction[], actions: ExecutedAction[]) {
+    if (!proposals.length || actions.length) return true;
+    return /(?:لسه|لم |غير مؤكد|مو تأكيد|ما (?:تسجل|تأكد)|مش تأكيد|not (?:yet )?(?:confirmed|recorded|executed)|hasn['’]?t been|unconfirmed|lessa|mesh confirmed)/iu.test(reply);
   }
 
   private safeHumanIdentity(reply: string) {

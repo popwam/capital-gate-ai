@@ -48,6 +48,7 @@ test("WEB customer turns reach Nadim V2 with secure idempotent headers and repli
     assert.equal(new Headers(calls[0].init.headers).get("x-nadim-gateway-secret"), "server-secret");
     assert.equal(calls[1].url, "http://private-api/v1/internal/web-chat/persist");
     assert.equal(result.reply, item.reply);
+    assert.ok(result.message);
     assert.equal(result.message.content, item.reply);
     assert.equal(result.state?.languageStyle?.preferredResponseStyle, item.style);
   }
@@ -175,11 +176,53 @@ test("history persistence failure does not discard an already valid Nadim reply"
     }, { NADIM_GATEWAY_SECRET: "server-secret", NADIM_API_URL: "http://private-api" });
     assert.equal(result.conversationId, "nadim-kept");
     assert.equal(result.reply, "valid reply");
+    assert.ok(result.message);
     assert.equal(result.message.content, "valid reply");
     assert.equal(result.message.toolPayload?.historyPersisted, false);
   } finally {
     console.error = original;
   }
+});
+
+test("web control commands stay same-origin and HUMAN ownership suppresses assistant persistence", async () => {
+  const calls: Array<{ url: string; body: any }> = [];
+  const result = await forwardNadimWebTurn({
+    legacyConversationId: "web-handoff",
+    conversationId: "nadim-handoff",
+    deviceToken: "device-token-with-sufficient-length",
+    message: "لسه مستني الموظف",
+    eventId: "human-inbound-1",
+    controlCommand: undefined,
+  }, async (url, init = {}) => {
+    const body = JSON.parse(String(init.body));
+    calls.push({ url: String(url), body });
+    if (String(url).endsWith("/v2/nadim/turn")) {
+      return Response.json({ conversationId: "nadim-handoff", reply: "", suppressReply: true, mode: "HUMAN" });
+    }
+    return Response.json({ id: "user-only", role: "USER", content: body.userMessage, createdAt: new Date(0).toISOString() });
+  }, { NADIM_GATEWAY_SECRET: "server-secret", NADIM_API_URL: "http://private-api" });
+  assert.equal(result.mode, "HUMAN");
+  assert.equal(result.suppressReply, true);
+  assert.equal(result.message, null);
+  assert.equal(calls[1].body.suppressReply, true);
+  assert.equal(calls[1].body.assistantReply, undefined);
+});
+
+test("a confirmed backend deletion is not re-persisted by the web adapter", async () => {
+  const calls: string[] = [];
+  const result = await forwardNadimWebTurn({
+    legacyConversationId: "web-delete",
+    conversationId: "nadim-delete",
+    deviceToken: "device-token-with-sufficient-length",
+    message: "أيوه احذفها",
+    eventId: "delete-confirmation-1",
+  }, async (url) => {
+    calls.push(String(url));
+    return Response.json({ conversationId: "nadim-delete", reply: "تم حذف المحادثة وذاكرتها.", deleted: true, mode: "AI" });
+  }, { NADIM_GATEWAY_SECRET: "server-secret", NADIM_API_URL: "http://private-api" });
+  assert.deepEqual(calls, ["http://private-api/v2/nadim/turn"]);
+  assert.equal(result.deleted, true);
+  assert.equal(result.message, null);
 });
 
 test("invalid browser payloads are rejected before any upstream request", () => {

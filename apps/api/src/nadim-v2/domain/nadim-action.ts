@@ -6,9 +6,15 @@ export const NADIM_ACTIONS = [
 export type NadimActionType = (typeof NADIM_ACTIONS)[number];
 export type ProposedAction = { type: NadimActionType; reason: string; payload: Record<string, unknown> };
 export type ExecutedAction = {
-  type: NadimActionType;
+  type: NadimActionType | NadimControlAction;
   status: "SUCCEEDED" | "FAILED" | "NOT_EXECUTED";
   entityId?: string;
   errorCode?: string;
   message?: string;
 };
+
+export const NADIM_CONTROL_ACTIONS = [
+  "HUMAN_HANDOFF", "RETURN_TO_AI", "REQUEST_CONVERSATION_DELETION", "CONFIRM_CONVERSATION_DELETION",
+] as const;
+export type NadimControlAction = (typeof NADIM_CONTROL_ACTIONS)[number];
+export type NadimConversationMode = "AI" | "HUMAN" | "PAUSED";
