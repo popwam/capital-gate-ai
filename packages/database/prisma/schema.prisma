@@ -934,34 +934,39 @@ model AnonymousDevice {
 }
 
 model Conversation {
-  id               String               @id @default(cuid())
-  deviceId         String
-  device           AnonymousDevice      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
-  title            String?
-  detectedLanguage String?
-  promptVariant    String               @default("control")
-  nadimConversationId String?           @unique
-  nadimConversation   NadimConversation? @relation(fields: [nadimConversationId], references: [id], onDelete: SetNull)
-  messages         Message[]
-  state            ConversationState?
-  leads            Lead[]
-  trustAlerts      CustomerTrustAlert[]
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
+  id                  String               @id @default(cuid())
+  deviceId            String
+  device              AnonymousDevice      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  title               String?
+  detectedLanguage    String?
+  promptVariant       String               @default("control")
+  nadimConversationId String?
+  nadimConversation   NadimConversation?   @relation(fields: [nadimConversationId], references: [id], onDelete: SetNull)
+  messages            Message[]
+  state               ConversationState?
+  leads               Lead[]
+  trustAlerts         CustomerTrustAlert[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
 
   @@index([deviceId, updatedAt])
+  @@index([nadimConversationId])
 }
 
 model Customer {
-  id                 String                    @id @default(cuid())
-  name               String?
-  normalizedPhone    String?                   @unique
-  normalizedEmail    String?                   @unique
-  leads              Lead[]
-  channelIdentities  CustomerChannelIdentity[]
-  nadimConversations NadimConversation[]
-  createdAt          DateTime                  @default(now())
-  updatedAt          DateTime                  @updatedAt
+  id                       String                    @id @default(cuid())
+  name                     String?
+  normalizedPhone          String?                   @unique
+  normalizedEmail          String?                   @unique
+  timezone                 String?
+  leads                    Lead[]
+  channelIdentities        CustomerChannelIdentity[]
+  nadimConversations       NadimConversation[]
+  propertyRequirements     PropertyRequirement[]
+  followUpTasks            FollowUpTask[]
+  conversationParticipants ConversationParticipant[]
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
 
   @@index([createdAt])
 }
@@ -1000,27 +1005,38 @@ model AutomationActionExecution {
 }
 
 model NadimConversation {
-  id             String      @id @default(cuid())
-  customerId     String?
-  customer       Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  channel        String
-  externalUserId String?
-  locale         String?
-  state          Json
-  mode           NadimConversationMode @default(AI)
-  summary        Json?
-  customerContext Json?
-  pendingDeletion Json?
-  modeChangedAt  DateTime?
-  deletedAt      DateTime?
-  turns          NadimTurn[]
-  webConversation Conversation?
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  id                   String                    @id @default(cuid())
+  customerId           String?
+  customer             Customer?                 @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  channel              String
+  externalUserId       String?
+  locale               String?
+  timezone             String?
+  state                Json
+  mode                 NadimConversationMode     @default(AI)
+  summary              Json?
+  customerContext      Json?
+  pendingDeletion      Json?
+  modeChangedAt        DateTime?
+  humanModeSince       DateTime?
+  lastHumanMessageAt   DateTime?
+  activeRequirementId  String?
+  activeRequirement    PropertyRequirement?      @relation("ActiveRequirement", fields: [activeRequirementId], references: [id], onDelete: SetNull)
+  deletedAt            DateTime?
+  turns                NadimTurn[]
+  propertyRequirements PropertyRequirement[]     @relation("ConversationRequirements")
+  followUpTasks        FollowUpTask[]
+  participants         ConversationParticipant[]
+  shareTokens          ConversationShareToken[]
+  webConversations     Conversation[]
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
 
   @@index([customerId, updatedAt])
   @@index([channel, externalUserId, updatedAt])
   @@index([mode, updatedAt])
+  @@index([mode, lastHumanMessageAt, humanModeSince])
+  @@index([activeRequirementId])
   @@index([deletedAt])
 }
 
@@ -1028,6 +1044,151 @@ enum NadimConversationMode {
   AI
   HUMAN
   PAUSED
+}
+
+enum PropertyRequirementStatus {
+  OPEN
+  NEEDS_MATCH
+  HUMAN_REVIEW
+  MATCHED
+  CLOSED
+}
+
+model PropertyRequirement {
+  id                     String                    @id @default(cuid())
+  customerId             String
+  customer               Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  conversationId         String?
+  conversation           NadimConversation?        @relation("ConversationRequirements", fields: [conversationId], references: [id], onDelete: SetNull)
+  title                  String
+  purpose                String?
+  propertyType           String?
+  locations              String[]                  @default([])
+  preferredDevelopers    String[]                  @default([])
+  preferredProjects      String[]                  @default([])
+  bedrooms               Int?
+  bathrooms              Int?
+  areaMin                Decimal?                  @db.Decimal(12, 2)
+  areaMax                Decimal?                  @db.Decimal(12, 2)
+  budgetMin              Decimal?                  @db.Decimal(16, 2)
+  budgetMax              Decimal?                  @db.Decimal(16, 2)
+  currency               String?
+  paymentPreference      String?
+  deliveryPreference     String?
+  notes                  String?
+  status                 PropertyRequirementStatus @default(OPEN)
+  activeForConversations NadimConversation[]       @relation("ActiveRequirement")
+  followUpTasks          FollowUpTask[]
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+
+  @@index([customerId, status, updatedAt])
+  @@index([conversationId, status])
+}
+
+enum FollowUpTaskStatus {
+  PENDING
+  CLAIMED
+  SENT
+  FAILED
+  CANCELLED
+}
+
+model FollowUpTask {
+  id                    String               @id @default(cuid())
+  customerId            String
+  customer              Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  conversationId        String
+  conversation          NadimConversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  propertyRequirementId String?
+  propertyRequirement   PropertyRequirement? @relation(fields: [propertyRequirementId], references: [id], onDelete: SetNull)
+  channel               String
+  outboundAddress       String
+  dueAt                 DateTime
+  timezone              String
+  status                FollowUpTaskStatus   @default(PENDING)
+  reason                String
+  messageIntent         Json
+  renderedMessage       String?
+  safeDuringHuman       Boolean              @default(false)
+  claimedAt             DateTime?
+  claimedBy             String?
+  sentAt                DateTime?
+  failedAt              DateTime?
+  provider              String?
+  providerMessageId     String?
+  lastError             String?
+  attempts              Int                  @default(0)
+  maxAttempts           Int                  @default(3)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@index([status, dueAt])
+  @@index([conversationId, status])
+  @@index([claimedBy, claimedAt])
+}
+
+enum ConversationParticipantRole {
+  OWNER
+  MEMBER
+}
+
+enum ConversationParticipantStatus {
+  ACTIVE
+  LEFT
+  REVOKED
+}
+
+model ConversationParticipant {
+  id                 String                        @id @default(cuid())
+  conversationId     String
+  conversation       NadimConversation             @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  customerId         String?
+  customer           Customer?                     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  channel            String
+  externalUserId     String
+  role               ConversationParticipantRole   @default(MEMBER)
+  status             ConversationParticipantStatus @default(ACTIVE)
+  displayMetadata    Json?
+  joinedAt           DateTime                      @default(now())
+  leftAt             DateTime?
+  createdShareTokens ConversationShareToken[]      @relation("ShareTokenCreator")
+  createdAt          DateTime                      @default(now())
+  updatedAt          DateTime                      @updatedAt
+
+  @@unique([conversationId, channel, externalUserId])
+  @@index([channel, externalUserId, status])
+  @@index([customerId, status])
+}
+
+enum ConversationTokenType {
+  WEB_SHARE
+  WHATSAPP_HANDOFF
+  WHATSAPP_JOIN
+}
+
+enum ConversationSharePermission {
+  VIEW_AND_JOIN
+}
+
+model ConversationShareToken {
+  id                     String                      @id @default(cuid())
+  conversationId         String
+  conversation           NadimConversation           @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdByParticipantId String?
+  createdByParticipant   ConversationParticipant?    @relation("ShareTokenCreator", fields: [createdByParticipantId], references: [id], onDelete: SetNull)
+  tokenHash              String                      @unique
+  type                   ConversationTokenType
+  permission             ConversationSharePermission @default(VIEW_AND_JOIN)
+  expiresAt              DateTime
+  revokedAt              DateTime?
+  consumedAt             DateTime?
+  maxUses                Int?
+  usedCount              Int                         @default(0)
+  createdAt              DateTime                    @default(now())
+
+  @@index([conversationId, type, expiresAt])
+  @@index([expiresAt, revokedAt])
 }
 
 model NadimDeletionReceipt {

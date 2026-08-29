@@ -22,10 +22,12 @@ import { BedrockGlmProvider } from "./providers/bedrock-glm.provider";
 import { DialogueModelService } from "./providers/dialogue-model.service";
 import { GroqDialogueProvider } from "./providers/groq-dialogue.provider";
 import { NadimGatewayGuard } from "./security/nadim-gateway.guard";
+import { CustomerLifecycleController } from "./product/customer-lifecycle.controller";
+import { CustomerLifecycleService } from "./product/customer-lifecycle.service";
 
 @Module({
   imports: [DatabaseModule],
-  controllers: [NadimV2Controller],
+  controllers: [NadimV2Controller, CustomerLifecycleController],
   providers: [
     ApplicationCache,
     PropertySearchService,
@@ -47,8 +49,9 @@ import { NadimGatewayGuard } from "./security/nadim-gateway.guard";
     ResponseStyleService,
     NadimConversationService,
     NadimGatewayGuard,
+    CustomerLifecycleService,
     NadimV2Service,
   ],
-  exports: [DialogueModelService],
+  exports: [DialogueModelService, CustomerLifecycleService],
 })
 export class NadimV2Module {}

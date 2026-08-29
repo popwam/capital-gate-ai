@@ -529,6 +529,14 @@ export class ResponseStyleService {
     if (action.type === "CONFIRM_CONVERSATION_DELETION") return this.pick(style, {
       AR_EGYPTIAN: "تم حذف المحادثة وذاكرتها.", AR_GULF: "تم حذف المحادثة وذاكرتها.", AR_FORMAL: "تم حذف المحادثة وذاكرتها.", EN_US: "The conversation and its memory have been deleted.", FRANCO_ARABIC: "el conversation w zakretha etmasa7o.", MIXED_AR_EN: "تم حذف الـconversation وذاكرتها.",
     });
+    if (action.type === "CREATE_CONVERSATION_SHARE_LINK" && action.message) return style === "EN_US"
+      ? `Here is your secure conversation link: ${action.message}`
+      : `ده رابط المحادثة الآمن: ${action.message}`;
+    if (action.type === "CREATE_WHATSAPP_HANDOFF_LINK" && action.message) return style === "EN_US"
+      ? `Continue this conversation on WhatsApp: ${action.message}`
+      : `تقدر تكمل نفس المحادثة على واتساب من هنا: ${action.message}`;
+    if (action.type === "CREATE_FOLLOWUP") return style === "EN_US" ? "Done — the follow-up is scheduled." : "تمام، المتابعة اتسجلت في موعدها.";
+    if (action.type === "SAVE_PROPERTY_REQUIREMENT") return style === "EN_US" ? "Done — I saved this property requirement." : "تمام، حفظت الطلب العقاري ده.";
     if (action.type === "CREATE_VIEWING_REQUEST") return this.pick(style, {
       AR_EGYPTIAN: "تمام، طلب المعاينة اتسجل.", AR_GULF: "تمام، تسجل طلب المعاينة.", AR_FORMAL: "تم تسجيل طلب المعاينة.", EN_US: "Your viewing request is recorded.", FRANCO_ARABIC: "tamam, viewing request etsegel.", MIXED_AR_EN: "تمام، الـviewing request اتسجل.",
     });

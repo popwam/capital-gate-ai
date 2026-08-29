@@ -13,6 +13,7 @@ import { NadimTurnResult } from "./domain/nadim-result";
 import { NadimTurnDto } from "./dto/nadim-turn.dto";
 import { LanguageStyleDetectorService } from "./personality/language-style-detector.service";
 import { nadimTurnRequestHash, NadimConversationService } from "./persistence/nadim-conversation.service";
+import { CustomerLifecycleService } from "./product/customer-lifecycle.service";
 
 function safeDiagnosticMeaning(value?: string) {
   if (!value) return undefined;
@@ -39,6 +40,7 @@ export class NadimV2Service {
     @Optional() languageStyles?: LanguageStyleDetectorService,
     @Optional() private readonly toolLoop?: ToolLoopService,
     @Optional() private readonly controls?: ConversationControlService,
+    @Optional() private readonly lifecycle?: CustomerLifecycleService,
   ) {
     this.languageStyles = languageStyles ?? new LanguageStyleDetectorService();
   }
@@ -52,6 +54,19 @@ export class NadimV2Service {
     if (idempotencyKey && requestHash) {
       const replay = await this.conversations.replayIdempotent(input.channel, idempotencyKey, requestHash);
       if (replay) return replay;
+    }
+
+    const handoffToken = input.channel === "WHATSAPP" && input.externalUserId
+      ? input.message.match(/\bnwh_[A-Za-z0-9_-]{43}\b/u)?.[0]
+      : undefined;
+    if (handoffToken && this.lifecycle && input.externalUserId) {
+      const linked = await this.lifecycle.consumeToken({
+        token: handoffToken,
+        expectedType: ["WHATSAPP_HANDOFF", "WHATSAPP_JOIN"],
+        channel: "WHATSAPP",
+        externalUserId: input.externalUserId,
+      });
+      input = { ...input, conversationId: linked.conversationId, message: "Continue this existing conversation from WhatsApp." };
     }
 
     const resolved = await this.conversations.resolve(input);
@@ -169,6 +184,16 @@ export class NadimV2Service {
       if (propertySearchResult) {
         const searchRows = Array.isArray(propertySearchResult.data) ? propertySearchResult.data : [];
         state = this.stateEngine.withResults(state, searchRows.map((item: any) => item?.id).filter(Boolean));
+        if (this.lifecycle && this.hasRequirementCriteria(state)) {
+          await this.lifecycle.saveRequirement({
+            conversationId: resolved.conversation.id,
+            channel: input.channel,
+            externalUserId: input.externalUserId,
+            state,
+            status: searchRows.length ? "MATCHED" : "NEEDS_MATCH",
+            allowNew: understood.understanding.intent === "PROPERTY_SEARCH",
+          });
+        }
       }
       const unitFacts = toolResults.find((result) => result.tool === "GET_UNIT_FACTS" && result.ok)?.data as { id?: string } | undefined;
       if (!state.selectedUnitId && understood.understanding.unitReference && unitFacts?.id) {
@@ -184,6 +209,7 @@ export class NadimV2Service {
         requestId: idempotencyKey && requestHash
           ? `nadim-${createHash("sha256").update(`${input.channel}:${idempotencyKey}:${requestHash}`, "utf8").digest("hex")}`
           : requestId,
+        state,
       });
       const executedActions: ExecutedAction[] = [...(control.executed ? [control.executed] : []), ...externalActions];
 
@@ -293,6 +319,11 @@ export class NadimV2Service {
       if (claimedTurnId) await this.conversations.markIdempotentFailed(claimedTurnId).catch(() => undefined);
       throw error;
     }
+  }
+
+  private hasRequirementCriteria(state: { search: { locations: string[]; projects: string[]; developers: string[]; propertyTypes: string[]; bedrooms?: number; budgetMin?: number; budgetMax?: number } }) {
+    const search = state.search;
+    return Boolean(search.locations.length || search.projects.length || search.developers.length || search.propertyTypes.length || search.bedrooms != null || search.budgetMin != null || search.budgetMax != null);
   }
 
   private async executeToolLoop(plan: { goal: string; steps: any[]; clarification?: string }, state: any, decision: any, trace: any): Promise<ToolLoopResult> {

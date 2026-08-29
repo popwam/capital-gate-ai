@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp, Check, ChevronDown, Clock3, FileText,
   MapPin, Menu, MessageSquareText,
-  MoreHorizontal, Plus, Search, ShieldCheck, Trash2, X
+  MoreHorizontal, Plus, Search, Share2, ShieldCheck, Smartphone, Trash2, X
 } from "lucide-react";
 import { ApiMessage, conversationsApi, nadimWebApi } from "@/lib/api";
 import { appendUniqueMessage, mergeConversationIndex, shouldLoadConversationHistory } from "@/lib/chat-state";
@@ -33,6 +33,8 @@ export default function ChatApp() {
   const [lang, setLang] = useState<"EN" | "AR">("AR");
   const [hydrated, setHydrated] = useState(false);
   const [connectionError, setConnectionError] = useState("");
+  const [actionMenu, setActionMenu] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
   const [freshMessages, setFreshMessages] = useState<Message[]>([]);
   const [freshTitle, setFreshTitle] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -156,6 +158,23 @@ export default function ChatApp() {
     void send(isArabic ? "رجّع نديم للمحادثة" : "Return Nadim to the conversation", undefined, "RETURN_TO_AI");
   }
   async function renameConversation(id: string, current: string) { const title = window.prompt("Rename conversation", current)?.trim(); if (!title) return; try { await conversationsApi.rename(id, title); setConversations(prev => prev.map(c => c.id === id ? {...c,title} : c)); } catch (error) { setConnectionError(error instanceof Error ? error.message : "Rename failed"); } }
+  async function shareConversation() {
+    if (!active || actionBusy) return;
+    setActionBusy(true); setConnectionError("");
+    try {
+      const result = await nadimWebApi.conversationAction(active.id, "SHARE");
+      if (navigator.share) await navigator.share({ title: active.title, url: result.url });
+      else { await navigator.clipboard.writeText(result.url); setConnectionError(isArabic ? "تم نسخ رابط المحادثة" : "Conversation link copied"); }
+      setActionMenu(false);
+    } catch (error) { setConnectionError(error instanceof Error ? error.message : "Share failed"); }
+    finally { setActionBusy(false); }
+  }
+  async function openWhatsApp() {
+    if (!active || actionBusy) return;
+    setActionBusy(true); setConnectionError("");
+    try { const result = await nadimWebApi.conversationAction(active.id, "WHATSAPP"); window.location.assign(result.url); setActionMenu(false); }
+    catch (error) { setConnectionError(error instanceof Error ? error.message : "WhatsApp link failed"); setActionBusy(false); }
+  }
 
   const isArabic = lang === "AR";
 
@@ -179,6 +198,7 @@ export default function ChatApp() {
             <button onClick={() => setLang(lang === "EN" ? "AR" : "EN")} className="btn-ghost grid h-11 min-w-11 place-items-center rounded-lg px-2 text-[11px] font-bold" aria-label={lang === "EN" ? "التبديل إلى العربية" : "Switch to English"}>{lang === "EN" ? "AR" : "EN"}</button>
             {active && active.mode !== "HUMAN" && <button onClick={requestHuman} disabled={generating} className="btn-ghost hidden h-9 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold disabled:opacity-50 sm:flex" aria-label={isArabic ? "التحدث مع أحد أعضاء الفريق" : "Talk to a team member"}><MessageSquareText size={14}/>{isArabic ? "تحدث مع الفريق" : "Talk to human"}</button>}
             {active && active.mode !== "HUMAN" && <button onClick={requestHuman} disabled={generating} className="btn-ghost grid h-11 w-11 place-items-center rounded-lg disabled:opacity-50 sm:hidden" aria-label={isArabic ? "التحدث مع أحد أعضاء الفريق" : "Talk to a team member"}><MessageSquareText size={17}/></button>}
+            {active && <div className="relative"><button onClick={() => setActionMenu(value => !value)} className="btn-ghost grid h-11 w-11 place-items-center rounded-lg" aria-haspopup="menu" aria-expanded={actionMenu} aria-label={isArabic ? "خيارات المحادثة" : "Conversation actions"}><MoreHorizontal size={18}/></button>{actionMenu && <><button className="fixed inset-0 z-30 cursor-default" onClick={() => setActionMenu(false)} aria-label={isArabic ? "إغلاق القائمة" : "Close menu"}/><div role="menu" className="absolute end-0 top-12 z-40 w-56 overflow-hidden rounded-xl border border-[var(--border-default)] bg-white p-1.5 shadow-lg"><button role="menuitem" disabled={actionBusy} onClick={shareConversation} className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-start text-[13px] font-semibold hover:bg-[var(--surface-inset)] disabled:opacity-50"><Share2 size={16}/>{isArabic ? "مشاركة المحادثة" : "Share conversation"}</button><button role="menuitem" disabled={actionBusy} onClick={openWhatsApp} className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-start text-[13px] font-semibold hover:bg-[var(--surface-inset)] disabled:opacity-50"><Smartphone size={16}/>{isArabic ? "المتابعة على واتساب" : "Continue on WhatsApp"}</button><button role="menuitem" disabled={actionBusy} onClick={() => { setActionMenu(false); void removeConversation(active.id); }} className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-start text-[13px] font-semibold text-[var(--error-text)] hover:bg-[var(--surface-inset)] disabled:opacity-50"><Trash2 size={16}/>{isArabic ? "حذف المحادثة" : "Delete conversation"}</button></div></>}</div>}
             <button onClick={newChat} className="grid h-11 w-11 place-items-center rounded-lg hover:bg-[var(--surface-inset)] lg:hidden" aria-label={isArabic ? "محادثة جديدة" : "New conversation"}><Plus size={17}/></button>
           </div>
         </header>

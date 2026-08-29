@@ -8,6 +8,7 @@
     "start": "node dist/main",
     "test:nadim-personality": "node --test dist/nadim-v2/personality/nadim-personality.spec.js",
     "test:nadim-v2": "node --test dist/nadim-v2/ai-brain-architecture.spec.js dist/nadim-v2/nadim-v2.spec.js dist/nadim-v2/personality/nadim-personality.spec.js dist/nadim-v2/semantic-conversation.spec.js",
+    "test:nadim-product": "node --test dist/nadim-v2/product/customer-lifecycle.spec.js",
     "test:smoke": "node --test dist/nadim-v2/nadim-v2.spec.js dist/nadim-v2/personality/nadim-personality.spec.js dist/nadim-v2/semantic-conversation.spec.js dist/web-chat-persistence.spec.js dist/conversation/conversation-services.spec.js dist/customer-trust.service.spec.js dist/providers/demo.provider.spec.js dist/providers/hybrid.provider.spec.js dist/providers/ai-context.spec.js dist/providers/advisor-evals.spec.js dist/providers/real-estate-semantics.spec.js dist/providers/ai-schemas.spec.js dist/customer-turn-planner.spec.js dist/cache/application-cache.spec.js dist/property-search.service.spec.js dist/reasoning-flow.spec.js dist/admin/conversation-export.spec.js dist/admin/lead-crm.service.spec.js dist/admin/real-estate.controller.spec.js dist/admin/catalog-payment-plan.spec.js dist/imports/import-contract.spec.js dist/imports/workbook-reader.spec.js dist/imports/workbook-analysis.spec.js dist/imports/importer.service.spec.js dist/imports/imports.controller.spec.js dist/imports/rollback-safety.spec.js dist/security/http-exception.filter.spec.js dist/text/unicode.spec.js"
   },
   "dependencies": {

@@ -146,6 +146,12 @@ export const nadimWebApi = {
     if (!response.ok) throw new ApiRequestError(body.message || "Unable to reach Nadim", response.status, body.code, body.requestId);
     return body as NadimWebTurnResponse;
   },
+  async conversationAction(legacyConversationId: string, action: "SHARE" | "WHATSAPP"): Promise<{ tokenId: string; url: string; expiresAt: string }> {
+    const response = await fetch("/api/nadim/conversation-action", { method: "POST", headers: { "content-type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ legacyConversationId, action, deviceToken: getDeviceToken() }) });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new ApiRequestError(body.message || "Conversation action failed", response.status, body.code);
+    return body;
+  },
 };
 
 export const adminApi = {

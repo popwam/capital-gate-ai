@@ -18,6 +18,7 @@
     "db:generate": "npm run generate -w @maqar/database",
     "db:push": "npm run push -w @maqar/database",
     "db:migrate:deploy": "prisma migrate deploy --schema packages/database/prisma/schema.prisma",
+    "db:seed:controlled": "node scripts/seed-controlled-inventory.mjs --confirm-controlled-test-inventory",
     "smoke:api": "node scripts/smoke-api.mjs",
     "smoke:production": "node scripts/production-live-smoke.mjs",
     "ai:smoke": "node scripts/ai-live-smoke.mjs",

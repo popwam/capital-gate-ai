@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/commo
 import { PrismaService } from "./database/prisma.service";
 import { DevicesService } from "./devices.service";
 import { PromptABTestingService } from "./providers/prompt-ab-testing.service";
+import { createHash } from "node:crypto";
 
 @Injectable()
 export class ConversationsService {
@@ -29,8 +30,20 @@ export class ConversationsService {
   async remove(id: string, rawToken: string) {
     const { conversation } = await this.owned(id, rawToken);
     if (conversation.nadimConversationId) {
+      const externalUserId = `web:${createHash("sha256").update(`${rawToken}:${conversation.id}`).digest("hex")}`;
+      const participant = await this.prisma.conversationParticipant.findUnique({
+        where: { conversationId_channel_externalUserId: { conversationId: conversation.nadimConversationId, channel: "WEB", externalUserId } },
+        select: { id: true, role: true },
+      });
+      if (participant?.role === "MEMBER") {
+        await this.prisma.$transaction([
+          this.prisma.conversation.delete({ where: { id: conversation.id } }),
+          this.prisma.conversationParticipant.update({ where: { id: participant.id }, data: { status: "LEFT", leftAt: new Date() } }),
+        ]);
+        return { deleted: true };
+      }
       await this.prisma.$transaction([
-        this.prisma.conversation.delete({ where: { id: conversation.id } }),
+        this.prisma.conversation.deleteMany({ where: { nadimConversationId: conversation.nadimConversationId } }),
         this.prisma.nadimConversation.delete({ where: { id: conversation.nadimConversationId } }),
       ]);
     } else {

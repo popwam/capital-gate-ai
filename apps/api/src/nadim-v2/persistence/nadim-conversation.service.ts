@@ -147,26 +147,32 @@ export class NadimConversationService {
   }
 
   async resolve(input: NadimTurnDto) {
-    const [explicitCustomer, channelIdentity] = await Promise.all([
+    const [explicitCustomer, channelIdentity, participant] = await Promise.all([
       input.customerId ? this.prisma.customer.findUnique({ where: { id: input.customerId }, select: { id: true } }) : null,
       input.externalUserId && input.channel !== "N8N" ? this.prisma.customerChannelIdentity.findUnique({ where: { channel_externalId: { channel: input.channel, externalId: input.externalUserId } }, select: { customerId: true } }) : null,
+      input.externalUserId && input.channel !== "N8N" ? this.prisma.conversationParticipant.findFirst({ where: { channel: input.channel, externalUserId: input.externalUserId, status: "ACTIVE", conversation: { deletedAt: null } }, orderBy: { joinedAt: "desc" }, select: { conversationId: true, customerId: true } }) : null,
     ]);
     if (input.customerId && !explicitCustomer) throw new NotFoundException({ code: "NADIM_CUSTOMER_NOT_FOUND", message: "Customer not found", safe: true });
     if (explicitCustomer && channelIdentity && explicitCustomer.id !== channelIdentity.customerId) {
       throw new ConflictException({ code: "NADIM_CUSTOMER_IDENTITY_CONFLICT", message: "Customer and channel identity conflict", safe: true });
     }
-    const resolvedCustomerId = explicitCustomer?.id ?? channelIdentity?.customerId;
+    const resolvedCustomerId = explicitCustomer?.id ?? channelIdentity?.customerId ?? participant?.customerId ?? undefined;
     const supportsLifecycleFilter = typeof this.prisma.nadimConversation.findFirst === "function";
     let conversation = input.conversationId
       ? supportsLifecycleFilter
         ? await this.prisma.nadimConversation.findFirst({ where: { id: input.conversationId, deletedAt: null } })
         : await this.prisma.nadimConversation.findUnique({ where: { id: input.conversationId } })
+      : participant
+        ? await this.prisma.nadimConversation.findFirst({ where: { id: participant.conversationId, deletedAt: null } })
       : resolvedCustomerId
         ? await this.prisma.nadimConversation.findFirst({ where: { customerId: resolvedCustomerId, deletedAt: null }, orderBy: { updatedAt: "desc" } })
         : input.externalUserId
           ? await this.prisma.nadimConversation.findFirst({ where: { channel: input.channel, externalUserId: input.externalUserId, deletedAt: null }, orderBy: { updatedAt: "desc" } })
           : null;
     if (input.conversationId && !conversation) throw new NotFoundException({ code: "NADIM_CONVERSATION_NOT_FOUND", message: "Nadim conversation not found", safe: true });
+    if (input.conversationId && input.externalUserId && participant?.conversationId !== conversation?.id && conversation?.externalUserId !== input.externalUserId) {
+      throw new ConflictException({ code: "NADIM_CONVERSATION_PARTICIPANT_CONFLICT", message: "The channel identity is not authorized for this conversation", safe: true });
+    }
     if (conversation?.customerId && resolvedCustomerId && conversation.customerId !== resolvedCustomerId) {
       throw new ConflictException({ code: "NADIM_CONVERSATION_CUSTOMER_CONFLICT", message: "Conversation belongs to a different customer", safe: true });
     }
@@ -181,13 +187,20 @@ export class NadimConversationService {
         state: json(state),
       } });
     }
-    if (customerId && input.externalUserId && input.channel !== "N8N" && !channelIdentity) {
+    if (customerId && input.externalUserId && input.channel !== "N8N" && !channelIdentity && !participant) {
       await this.prisma.customerChannelIdentity.create({ data: {
         customerId,
         channel: input.channel,
         externalId: input.externalUserId,
         metadata: { source: "NADIM_V2" },
       } });
+    }
+    if (input.externalUserId && input.channel !== "N8N") {
+      await this.prisma.conversationParticipant.upsert({
+        where: { conversationId_channel_externalUserId: { conversationId: conversation.id, channel: input.channel, externalUserId: input.externalUserId } },
+        create: { conversationId: conversation.id, channel: input.channel, externalUserId: input.externalUserId, customerId, role: participant ? "MEMBER" : "OWNER", status: "ACTIVE" },
+        update: { status: "ACTIVE", leftAt: null },
+      });
     }
     const state = validState(conversation.state)
       ? conversation.state
@@ -221,9 +234,15 @@ export class NadimConversationService {
   }
 
   async setMode(conversationId: string, mode: NadimConversationMode) {
+    const now = new Date();
     return this.prisma.nadimConversation.update({
       where: { id: conversationId },
-      data: { mode, modeChangedAt: new Date() },
+      data: {
+        mode,
+        modeChangedAt: now,
+        humanModeSince: mode === "HUMAN" ? now : null,
+        lastHumanMessageAt: null,
+      },
     });
   }
 
@@ -250,7 +269,7 @@ export class NadimConversationService {
     await this.prisma.$transaction(async (transaction) => {
       const conversation = await transaction.nadimConversation.findUnique({
         where: { id: input.conversationId },
-        select: { id: true, webConversation: { select: { id: true } } },
+        select: { id: true, webConversations: { select: { id: true } } },
       });
       if (!conversation) return;
       await transaction.nadimDeletionReceipt.create({ data: {
@@ -260,8 +279,8 @@ export class NadimConversationService {
         conversationId: input.conversationId,
         responsePayload: json(input.response),
       } });
-      if (conversation.webConversation) {
-        await transaction.conversation.delete({ where: { id: conversation.webConversation.id } });
+      if (conversation.webConversations.length) {
+        await transaction.conversation.deleteMany({ where: { nadimConversationId: conversation.id } });
       }
       await transaction.nadimConversation.delete({ where: { id: conversation.id } });
     });
@@ -319,7 +338,9 @@ export class NadimConversationService {
           state: json(input.state),
           channel: input.channel,
           customerId: input.state.customerId,
-          externalUserId: input.state.externalUserId,
+          // Channel identities belong to ConversationParticipant. Preserve this
+          // legacy resolver field instead of replacing it when another invited
+          // participant sends a turn.
           locale: input.state.locale,
           customerContext: input.customerContextUpdates && Object.keys(input.customerContextUpdates).length
             ? json({ ...plainObject(current?.customerContext), ...input.customerContextUpdates })

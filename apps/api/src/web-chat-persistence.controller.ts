@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Headers, Post, UseGuards } from "@nestjs/common";
-import { IsBoolean, IsNotEmpty, IsObject, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
+import { IsBoolean, IsIn, IsNotEmpty, IsObject, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 import { NadimGatewayGuard } from "./nadim-v2/security/nadim-gateway.guard";
 import { WebChatPersistenceService } from "./web-chat-persistence.service";
 
@@ -12,6 +12,11 @@ class PersistNadimWebTurnDto {
   @IsOptional() @IsBoolean() suppressReply?: boolean;
   @IsOptional() @IsObject() resultMetadata?: Record<string, unknown>;
 }
+class WebConversationActionDto {
+  @IsString() @MinLength(1) @MaxLength(200) legacyConversationId!: string;
+  @IsIn(["SHARE", "WHATSAPP"]) action!: "SHARE" | "WHATSAPP";
+}
+class JoinSharedConversationDto { @IsString() @MinLength(20) @MaxLength(200) token!: string; }
 
 @Controller("internal/web-chat")
 @UseGuards(NadimGatewayGuard)
@@ -24,5 +29,17 @@ export class WebChatPersistenceController {
       throw new BadRequestException("A valid x-device-token header is required");
     }
     return this.persistence.persist({ ...body, deviceToken });
+  }
+
+  @Post("conversation-action")
+  action(@Headers("x-device-token") deviceToken: string | undefined, @Body() body: WebConversationActionDto) {
+    if (!deviceToken || deviceToken.length < 20) throw new BadRequestException("A valid x-device-token header is required");
+    return this.persistence.conversationAction({ ...body, deviceToken });
+  }
+
+  @Post("join-shared")
+  joinShared(@Headers("x-device-token") deviceToken: string | undefined, @Body() body: JoinSharedConversationDto) {
+    if (!deviceToken || deviceToken.length < 20) throw new BadRequestException("A valid x-device-token header is required");
+    return this.persistence.joinSharedConversation({ ...body, deviceToken });
   }
 }

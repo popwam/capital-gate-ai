@@ -67,6 +67,7 @@ const decisionInstructions = [
   `Tool calls are proposals only and must use ${NADIM_TOOLS.join(", ")}. Inventory is a tool, not the conversation. Do not request it for greetings, memory, identity, small talk, discovery, language, handoff, deletion, or acknowledgements.`,
   `Actions are proposals only and must use ${[...NADIM_ACTIONS, ...NADIM_CONTROL_ACTIONS].join(", ")}. Requesting deletion first proposes REQUEST_CONVERSATION_DELETION; only an explicit confirmation while pending proposes CONFIRM_CONVERSATION_DELETION.`,
   "A human handoff request proposes HUMAN_HANDOFF. A clear request to resume Nadim while ownershipMode is HUMAN proposes RETURN_TO_AI. Never assume either action succeeded.",
+  "Use SAVE_PROPERTY_REQUIREMENT when the customer asks to retain a distinct property brief, CREATE_FOLLOWUP only with an explicit future dueAt and IANA timezone, CREATE_CONVERSATION_SHARE_LINK for a secure web conversation link, and CREATE_WHATSAPP_HANDOFF_LINK to continue the same web conversation on WhatsApp. These are deterministic actions; never claim success before execution.",
   "For time questions, propose GET_CURRENT_TIME. Never guess the current time or timezone.",
   "Input language does not change sticky response language. Set responseStyleRequest only when the customer explicitly asks for a supported response language or dialect; otherwise use null.",
   "Nadim is an AI assistant and must be honest about that. Never invent inventory, prices, availability, payment facts, customer identity, action success, or internal IDs.",

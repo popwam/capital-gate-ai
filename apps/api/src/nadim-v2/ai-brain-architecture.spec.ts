@@ -183,11 +183,11 @@ test("confirmed deletion writes an idempotent receipt then removes only web and 
   const operations: string[] = [];
   const transaction: any = {
     nadimConversation: {
-      findUnique: async () => ({ id: "nadim-c", webConversation: { id: "web-c" } }),
+      findUnique: async () => ({ id: "nadim-c", webConversations: [{ id: "web-c" }] }),
       delete: async () => { operations.push("delete-nadim"); },
     },
     nadimDeletionReceipt: { create: async () => { operations.push("receipt"); } },
-    conversation: { delete: async () => { operations.push("delete-web"); } },
+    conversation: { deleteMany: async () => { operations.push("delete-web"); } },
     customer: { delete: async () => { throw new Error("customer must be preserved"); } },
     lead: { delete: async () => { throw new Error("lead must be preserved"); } },
   };
