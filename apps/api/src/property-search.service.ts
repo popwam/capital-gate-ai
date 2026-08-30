@@ -63,7 +63,16 @@ export class PropertySearchService {
     if (!terms.length) return [];
     const normalized = terms.map(x => this.normalize(x));
     const locationKey = JSON.stringify([...normalized].sort());
-    const locations = await (this.cache?.getOrLoad("location-aliases", locationKey, 45 * 60_000, () => this.prisma.location.findMany({ where: { OR: [{ name: { in: terms, mode: "insensitive" } }, { slug: { in: normalized.map(x => x.replace(/ /g, "-")) } }, { aliases: { some: { normalizedValue: { in: normalized }, approvalStatus: ApprovalStatus.APPROVED } } }] }, select: { id: true } })) ?? this.prisma.location.findMany({ where: { OR: [{ name: { in: terms, mode: "insensitive" } }, { slug: { in: normalized.map(x => x.replace(/ /g, "-")) } }, { aliases: { some: { normalizedValue: { in: normalized }, approvalStatus: ApprovalStatus.APPROVED } } }] }, select: { id: true } }));
+    const where: Prisma.LocationWhereInput = { OR: [
+      { name: { in: terms, mode: "insensitive" } },
+      { nameAr: { in: terms, mode: "insensitive" } },
+      { nameEn: { in: terms, mode: "insensitive" } },
+      { canonicalName: { in: terms, mode: "insensitive" } },
+      { slug: { in: normalized.map(x => x.replace(/ /g, "-")) } },
+      { aliases: { some: { normalizedValue: { in: normalized }, approvalStatus: ApprovalStatus.APPROVED } } },
+    ] };
+    const load = () => this.prisma.location.findMany({ where, select: { id: true } });
+    const locations = await (this.cache?.getOrLoad("location-aliases", locationKey, 45 * 60_000, load) ?? load());
     const ids = new Set(locations.map(x => x.id));
     let frontier = [...ids];
     while (frontier.length) {

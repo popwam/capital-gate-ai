@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -16,6 +17,8 @@ import { AdminAuthGuard } from "../auth/admin-auth.guard";
 import {
   AdminConversationExportQueryDto,
   AdminConversationListQueryDto,
+  AdminConversationModeDto,
+  AdminConversationDeleteDto,
   CreateLeadNoteDto,
   LeadListQueryDto,
   UpdateLeadDto,
@@ -100,5 +103,17 @@ export class AdminConversationsController {
   }
   @Get(":id") detail(@Param("id") id: string) {
     return this.crm.conversation(id);
+  }
+  @Patch(":id/mode") mode(@Param("id") id: string, @Body() body: AdminConversationModeDto, @Req() req: any) {
+    return this.crm.setConversationMode(id, body.mode, this.admin(req));
+  }
+  @Post(":id/share") share(@Param("id") id: string, @Req() req: any) {
+    return this.crm.createConversationLink(id, "WEB_SHARE", this.admin(req));
+  }
+  @Post(":id/whatsapp") whatsapp(@Param("id") id: string, @Req() req: any) {
+    return this.crm.createConversationLink(id, "WHATSAPP_HANDOFF", this.admin(req));
+  }
+  @Delete(":id") remove(@Param("id") id: string, @Body() body: AdminConversationDeleteDto, @Req() req: any) {
+    return this.crm.deleteConversation(id, body.confirmation, this.admin(req));
   }
 }

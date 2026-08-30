@@ -101,6 +101,7 @@ export class ResponseComposerService {
         || !this.safeAssistantSemantics(model.value, input.understanding.intent)
         || !this.safeStateQuery(model.value, input)
         || !this.safeActionClaims(model.value, input.executedActions)
+        || !this.safeDeliveryAndProximityClaims(model.value, input)
         || !this.safeProposedActionStatus(model.value, input.proposedActions, input.executedActions)
         || !this.safeInventoryClaims(model.value, input.toolResults)
         || !this.safeStyleSurface(model.value, input.state.languageStyle.preferredResponseStyle)
@@ -162,12 +163,16 @@ export class ResponseComposerService {
 
     if (input.plan.goal === "COMPARISON") {
       const result = input.toolResults.find((item) => item.tool === "COMPARE_PROPERTIES");
+      if (this.isProximityQuestion(input.userMessage) && !this.hasComparableProximityEvidence(dataOf(result))) {
+        return this.responseStyle.unverifiedProximity(style);
+      }
       return this.responseStyle.comparison(style, dataOf(result));
     }
     if (input.understanding.intent === "MEDIA_REQUEST") {
       const result = input.toolResults.find((item) => item.tool === "GET_MEDIA");
       const media = result?.ok && result.data && !Array.isArray(result.data) ? ((result.data as any).media ?? []) : [];
-      return this.responseStyle.media(style, media.length, Boolean(result?.ok));
+      const location = result?.ok && result.data && !Array.isArray(result.data) ? (result.data as any).location : undefined;
+      return this.responseStyle.media(style, media, Boolean(result?.ok), input.userMessage, location);
     }
     if (input.understanding.intent === "PAYMENT_PLAN_QUESTION") {
       const result = input.toolResults.find((item) => item.tool === "GET_PAYMENT_PLAN");
@@ -181,7 +186,12 @@ export class ResponseComposerService {
       const result = input.toolResults.find((item) => item.tool === "GET_AVAILABILITY");
       return this.responseStyle.availability(style, dataOf(result)[0]);
     }
-    if (["PROPERTY_QUESTION", "LOCATION_QUESTION"].includes(input.understanding.intent)) {
+    if (input.understanding.intent === "LOCATION_QUESTION") {
+      const result = input.toolResults.find((item) => item.tool === "GET_UNIT_FACTS" || item.tool === "GET_LOCATION");
+      const unit = dataOf(result)[0] as any;
+      return this.responseStyle.location(style, unit?.project?.location ?? unit, Boolean(result?.ok));
+    }
+    if (input.understanding.intent === "PROPERTY_QUESTION") {
       const result = input.toolResults.find((item) => item.tool === "GET_UNIT_FACTS" || item.tool === "GET_LOCATION");
       return result?.ok ? this.responseStyle.comparison(style, dataOf(result)) : this.responseStyle.unknown(style);
     }
@@ -197,8 +207,35 @@ export class ResponseComposerService {
     if (claimsHandoff && !succeeded.has("HUMAN_HANDOFF")) return false;
     const claimsBooking = /(?:تم\s+(?:الحجز|تسجيل المعاينة)|اتحجز|اتسجلت المعاينة|booked|reserved|viewing.{0,20}(?:recorded|confirmed))/iu.test(reply);
     if (claimsBooking && !succeeded.has("CREATE_VIEWING_REQUEST") && !succeeded.has("CREATE_RESERVATION_REQUEST")) return false;
+    const claimsFollowUp = /(?:هتابع|هكلمك|هفكرك|المتابعة\s+(?:اتسجلت|تمت)|follow-?up.{0,25}(?:scheduled|confirmed)|reminder.{0,20}(?:set|scheduled))/iu.test(reply);
+    if (claimsFollowUp && !succeeded.has("CREATE_FOLLOWUP")) return false;
+    const claimsHumanNotified = /(?:بلغت|اتبلغ|تم\s+إبلاغ|notified|alerted).{0,30}(?:الفريق|المبيعات|موظف|human|team|sales)/iu.test(reply);
+    if (claimsHumanNotified && !succeeded.has("HUMAN_HANDOFF")) return false;
     if (succeeded.size) return true;
     return !/(?:تم\s+(?:الحجز|التسجيل|الإرسال|تأكيد|تنفيذ)|اتسجل|تسجل|booked|reserved|successfully\s+(?:created|sent|scheduled|completed)|request\s+is\s+recorded|I(?:['’]ve|\s+have)\s+(?:saved|recorded|scheduled)|(?:interest|follow-?up|callback|customer\s+details).{0,24}(?:saved|recorded|scheduled|created|confirmed))/iu.test(reply);
+  }
+
+  private safeDeliveryAndProximityClaims(reply: string, input: CompositionInput) {
+    // Current customer transports expose verified URLs as text; they do not
+    // execute binary media delivery. A send/delivery claim is therefore false.
+    const claimsDelivery = /(?:بعت(?:لك|ت)?|هبعت(?:لك)?|أبعتلك|أرسلت|هبدأتلك|اترسل|هيوصلك|sent|delivered|I(?:'ll|\s+will)\s+send).{0,40}(?:صور|ماستر|بلان|لوكيشن|موقع|خريطة|photos?|images?|master\s*plan|floor\s*plan|location|map)/iu.test(reply);
+    if (claimsDelivery) return false;
+    const claimsProximity = /(?:أقرب|الأقرب|closer|closest|nearer).{0,80}(?:جامعة|auc|landmark|مكان|location)|(?:جامعة|auc|landmark).{0,80}(?:أقرب|الأقرب|closer|closest|nearer)/iu.test(reply);
+    if (!claimsProximity) return true;
+    const comparison = input.toolResults.find((result) => result.tool === "COMPARE_PROPERTIES");
+    return Boolean(comparison?.ok && this.hasComparableProximityEvidence(dataOf(comparison)));
+  }
+
+  private isProximityQuestion(message: string) {
+    return /(?:أقرب|الأقرب|مسافة|وقت\s*(?:الطريق|الوصول)|closer|closest|distance|travel\s*time|nearer)/iu.test(message);
+  }
+
+  private hasComparableProximityEvidence(units: any[]) {
+    if (units.length < 2) return false;
+    const targets = units.map((unit) => new Map((unit?.proximities ?? [])
+      .filter((item: any) => item?.verifiedAt && item?.targetName && (item?.distanceMeters != null || item?.drivingMinutes != null || item?.walkingMinutes != null))
+      .map((item: any) => [String(item.targetName).toLocaleLowerCase(), item])));
+    return [...targets[0].keys()].some((target) => targets.every((map) => map.has(target)));
   }
 
   private safeProposedActionStatus(reply: string, proposals: ProposedAction[], actions: ExecutedAction[]) {

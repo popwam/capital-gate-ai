@@ -70,6 +70,14 @@ export class AdminConversationExportQueryDto {
   @IsIn(CONVERSATION_EXPORT_FORMATS) format: ConversationExportFormat = "xlsx";
 }
 
+export class AdminConversationModeDto {
+  @IsIn(["AI", "HUMAN", "PAUSED"]) mode!: "AI" | "HUMAN" | "PAUSED";
+}
+
+export class AdminConversationDeleteDto {
+  @IsIn(["DELETE"]) confirmation!: "DELETE";
+}
+
 export class TrustAlertFeedbackDto {
   @IsIn(["ADMIN_CONFIRMED_REAL", "ADMIN_CONFIRMED_FAKE", "RESOLVED"]) disposition!: "ADMIN_CONFIRMED_REAL" | "ADMIN_CONFIRMED_FAKE" | "RESOLVED";
   @IsString() @MaxLength(1_000) @IsOptional() note?: string;

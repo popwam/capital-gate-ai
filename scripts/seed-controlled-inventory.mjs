@@ -8,8 +8,8 @@ const prisma = new PrismaClient();
 const verifiedAt = new Date("2026-08-29T00:00:00.000Z");
 const marker = { inventoryClass: "CONTROLLED_TEST", commercialUse: false, verifiedAt: verifiedAt.toISOString(), source: "AICG_PRODUCT_E2E_FIXTURE" };
 const areas = [
-  { slug: "controlled-test-new-cairo", name: "New Cairo", nameAr: "التجمع الخامس" },
-  { slug: "controlled-test-sheikh-zayed", name: "Sheikh Zayed", nameAr: "الشيخ زايد" },
+  { slug: "controlled-test-new-cairo", name: "New Cairo", nameAr: "التجمع الخامس", aliases: ["التجمع", "التجمع الخامس", "القاهرة الجديدة", "نيو كايرو", "new cairo", "fifth settlement"] },
+  { slug: "controlled-test-sheikh-zayed", name: "Sheikh Zayed", nameAr: "الشيخ زايد", aliases: ["زايد", "الشيخ زايد", "شيخ زايد", "sheikh zayed", "zayed"] },
 ];
 const projects = [
   { slug: "controlled-test-east-gardens", name: "East Gardens Test", area: 0, developer: "Controlled East Developments" },
@@ -26,7 +26,19 @@ const units = [
 
 try {
   const locationRows = [];
-  for (const area of areas) locationRows.push(await prisma.location.upsert({ where: { slug: area.slug }, create: { type: "AREA", ...area, canonicalName: area.name, nameEn: area.name, source: "CONTROLLED_TEST" }, update: { name: area.name, nameAr: area.nameAr, source: "CONTROLLED_TEST" } }));
+  for (const area of areas) {
+    const { aliases, ...location } = area;
+    const row = await prisma.location.upsert({ where: { slug: area.slug }, create: { type: "AREA", ...location, canonicalName: area.name, nameEn: area.name, source: "CONTROLLED_TEST" }, update: { name: area.name, nameAr: area.nameAr, nameEn: area.name, canonicalName: area.name, source: "CONTROLLED_TEST" } });
+    locationRows.push(row);
+    for (const value of aliases) {
+      const normalizedValue = value.toLocaleLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+      await prisma.locationAlias.upsert({
+        where: { locationId_normalizedValue: { locationId: row.id, normalizedValue } },
+        create: { locationId: row.id, value, normalizedValue, language: /[\u0600-\u06ff]/u.test(value) ? "ar" : "en", approvalStatus: "APPROVED" },
+        update: { value, approvalStatus: "APPROVED" },
+      });
+    }
+  }
   const developerRows = new Map();
   for (const name of [...new Set(projects.map((item) => item.developer))]) {
     const slug = `controlled-test-${name.toLowerCase().replace(/[^a-z0-9]+/gu, "-")}`;
@@ -46,7 +58,7 @@ try {
       update: { unitType, bedrooms, bathrooms, builtUpArea: area, price, currency: "EGP", status, installmentYears: years, deliveryDate: new Date(`${deliveryYear}-12-31T00:00:00.000Z`), availabilityUpdatedAt: verifiedAt, sourceMetadata: marker },
     });
     await prisma.paymentPlan.deleteMany({ where: { unitId: unit.id, sourceMetadata: { path: ["inventoryClass"], equals: "CONTROLLED_TEST" } } });
-    await prisma.paymentPlan.create({ data: { unitId: unit.id, projectId: project.id, name: "Controlled installment plan", durationMonths: years * 12, downPaymentPercent: 0.10, totalPrice: price, currency: "EGP", planType: "INSTALLMENT", sourceMetadata: marker, notes: "Controlled test data; not a commercial offer" } });
+    await prisma.paymentPlan.create({ data: { unitId: unit.id, name: "Controlled installment plan", durationMonths: years * 12, downPaymentPercent: 0.10, totalPrice: price, currency: "EGP", planType: "INSTALLMENT", sourceMetadata: marker, notes: "Controlled test data; not a commercial offer" } });
   }
   console.log(`Seeded ${units.length} controlled test units across ${projects.length} test projects.`);
 } finally {

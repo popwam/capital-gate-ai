@@ -290,24 +290,64 @@ export class ResponseStyleService {
     return [intro, ...units.map((unit, index) => this.unitLine(style, unit, index))].join("\n");
   }
 
-  media(style: NadimLanguageStyle, count: number, verified: boolean) {
+  media(style: NadimLanguageStyle, input: Array<{ type?: string; url?: string }> | number, verified: boolean, request = "", location?: { latitude?: number | null; longitude?: number | null }) {
+    const media: Array<{ type?: string; url?: string }> = Array.isArray(input) ? input : Array.from({ length: input }, () => ({}));
     if (!verified) return this.unknown(style);
-    if (!count) return this.pick(style, {
+    if (!media.length) {
+      const base = this.pick(style, {
       AR_EGYPTIAN: "مش ظاهر عندي صور موثقة للوحدة دي دلوقتي.",
       AR_GULF: "ما عندي صور موثقة للوحدة هذي حاليًا.",
       AR_FORMAL: "لا توجد لدي صور موثقة لهذه الوحدة حاليًا.",
       EN_US: "I don’t have verified media for that unit right now.",
       FRANCO_ARABIC: "mesh zaher 3andy sowar mota2akda lel wa7da di delwa2ti.",
       MIXED_AR_EN: "مش ظاهر عندي verified media للـunit دي دلوقتي.",
+      });
+      const details = [base];
+      if (/(?:master\s*plan|ماستر\s*بلان)/iu.test(request)) details.push(style === "EN_US" ? "No verified master plan is currently available." : "مفيش ماستر بلان موثّق متاح حاليًا.");
+      if (/(?:location|لوكيشن|موقع|map|خريطة)/iu.test(request)) details.push(location?.latitude != null && location?.longitude != null ? `${style === "EN_US" ? "Verified location" : "اللوكيشن الموثّق"}: https://www.google.com/maps?q=${location.latitude},${location.longitude}` : style === "EN_US" ? "No precise verified location is currently available." : "مش عندي لوكيشن دقيق موثّق حاليًا.");
+      return details.join("\n");
+    }
+    const available = media.filter((item) => typeof item.url === "string" && /^https?:\/\//iu.test(item.url));
+    if (!available.length) return this.pick(style, {
+      AR_EGYPTIAN: "عندي سجل للوسائط، لكن مفيش رابط موثّق أقدر أعرضه حاليًا.", AR_GULF: "عندي سجل للوسائط، لكن ما فيه رابط موثّق أقدر أعرضه حاليًا.", AR_FORMAL: "توجد وسائط مسجلة، لكن لا يتوفر رابط موثّق لعرضها حاليًا.", EN_US: "Media is recorded, but there is no verified URL I can show right now.", FRANCO_ARABIC: "fe media metsegela bas mafish verified URL a2dar a3rdo delwa2ti.", MIXED_AR_EN: "في media مسجلة، لكن مفيش verified URL أقدر أعرضه دلوقتي.",
     });
+    const labels: Record<string, string> = { IMAGE: "صور", FLOOR_PLAN: "Floor plan", MASTER_PLAN: "Master plan", MAP: "الخريطة", VIDEO: "فيديو" };
+    const lines = available.slice(0, 8).map((item) => `${labels[item.type ?? ""] ?? "ملف"}: ${item.url}`);
+    const intro = this.pick(style, { AR_EGYPTIAN: "دي الروابط الموثّقة المتاحة عندي:", AR_GULF: "هذه الروابط الموثّقة المتاحة عندي:", AR_FORMAL: "هذه الروابط الموثّقة المتاحة:", EN_US: "These are the verified links currently available:", FRANCO_ARABIC: "di el verified links el mota7a:", MIXED_AR_EN: "دي الـverified links المتاحة:" });
+    const missing: string[] = [];
+    if (/(?:master\s*plan|ماستر\s*بلان)/iu.test(request) && !media.some((item) => item.type === "MASTER_PLAN")) missing.push(style === "EN_US" ? "No verified master plan is currently available." : "مفيش ماستر بلان موثّق متاح حاليًا.");
+    if (/(?:floor\s*plan|بلان\s*(?:الوحدة|الدور)|مسقط)/iu.test(request) && !media.some((item) => item.type === "FLOOR_PLAN")) missing.push(style === "EN_US" ? "No verified floor plan is currently available." : "مفيش floor plan موثّق متاح حاليًا.");
+    if (/(?:location|لوكيشن|موقع|map|خريطة)/iu.test(request)) {
+      missing.push(location?.latitude != null && location?.longitude != null
+        ? `${style === "EN_US" ? "Verified location" : "اللوكيشن الموثّق"}: https://www.google.com/maps?q=${location.latitude},${location.longitude}`
+        : style === "EN_US" ? "No precise verified location is currently available." : "مش عندي لوكيشن دقيق موثّق حاليًا.");
+    }
+    return [intro, ...lines, ...missing].join("\n");
+  }
+
+  unverifiedProximity(style: NadimLanguageStyle) {
     return this.pick(style, {
-      AR_EGYPTIAN: `عندي ${count} ملفات صور موثقة للوحدة دي.`,
-      AR_GULF: `عندي ${count} ملفات موثقة للوحدة هذي.`,
-      AR_FORMAL: `تتوفر ${count} ملفات وسائط موثقة لهذه الوحدة.`,
-      EN_US: `I have ${count} verified media items for that unit.`,
-      FRANCO_ARABIC: `3andy ${count} verified media lel wa7da di.`,
-      MIXED_AR_EN: `عندي ${count} verified media للـunit دي.`,
+      AR_EGYPTIAN: "الاتنين في نفس المنطقة العامة، لكن معنديش مسافة موثقة للمكان المطلوب لكل واحد فيهم، فمش هقولك إن واحد أقرب من غير بيانات مؤكدة.",
+      AR_GULF: "الخياران في المنطقة العامة نفسها، لكن ما عندي مسافة موثقة للمكان المطلوب لكل واحد، لذلك ما راح أقول إن أحدهما أقرب بلا بيانات مؤكدة.",
+      AR_FORMAL: "يقع الخياران في المنطقة العامة نفسها، لكن لا تتوفر مسافة موثقة إلى الموقع المطلوب لكل منهما، لذلك لا يمكنني الجزم بأن أحدهما أقرب.",
+      EN_US: "Both are in the same general area, but I do not have a verified distance to the requested landmark for each one, so I cannot truthfully say which is closer.",
+      FRANCO_ARABIC: "el etnen fe nafs el manta2a el 3ama, bas ma3andish verified distance lel makan lel etnen, fa mesh ha2ool wa7ed a2rab men gheir data mota2akda.",
+      MIXED_AR_EN: "الاتنين في نفس الـarea العامة، لكن معنديش verified distance للمكان المطلوب لكل واحد، فمش هحدد الأقرب من غير data مؤكدة.",
     });
+  }
+
+  location(style: NadimLanguageStyle, location: { name?: string; latitude?: number | null; longitude?: number | null } | undefined, verified: boolean) {
+    if (!verified || !location) return this.unknown(style);
+    if (location.latitude == null || location.longitude == null) return this.pick(style, {
+      AR_EGYPTIAN: `عندي المنطقة العامة${location.name ? ` (${location.name})` : ""}، لكن مش عندي لوكيشن دقيق موثّق حاليًا.`,
+      AR_GULF: `عندي المنطقة العامة${location.name ? ` (${location.name})` : ""}، لكن ما عندي موقع دقيق موثّق حاليًا.`,
+      AR_FORMAL: `تتوفر المنطقة العامة${location.name ? ` (${location.name})` : ""}، لكن لا يتوفر موقع دقيق موثّق حاليًا.`,
+      EN_US: `I have the general area${location.name ? ` (${location.name})` : ""}, but no precise verified location right now.`,
+      FRANCO_ARABIC: `3andy el area el 3ama${location.name ? ` (${location.name})` : ""}, bas mafish precise verified location delwa2ti.`,
+      MIXED_AR_EN: `عندي الـarea العامة${location.name ? ` (${location.name})` : ""}، لكن مفيش precise verified location دلوقتي.`,
+    });
+    const url = `https://www.google.com/maps?q=${location.latitude},${location.longitude}`;
+    return this.pick(style, { AR_EGYPTIAN: `ده اللوكيشن الموثّق: ${url}`, AR_GULF: `هذا الموقع الموثّق: ${url}`, AR_FORMAL: `هذا هو الموقع الموثّق: ${url}`, EN_US: `Here is the verified location: ${url}`, FRANCO_ARABIC: `da el verified location: ${url}`, MIXED_AR_EN: `ده الـverified location: ${url}` });
   }
 
   paymentPlans(style: NadimLanguageStyle, plans: any[], verified: boolean) {

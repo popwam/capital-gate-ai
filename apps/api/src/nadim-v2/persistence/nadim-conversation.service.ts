@@ -7,6 +7,11 @@ import { conversationStage, NadimConversationContext, NadimRecentToolSummary, Na
 import { CURRENT_SEARCH_QUERY_TARGETS, NADIM_INTENTS, NadimIntentType } from "../domain/nadim-intent";
 import { NadimTurnResult } from "../domain/nadim-result";
 import { NadimConversationMode } from "../domain/nadim-action";
+
+function localeTimezone(locale?: string | null) {
+  const region = locale?.match(/[-_]([A-Za-z]{2})\b/u)?.[1]?.toUpperCase();
+  return ({ EG: "Africa/Cairo", SA: "Asia/Riyadh", AE: "Asia/Dubai", KW: "Asia/Kuwait", QA: "Asia/Qatar", BH: "Asia/Bahrain", OM: "Asia/Muscat" } as Record<string, string>)[region ?? ""];
+}
 import { initialNadimState, NadimState } from "../domain/nadim-state";
 
 function json(value: unknown) {
@@ -184,8 +189,13 @@ export class NadimConversationService {
         channel: input.channel,
         externalUserId: input.externalUserId,
         locale: input.locale ?? state.locale,
+        timezone: localeTimezone(input.locale ?? state.locale),
         state: json(state),
       } });
+    }
+    if (!conversation.timezone) {
+      const timezone = localeTimezone(input.locale ?? conversation.locale);
+      if (timezone) conversation = await this.prisma.nadimConversation.update({ where: { id: conversation.id }, data: { timezone } });
     }
     if (customerId && input.externalUserId && input.channel !== "N8N" && !channelIdentity && !participant) {
       await this.prisma.customerChannelIdentity.create({ data: {

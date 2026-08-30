@@ -1,34 +1,40 @@
 "use client";
+
 import { useEffect, useState } from "react";
-import { ArrowRight, Bot, MessageSquareText, UserRound } from "lucide-react";
+import { ArrowRight, Bot, CalendarClock, ExternalLink, Link2, MessageSquareText, Pause, RotateCcw, Trash2, UserRound, UsersRound } from "lucide-react";
 import { adminApi, adminErrorMessage } from "@/lib/api";
 
-export default function ConversationDetail({params}:{params:Promise<{id:string}>}){
-  const [item,setItem]=useState<any>(); const [error,setError]=useState("");
-  useEffect(()=>{params.then(({id})=>adminApi.get(`/conversations/${id}`).then(setItem).catch(e=>setError(adminErrorMessage(e))))},[params]);
-  if(!item)return <main className="mx-auto max-w-[1100px] p-6" dir="rtl"><div className="rounded-2xl border bg-white p-8 text-center text-[13px] text-[#7b8781]">{error||"جارٍ تحميل المحادثة…"}</div></main>;
-  return <main className="mx-auto max-w-[1100px] p-4 sm:p-6 lg:p-8" dir="rtl">
-    <div className="mb-4"><a href="/admin/conversations" className="inline-flex items-center gap-2 text-[12px] font-bold text-[#547267]"><ArrowRight size={15}/> الرجوع للمحادثات</a></div>
-    <section className="rounded-[24px] border border-[#dfe4e0] bg-white p-5 sm:p-6"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start"><div><div className="flex items-center gap-2 text-[12px] font-bold text-[#4f7568]"><MessageSquareText size={15}/> سياق المحادثة</div><h2 className="mt-2 text-[22px] font-bold" dir="auto">{item.title||"محادثة بدون عنوان"}</h2><p className="mt-1 text-[12px] text-[#7b8781]">{item.detectedLanguage||"لغة غير محددة"} · آخر تحديث {new Date(item.updatedAt).toLocaleString("ar-EG")}</p></div><div className="flex flex-wrap gap-2">{item.leads?.map((l:any)=><a key={l.id} href={`/admin/leads/${l.id}`} className="rounded-full bg-[#edf3f0] px-3 py-1.5 text-[11px] font-bold text-[#365e51]" dir="auto">{l.name} · {l.status}</a>)}</div></div></section>
-    {item.state?.summary&&<section className="mt-4 rounded-[22px] border border-[#dfe4e0] bg-white p-5"><h3 className="text-[14px] font-bold">ملخص السياق</h3><ContextSummary value={item.state.summary}/></section>}
-    <section className="mt-4 space-y-3">{item.messages?.map((m:any)=><div key={m.id} className={`flex gap-3 ${m.role==="USER"?"":"flex-row-reverse"}`}><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${m.role==="USER"?"bg-white border text-[#46645a]":"bg-[#123c33] text-white"}`}>{m.role==="USER"?<UserRound size={15}/>:<Bot size={15}/>}</span><div dir="auto" className={`max-w-[86%] rounded-2xl px-4 py-3 text-[14px] leading-7 ${m.role==="USER"?"border bg-white":"bg-[#e8f0ec]"}`}><p className="whitespace-pre-wrap">{m.content}</p><p className="mt-2 text-[11px] text-[#82908a]">{m.role==="USER"?"العميل":"المستشار"} · {new Date(m.createdAt).toLocaleString("ar-EG")}</p></div></div>)}</section>
-  </main>
+const labels: Record<string, string> = { OPEN: "مفتوح", MATCHED: "له نتائج", NEEDS_MATCH: "يحتاج مطابقة", HUMAN_REVIEW: "مراجعة بشرية", CLOSED: "مغلق", PENDING: "مجدولة", CLAIMED: "قيد الإرسال" };
+const fmt = (value: string) => new Intl.DateTimeFormat("ar-EG", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+
+export default function ConversationDetail({ params }: { params: Promise<{ id: string }> }) {
+  const [id, setId] = useState(""); const [item, setItem] = useState<any>(); const [error, setError] = useState(""); const [busy, setBusy] = useState(""); const [notice, setNotice] = useState("");
+  async function load(value: string) { try { setItem(await adminApi.get(`/conversations/${value}`)); } catch (e) { setError(adminErrorMessage(e)); } }
+  useEffect(() => { params.then(({ id: value }) => { setId(value); void load(value); }); }, [params]);
+  async function mode(value: "AI" | "HUMAN" | "PAUSED") { setBusy("mode"); setError(""); try { await adminApi.patch(`/conversations/${id}/mode`, { mode: value }); await load(id); setNotice(value === "AI" ? "عاد نديم لملكية المحادثة." : value === "HUMAN" ? "انتقلت المحادثة للفريق البشري." : "تم إيقاف الردود مؤقتًا."); } catch (e) { setError(adminErrorMessage(e)); } finally { setBusy(""); } }
+  async function link(kind: "share" | "whatsapp") { setBusy(kind); setError(""); try { const result = await adminApi.post<{url:string}>(`/conversations/${id}/${kind}`); await navigator.clipboard.writeText(result.url); setNotice(kind === "share" ? "تم نسخ رابط المحادثة الآمن." : "تم نسخ رابط المتابعة على واتساب."); } catch (e) { setError(adminErrorMessage(e)); } finally { setBusy(""); } }
+  async function remove() { if (!window.confirm("حذف هذه المحادثة سيلغي المتابعات المعلقة. هل أنت متأكد؟")) return; setBusy("delete"); try { await adminApi.delete(`/conversations/${id}`, { confirmation: "DELETE" }); window.location.href = "/admin/conversations"; } catch (e) { setError(adminErrorMessage(e)); setBusy(""); } }
+  if (!item) return <main className="mx-auto max-w-[1180px] p-6" dir="rtl"><div className="rounded-2xl border bg-white p-8 text-center text-sm text-[#7b8781]">{error || "جارٍ تحميل المحادثة…"}</div></main>;
+  return <main className="mx-auto max-w-[1240px] p-4 sm:p-6 lg:p-8" dir="rtl">
+    <a href="/admin/conversations" className="inline-flex min-h-11 items-center gap-2 text-xs font-bold text-[#547267]"><ArrowRight size={15}/>الرجوع للمحادثات</a>
+    <header className="rounded-[24px] border border-[#dfe4e0] bg-white p-5 sm:p-6">
+      <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start"><div><p className="flex items-center gap-2 text-xs font-bold text-[#4f7568]"><MessageSquareText size={15}/> مساحة خدمة العميل</p><h1 className="mt-2 text-2xl font-bold" dir="auto">{item.identity}</h1><p className="mt-1 text-xs text-[#7b8781]">{item.channel} · {item.locale ?? "لغة غير محددة"} · {item.timezone ?? "منطقة زمنية غير محددة"} · آخر نشاط {fmt(item.updatedAt)}</p></div>
+        <div className="flex flex-wrap gap-2"><Action onClick={()=>void mode("HUMAN")} disabled={!!busy} icon={<UsersRound size={15}/>} label="تسليم لبشري"/><Action onClick={()=>void mode("AI")} disabled={!!busy} primary icon={<RotateCcw size={15}/>} label="إعادة لنديم"/><Action onClick={()=>void mode("PAUSED")} disabled={!!busy} icon={<Pause size={15}/>} label="إيقاف"/></div></div>
+      <div className="mt-5 flex flex-wrap items-center gap-2 border-t pt-4"><span className="ml-auto rounded-lg bg-[#edf3f0] px-3 py-1.5 text-xs font-bold">الملكية: {item.mode === "AI" ? "نديم" : item.mode === "HUMAN" ? "الفريق البشري" : "متوقفة"}</span><Action onClick={()=>void link("share")} disabled={!!busy} icon={<Link2 size={15}/>} label="نسخ رابط آمن"/><Action onClick={()=>void link("whatsapp")} disabled={!!busy} icon={<ExternalLink size={15}/>} label="متابعة على واتساب"/><button onClick={()=>void remove()} disabled={!!busy} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-red-200 px-3 text-xs font-bold text-red-700 disabled:opacity-50"><Trash2 size={15}/>حذف</button></div>
+      {notice ? <p className="mt-3 text-xs font-semibold text-emerald-800" aria-live="polite">{notice}</p> : null}{error ? <p className="mt-3 text-xs text-red-700" role="alert">{error}</p> : null}
+    </header>
+    <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <section aria-label="نص المحادثة" className="space-y-3">{item.messages?.map((message:any)=><article key={message.id} className={`flex gap-3 ${message.role === "USER" ? "" : "flex-row-reverse"}`}><span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${message.role === "USER" ? "border bg-white text-[#46645a]" : "bg-[#123c33] text-white"}`}>{message.role === "USER" ? <UserRound size={16}/> : <Bot size={16}/>}</span><div dir="auto" className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-7 ${message.role === "USER" ? "border bg-white" : "bg-[#e8f0ec] text-[#17251f]"}`}><p className="whitespace-pre-wrap">{message.content}</p><p className="mt-2 text-[11px] text-[#75837c]">{message.channel} · {fmt(message.createdAt)}</p></div></article>)}{!item.messages?.length ? <Empty text="لا توجد رسائل بعد."/> : null}</section>
+      <aside className="space-y-4">
+        <Panel title="متطلبات العقار">{item.propertyRequirements?.length ? item.propertyRequirements.map((r:any)=><div key={r.id} className={`rounded-xl border p-3 ${r.active ? "border-[#6f9588] bg-[#f3f8f5]" : "bg-white"}`}><div className="flex items-start justify-between gap-2"><b className="text-[13px]" dir="auto">{r.title}</b><span className="shrink-0 rounded-md bg-white px-2 py-1 text-[10px] font-bold">{labels[r.status] ?? r.status}</span></div><p className="mt-2 text-xs leading-5 text-[#65736d]" dir="auto">{[r.propertyType, r.bedrooms ? `${r.bedrooms} غرف` : null, ...(r.locations ?? []), r.budgetMax ? `حتى ${Number(r.budgetMax).toLocaleString("ar-EG")} ${r.currency ?? ""}` : null].filter(Boolean).join(" · ")}</p></div>) : <Empty text="لا توجد متطلبات عقارية."/>}</Panel>
+        <Panel title="المتابعات">{item.followUpTasks?.length ? item.followUpTasks.map((task:any)=><div key={task.id} className="rounded-xl bg-sky-50 p-3"><p className="flex items-center gap-2 text-xs font-bold text-sky-900"><CalendarClock size={14}/>{fmt(task.dueAt)}</p><p className="mt-1 text-[11px] text-sky-800" dir="auto">{task.reason} · {labels[task.status] ?? task.status}</p></div>) : <Empty text="لا توجد متابعات معلقة."/>}</Panel>
+        <Panel title="المشاركون والقنوات">{item.participants?.length ? item.participants.map((p:any)=><div key={p.id} className="flex items-center justify-between gap-2 py-2 text-xs"><span dir="auto">{p.externalUserId}</span><span className="text-[#74817b]">{p.channel} · {p.role === "OWNER" ? "مالك" : "مشارك"}</span></div>) : <Empty text="لا يوجد مشاركون مسجلون."/>}</Panel>
+        {item.customerContext ? <Panel title="سياق العميل"><pre className="whitespace-pre-wrap break-words font-sans text-xs leading-6 text-[#52635c]" dir="auto">{Object.entries(item.customerContext).map(([key,value])=>`${key}: ${String(value)}`).join("\n")}</pre></Panel> : null}
+      </aside>
+    </div>
+  </main>;
 }
 
-
-function ContextSummary({value}:{value:any}){
-  if(!value||typeof value!=="object")return <p className="mt-3 text-[12px] text-[#74817b]" dir="auto">{String(value||"لا يوجد ملخص منظم بعد.")}</p>;
-  const {recentConversation:_recentConversation,...clean}=value;
-  const labels:Record<string,string>={customerGoal:"الهدف",budget:"الميزانية",preferredLocations:"المناطق المفضلة",propertyTypes:"نوع العقار",bedrooms:"غرف النوم",bathrooms:"الحمامات",preferredPhase:"المرحلة",preferredBuilding:"المبنى",preferredPaymentDurationMonths:"مدة السداد",maxDownPayment:"أقصى مقدم",hardRequirements:"شروط أساسية",softPreferences:"تفضيلات",intentScore:"درجة الجدية",selectedUnitCode:"الوحدة المختارة"};
-  const format=(key:string,v:any)=>{
-    if(key==="budget"&&v&&typeof v==="object"){const parts=[v.min!=null?`من ${Number(v.min).toLocaleString()}`:null,v.max!=null?`حتى ${Number(v.max).toLocaleString()}`:null,v.currency||null].filter(Boolean);return parts.join(" ")||"—";}
-    if(key==="preferredPaymentDurationMonths"&&Number.isFinite(Number(v)))return `${v} شهر`;
-    if(key==="maxDownPayment"&&Number.isFinite(Number(v)))return Number(v).toLocaleString();
-    if(Array.isArray(v))return v.join("، ");
-    if(v&&typeof v==="object")return Object.entries(v).filter(([,x])=>x!=null).map(([k,x])=>`${k}: ${String(x)}`).join(" · ");
-    return String(v);
-  };
-  const rows=Object.entries(clean).filter(([,v])=>v!=null&&v!==""&&(!Array.isArray(v)||v.length));
-  if(!rows.length)return <p className="mt-3 text-[12px] text-[#74817b]">لا يوجد ملخص منظم بعد.</p>;
-  return <div className="mt-4 grid gap-3 sm:grid-cols-2">{rows.map(([key,v])=><div key={key} className="rounded-2xl bg-[#f7f8f6] p-4"><p className="text-[10px] font-bold text-[#7d8983]">{labels[key]||key.replace(/([A-Z])/g," $1")}</p><p className="mt-1 text-[13px] font-semibold leading-6 text-[#26352f]" dir="auto">{format(key,v)}</p></div>)}</div>;
-}
+function Action({ onClick, disabled, icon, label, primary = false }: { onClick:()=>void; disabled:boolean; icon:React.ReactNode; label:string; primary?:boolean }) { return <button onClick={onClick} disabled={disabled} className={`inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-xs font-bold disabled:opacity-50 ${primary ? "bg-[#173f3b] text-white" : "border"}`}>{icon}{label}</button>; }
+function Panel({ title, children }: { title:string; children:React.ReactNode }) { return <section className="rounded-[20px] border border-[#dfe4e0] bg-white p-4"><h2 className="mb-3 text-sm font-bold">{title}</h2><div className="space-y-2">{children}</div></section>; }
+function Empty({ text }: { text:string }) { return <p className="rounded-xl bg-[#f7f8f6] p-3 text-xs text-[#74817b]">{text}</p>; }

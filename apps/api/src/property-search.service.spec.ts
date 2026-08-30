@@ -5,6 +5,29 @@ import { ApplicationCache } from "./cache/application-cache";
 import { deterministicIntent } from "./providers/deterministic-intent";
 import { normalizeRealEstateSemantics } from "./providers/real-estate-semantics";
 import { applyDeterministicTurnSemantics, planCustomerTurn } from "./customer-turn-planner";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+test("location resolution checks multilingual canonical fields and approved aliases for controlled names", async () => {
+  const queries: any[] = [];
+  const prisma = { location: { findMany: async (query: any) => { queries.push(query); return query.where?.parentId ? [] : [{ id: "location" }]; } } };
+  const service = new PropertySearchService(prisma as any);
+  for (const term of ["التجمع", "التجمع الخامس", "القاهرة الجديدة", "New Cairo", "زايد", "الشيخ زايد"]) assert.deepEqual(await service.resolveLocations([term]), ["location"]);
+  for (const query of queries.filter((item) => item.where?.OR)) {
+    assert.ok(query.where.OR.some((item: any) => item.name));
+    assert.ok(query.where.OR.some((item: any) => item.nameAr));
+    assert.ok(query.where.OR.some((item: any) => item.nameEn));
+    assert.ok(query.where.OR.some((item: any) => item.canonicalName));
+    assert.ok(query.where.OR.some((item: any) => item.aliases?.some?.approvalStatus === "APPROVED"));
+  }
+});
+
+test("controlled inventory seed keeps unit payment plans single-owned and approved Cairo/Zayed aliases in Git", () => {
+  const source = readFileSync(resolve(process.cwd(), "../../scripts/seed-controlled-inventory.mjs"), "utf8");
+  assert.doesNotMatch(source, /paymentPlan\.create\([^]*?unitId:\s*unit\.id[^]*?projectId:\s*project\.id/iu);
+  for (const alias of ["التجمع", "التجمع الخامس", "القاهرة الجديدة", "نيو كايرو", "new cairo", "fifth settlement", "زايد", "الشيخ زايد", "شيخ زايد", "sheikh zayed", "zayed"]) assert.match(source, new RegExp(alias, "iu"));
+  assert.match(source, /approvalStatus:\s*"APPROVED"/u);
+});
 
 test("built-up-area aggregation is database-backed and keeps the prior minimum filter", async () => {
   let capturedWhere: any;

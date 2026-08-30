@@ -30,6 +30,8 @@ function compactUnit(unit: any) {
       location: unit.project.location ? {
         id: unit.project.location.id,
         name: unit.project.location.nameAr ?? unit.project.location.nameEn ?? unit.project.location.name,
+        latitude: unit.project.latitude == null ? (unit.project.location.latitude == null ? null : Number(unit.project.location.latitude)) : Number(unit.project.latitude),
+        longitude: unit.project.longitude == null ? (unit.project.location.longitude == null ? null : Number(unit.project.location.longitude)) : Number(unit.project.longitude),
       } : null,
     } : null,
     developer: unit.developer ? {
@@ -48,6 +50,7 @@ function compactUnit(unit: any) {
       currency: plan.currency ?? unit.currency,
     })) : [],
     media: Array.isArray(unit.media) ? unit.media.map((item: any) => ({ id: item.id, type: item.type, url: item.url, altText: item.altTextAr ?? item.altTextEn ?? item.altText ?? null })).slice(0, 12) : [],
+    proximities: Array.isArray(unit.proximities) ? unit.proximities.map((item: any) => ({ targetType: item.targetType, targetName: item.landmark?.nameAr ?? item.landmark?.nameEn ?? item.landmark?.name ?? item.gate?.nameAr ?? item.gate?.nameEn ?? item.gate?.name ?? item.amenity?.nameAr ?? item.amenity?.nameEn ?? item.amenity?.name, distanceMeters: item.distanceMeters == null ? null : Number(item.distanceMeters), walkingMinutes: item.walkingMinutes, drivingMinutes: item.drivingMinutes, verifiedAt: item.verifiedAt })) : [],
   });
 }
 
@@ -125,7 +128,10 @@ export class ToolExecutorService {
     }
     if (tool === "GET_MEDIA") {
       const unit = await this.properties.getProperty(String(args.unitId));
-      return serialize({ unitId: unit.id, externalUnitId: unit.externalUnitId, media: compactUnit(unit).media });
+      const projectAssets = await this.prisma.media.findMany({ where: { projectId: unit.projectId, unitId: null }, select: { id: true, type: true, url: true, altText: true, altTextAr: true, altTextEn: true }, orderBy: { sortOrder: "asc" }, take: 30 });
+      const media = [...compactUnit(unit).media, ...projectAssets.map((item) => ({ id: item.id, type: item.type, url: item.url, altText: item.altTextAr ?? item.altTextEn ?? item.altText }))]
+        .filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index);
+      return serialize({ unitId: unit.id, externalUnitId: unit.externalUnitId, media, location: compactUnit(unit).project?.location ?? null });
     }
     if (tool === "GET_PROJECT_FACTS") return serialize(await this.properties.getProject(String(args.projectId)));
     if (tool === "GET_LOCATION") {

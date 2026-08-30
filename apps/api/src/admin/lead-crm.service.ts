@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { LeadIntent, LeadStatus, Prisma } from "@prisma/client";
 import { AuditService } from "../audit.service";
@@ -15,6 +16,7 @@ import {
   TrustAlertFeedbackDto,
 } from "./lead-crm.dto";
 import { createConversationExport } from "./conversation-export";
+import { CustomerLifecycleService } from "../nadim-v2/product/customer-lifecycle.service";
 
 type JsonObject = Record<string, any>;
 
@@ -24,6 +26,7 @@ export class LeadCrmService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    @Optional() private readonly lifecycle?: CustomerLifecycleService,
   ) {}
 
   private json(value: Prisma.JsonValue): JsonObject {
@@ -586,31 +589,38 @@ export class LeadCrmService {
   }
 
   async conversations(query: AdminConversationListQueryDto) {
-    const where = this.conversationWhere(query);
+    const where: Prisma.NadimConversationWhereInput = {
+      deletedAt: null,
+      ...(query.search ? { OR: [
+        { externalUserId: { contains: query.search, mode: "insensitive" } },
+        { customer: { is: { name: { contains: query.search, mode: "insensitive" } } } },
+        { propertyRequirements: { some: { title: { contains: query.search, mode: "insensitive" } } } },
+      ] } : {}),
+    };
     const [total, items] = await this.prisma.$transaction([
-      this.prisma.conversation.count({ where }),
-      this.prisma.conversation.findMany({
+      this.prisma.nadimConversation.count({ where }),
+      this.prisma.nadimConversation.findMany({
         where,
         skip: (query.page - 1) * query.limit,
         take: query.limit,
         orderBy: { updatedAt: "desc" },
         select: {
           id: true,
-          title: true,
-          detectedLanguage: true,
+          channel: true,
+          locale: true,
+          mode: true,
+          externalUserId: true,
           createdAt: true,
           updatedAt: true,
-          _count: { select: { messages: true, leads: true } },
-          leads: {
-            take: 1,
-            orderBy: { createdAt: "desc" },
-            select: { id: true, name: true, status: true, intentScore: true },
-          },
+          customer: { select: { name: true } },
+          activeRequirement: { select: { title: true, status: true, propertyType: true, locations: true, bedrooms: true, budgetMax: true, currency: true } },
+          propertyRequirements: { where: { status: { not: "CLOSED" } }, orderBy: { updatedAt: "desc" }, take: 3, select: { title: true, status: true } },
+          _count: { select: { turns: true, participants: { where: { status: "ACTIVE" } }, followUpTasks: { where: { status: "PENDING" } } } },
         },
       }),
     ]);
     return {
-      items,
+      items: items.map((item) => ({ ...item, identity: item.customer?.name ?? this.maskIdentity(item.externalUserId) ?? "عميل بدون اسم", externalUserId: undefined, customer: undefined })),
       page: query.page,
       limit: query.limit,
       total,
@@ -622,51 +632,43 @@ export class LeadCrmService {
     query: AdminConversationExportQueryDto,
     adminUserId: string,
   ) {
-    const where = this.conversationWhere(query);
-    const total = await this.prisma.conversation.count({ where });
+    const where: Prisma.NadimConversationWhereInput = { deletedAt: null, ...(query.search ? { OR: [{ externalUserId: { contains: query.search, mode: "insensitive" } }, { customer: { is: { name: { contains: query.search, mode: "insensitive" } } } }, { propertyRequirements: { some: { title: { contains: query.search, mode: "insensitive" } } } }] } : {}) };
+    const total = await this.prisma.nadimConversation.count({ where });
     if (total > LeadCrmService.MAX_CONVERSATION_EXPORT) {
       throw new BadRequestException(
         `Conversation export is limited to ${LeadCrmService.MAX_CONVERSATION_EXPORT.toLocaleString("en-US")} records. Narrow the search and try again.`,
       );
     }
-    const records = await this.prisma.conversation.findMany({
+    const records = await this.prisma.nadimConversation.findMany({
       where,
       orderBy: { updatedAt: "desc" },
       select: {
         id: true,
-        title: true,
-        detectedLanguage: true,
+        locale: true,
+        summary: true,
+        state: true,
+        externalUserId: true,
+        customer: { select: { name: true } },
         createdAt: true,
         updatedAt: true,
-        state: {
-          select: { summary: true, searchContext: true, intentScore: true },
-        },
-        leads: {
-          orderBy: { createdAt: "desc" },
-          select: {
-            id: true,
-            name: true,
-            phone: true,
-            intent: true,
-            intentScore: true,
-            status: true,
-            createdAt: true,
-            customer: { select: { name: true, normalizedPhone: true } },
-          },
-        },
-        messages: {
+        turns: {
           orderBy: { createdAt: "asc" },
-          select: { id: true, role: true, content: true, createdAt: true },
+          select: { id: true, userMessage: true, assistantReply: true, createdAt: true },
         },
       },
     });
     const exportRecords = records.map((record) => ({
-      ...record,
-      leads: record.leads.map(({ customer, ...lead }) => ({
-        ...lead,
-        name: lead.name ?? customer?.name ?? "",
-        phone: lead.phone ?? customer?.normalizedPhone ?? "",
-      })),
+      id: record.id,
+      title: record.customer?.name ?? this.maskIdentity(record.externalUserId) ?? "Conversation",
+      detectedLanguage: record.locale,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      state: { summary: record.summary, searchContext: record.state, intentScore: 0 },
+      leads: [],
+      messages: record.turns.flatMap((turn) => [
+        { id: `${turn.id}:user`, role: "USER", content: turn.userMessage, createdAt: turn.createdAt },
+        ...(turn.assistantReply ? [{ id: `${turn.id}:assistant`, role: "ASSISTANT", content: turn.assistantReply, createdAt: turn.createdAt }] : []),
+      ]),
     }));
     const file = createConversationExport(exportRecords, query.format, {
       ...(query.search ? { search: query.search } : {}),
@@ -686,30 +688,79 @@ export class LeadCrmService {
     return file;
   }
   async conversation(id: string) {
-    const item = await this.prisma.conversation.findUnique({
-      where: { id },
+    const item = await this.prisma.nadimConversation.findFirst({
+      where: { id, deletedAt: null },
       select: {
         id: true,
-        title: true,
-        detectedLanguage: true,
+        channel: true,
+        locale: true,
+        timezone: true,
+        mode: true,
+        activeRequirementId: true,
+        customerContext: true,
+        summary: true,
+        externalUserId: true,
         createdAt: true,
         updatedAt: true,
-        state: {
-          select: { summary: true, searchContext: true, intentScore: true },
-        },
-        leads: {
-          select: { id: true, name: true, status: true, intentScore: true, customer: { select: { name: true } } },
-        },
-        messages: {
+        customer: { select: { name: true } },
+        turns: {
           orderBy: { createdAt: "asc" },
-          select: { id: true, role: true, content: true, createdAt: true },
+          select: { id: true, channel: true, userMessage: true, assistantReply: true, createdAt: true },
         },
+        propertyRequirements: { orderBy: { updatedAt: "desc" }, select: { id: true, title: true, status: true, purpose: true, propertyType: true, locations: true, preferredDevelopers: true, preferredProjects: true, bedrooms: true, bathrooms: true, areaMin: true, areaMax: true, budgetMin: true, budgetMax: true, currency: true, updatedAt: true } },
+        followUpTasks: { where: { status: { in: ["PENDING", "CLAIMED"] } }, orderBy: { dueAt: "asc" }, select: { id: true, dueAt: true, timezone: true, status: true, reason: true, channel: true } },
+        participants: { orderBy: { joinedAt: "asc" }, select: { id: true, channel: true, role: true, status: true, joinedAt: true, externalUserId: true } },
       },
     });
     if (!item) throw new NotFoundException("Conversation not found");
     return {
       ...item,
-      leads: item.leads.map(({ customer, ...lead }) => ({ ...lead, name: lead.name ?? customer?.name ?? null })),
+      identity: item.customer?.name ?? this.maskIdentity(item.externalUserId) ?? "عميل بدون اسم",
+      externalUserId: undefined,
+      customer: undefined,
+      messages: item.turns.flatMap((turn) => [
+        { id: `${turn.id}:user`, role: "USER", content: turn.userMessage, channel: turn.channel, createdAt: turn.createdAt },
+        ...(turn.assistantReply ? [{ id: `${turn.id}:assistant`, role: "ASSISTANT", content: turn.assistantReply, channel: turn.channel, createdAt: turn.createdAt }] : []),
+      ]),
+      turns: undefined,
+      propertyRequirements: item.propertyRequirements.map((requirement) => ({ ...requirement, active: requirement.id === item.activeRequirementId })),
+      participants: item.participants.map((participant) => ({ ...participant, externalUserId: this.maskIdentity(participant.externalUserId) })),
     };
+  }
+
+  async setConversationMode(id: string, mode: "AI" | "HUMAN" | "PAUSED", adminUserId: string) {
+    const current = await this.prisma.nadimConversation.findFirst({ where: { id, deletedAt: null }, select: { mode: true } });
+    if (!current) throw new NotFoundException("Conversation not found");
+    const now = new Date();
+    const item = await this.prisma.nadimConversation.update({ where: { id }, data: { mode, modeChangedAt: now, humanModeSince: mode === "HUMAN" ? now : null, lastHumanMessageAt: mode === "HUMAN" ? now : null } });
+    await this.audit.record(adminUserId, "NADIM_CONVERSATION_MODE_CHANGED", "NadimConversation", id, { previousMode: current.mode, mode });
+    return { id: item.id, mode: item.mode, updatedAt: item.updatedAt };
+  }
+
+  async createConversationLink(id: string, type: "WEB_SHARE" | "WHATSAPP_HANDOFF", adminUserId: string) {
+    if (!this.lifecycle) throw new BadRequestException("Conversation lifecycle is unavailable");
+    const created = await this.lifecycle.createToken({ conversationId: id, type, maxUses: type === "WHATSAPP_HANDOFF" ? 1 : undefined });
+    const base = process.env.WEB_BASE_URL?.replace(/\/$/u, "");
+    const number = process.env.WHATSAPP_BUSINESS_NUMBER?.replace(/\D/gu, "");
+    const url = type === "WEB_SHARE" && base ? `${base}/c/${encodeURIComponent(created.token)}` : type === "WHATSAPP_HANDOFF" && number ? `https://wa.me/${number}?text=${encodeURIComponent(`continue ${created.token}`)}` : undefined;
+    if (!url) { await this.lifecycle.revokeToken(created.id, id); throw new BadRequestException(type === "WEB_SHARE" ? "WEB_BASE_URL is not configured" : "WHATSAPP_BUSINESS_NUMBER is not configured"); }
+    await this.audit.record(adminUserId, "NADIM_CONVERSATION_LINK_CREATED", "NadimConversation", id, { type });
+    return { tokenId: created.id, url, expiresAt: created.expiresAt };
+  }
+
+  async deleteConversation(id: string, confirmation: "DELETE", adminUserId: string) {
+    if (confirmation !== "DELETE") throw new BadRequestException("Deletion confirmation is required");
+    const changed = await this.prisma.nadimConversation.updateMany({ where: { id, deletedAt: null }, data: { deletedAt: new Date(), mode: "PAUSED" } });
+    if (!changed.count) throw new NotFoundException("Conversation not found");
+    await this.prisma.followUpTask.updateMany({ where: { conversationId: id, status: { in: ["PENDING", "CLAIMED"] } }, data: { status: "CANCELLED", claimedAt: null, claimedBy: null } });
+    await this.audit.record(adminUserId, "NADIM_CONVERSATION_DELETED", "NadimConversation", id);
+    return { deleted: true };
+  }
+
+  private maskIdentity(value?: string | null) {
+    if (!value) return undefined;
+    if (value.includes("@")) { const [local, domain] = value.split("@"); return `${local.slice(0, 2)}***@${domain}`; }
+    const digits = value.replace(/\D/gu, "");
+    return digits.length >= 7 ? `${digits.slice(0, 3)}••••${digits.slice(-3)}` : `${value.slice(0, 2)}•••`;
   }
 }

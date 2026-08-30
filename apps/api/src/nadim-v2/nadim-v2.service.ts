@@ -165,6 +165,21 @@ export class NadimV2Service {
         mode = control.mode;
       }
 
+      // A qualified customer brief is lifecycle data, not a side effect of a
+      // successful inventory lookup. Persist it before any search can fail.
+      const persistedRequirement = !control.action && this.lifecycle
+        && ["PROPERTY_SEARCH", "MODIFY_SEARCH"].includes(understood.understanding.intent)
+        && this.hasRequirementCriteria(state)
+        ? await this.lifecycle.saveRequirement({
+            conversationId: resolved.conversation.id,
+            channel: input.channel,
+            externalUserId: input.externalUserId,
+            state,
+            status: "OPEN",
+            allowNew: understood.understanding.intent === "PROPERTY_SEARCH",
+          })
+        : undefined;
+
       const plan = control.action
         ? { goal: control.action, steps: [] }
         : this.planner.plan(understood.understanding, state);
@@ -174,7 +189,9 @@ export class NadimV2Service {
       if (finalDecision) {
         understood.understanding.responseGoal = finalDecision.conversationalGoal;
         understood.understanding.responsePlan = finalDecision.responsePlan;
-        understood.understanding.proposedActions = finalDecision.proposedActions;
+        const existingActions = understood.understanding.proposedActions ?? [];
+        understood.understanding.proposedActions = [...existingActions, ...finalDecision.proposedActions]
+          .filter((action, index, all) => all.findIndex((candidate) => candidate.type === action.type) === index);
       }
 
       const verifiedResults = toolResults
@@ -184,15 +201,8 @@ export class NadimV2Service {
       if (propertySearchResult) {
         const searchRows = Array.isArray(propertySearchResult.data) ? propertySearchResult.data : [];
         state = this.stateEngine.withResults(state, searchRows.map((item: any) => item?.id).filter(Boolean));
-        if (this.lifecycle && this.hasRequirementCriteria(state)) {
-          await this.lifecycle.saveRequirement({
-            conversationId: resolved.conversation.id,
-            channel: input.channel,
-            externalUserId: input.externalUserId,
-            state,
-            status: searchRows.length ? "MATCHED" : "NEEDS_MATCH",
-            allowNew: understood.understanding.intent === "PROPERTY_SEARCH",
-          });
+        if (persistedRequirement && this.lifecycle) {
+          await this.lifecycle.setRequirementStatus(persistedRequirement.id, searchRows.length ? "MATCHED" : "NEEDS_MATCH");
         }
       }
       const unitFacts = toolResults.find((result) => result.tool === "GET_UNIT_FACTS" && result.ok)?.data as { id?: string } | undefined;

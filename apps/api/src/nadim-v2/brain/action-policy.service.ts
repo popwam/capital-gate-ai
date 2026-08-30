@@ -5,6 +5,7 @@ import { NadimUnderstanding } from "../domain/nadim-intent";
 import { NadimState } from "../domain/nadim-state";
 import { NadimChannel } from "../dto/nadim-turn.dto";
 import { CustomerLifecycleService } from "../product/customer-lifecycle.service";
+import { resolveFollowUpDueAt, temporalRequestFromPayload } from "../product/follow-up-time";
 
 @Injectable()
 export class ActionPolicyService {
@@ -60,14 +61,17 @@ export class ActionPolicyService {
         return { type: proposal.type, status: "SUCCEEDED", entityId: requirement.id };
       }
       if (proposal.type === "CREATE_FOLLOWUP") {
-        const dueAt = new Date(String(proposal.payload.dueAt ?? ""));
-        const timezone = typeof proposal.payload.timezone === "string" ? proposal.payload.timezone : this.localeTimezone(context.state!.locale);
+        const temporal = temporalRequestFromPayload(proposal.payload);
+        if (!temporal) return { type: proposal.type, status: "NOT_EXECUTED", errorCode: "FOLLOWUP_TIME_REQUIRED" };
+        const timezone = await this.lifecycle.conversationTimezone(context.conversationId) ?? this.localeTimezone(context.state!.locale);
         if (!timezone) return { type: proposal.type, status: "NOT_EXECUTED", errorCode: "TIMEZONE_REQUIRED" };
+        const dueAt = resolveFollowUpDueAt(temporal, timezone);
         const task = await this.lifecycle.createFollowUp({
           conversationId: context.conversationId, channel: context.channel, externalUserId: context.externalUserId,
           dueAt, timezone, reason: proposal.reason, messageIntent: proposal.payload,
           renderedMessage: typeof proposal.payload.text === "string" ? proposal.payload.text : undefined,
           propertyRequirementId: typeof proposal.payload.propertyRequirementId === "string" ? proposal.payload.propertyRequirementId : undefined,
+          dedupeSource: JSON.stringify(temporal),
         });
         return { type: proposal.type, status: "SUCCEEDED", entityId: task.id };
       }

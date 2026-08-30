@@ -3,6 +3,8 @@ import { test } from "node:test";
 import { CustomerLifecycleService } from "./customer-lifecycle.service";
 import { initialNadimState } from "../domain/nadim-state";
 import { ConversationsService } from "../../conversations.service";
+import { extractFollowUpTemporalRequest, resolveFollowUpDueAt } from "./follow-up-time";
+import { ActionPolicyService } from "../brain/action-policy.service";
 
 test("human activity never creates a conversation and is a safe no-op outside HUMAN mode", async () => {
   let updates = 0;
@@ -124,4 +126,47 @@ test("an OWNER deletion removes every web binding and the conversation-scoped li
   const service = new ConversationsService(prisma, { resolve: async () => ({ id: "device" }) } as any, {} as any);
   await service.remove("web-owner", "device-token-with-at-least-20-characters");
   assert.deepEqual(operations, ["delete-all-web-bindings", "delete-nadim"]);
+});
+
+test("follow-up expressions resolve deterministically for 30 minutes, 2 hours, and tomorrow in Cairo", () => {
+  const now = new Date("2026-08-30T10:00:00.000Z");
+  const halfHour = extractFollowUpTemporalRequest("تابع معايا كمان نص ساعة")!;
+  const twoHours = extractFollowUpTemporalRequest("كلمني بعد ساعتين")!;
+  const tomorrow = extractFollowUpTemporalRequest("فكرني بكرة")!;
+  assert.equal(resolveFollowUpDueAt(halfHour, "Africa/Cairo", now).toISOString(), "2026-08-30T10:30:00.000Z");
+  assert.equal(resolveFollowUpDueAt(twoHours, "Africa/Cairo", now).toISOString(), "2026-08-30T12:00:00.000Z");
+  assert.equal(resolveFollowUpDueAt(tomorrow, "Africa/Cairo", now).toISOString(), "2026-08-31T10:00:00.000Z");
+});
+
+test("repeated exact follow-up requests reuse one persisted task", async () => {
+  let creates = 0;
+  let stored: any;
+  const prisma: any = {
+    nadimConversation: {
+      findFirst: async () => ({ id: "c1", customerId: "customer", timezone: "Africa/Cairo", customer: { timezone: null } }),
+      update: async () => ({}), findUniqueOrThrow: async () => ({ id: "c1", customerId: "customer", externalUserId: "201000000000" }),
+    },
+    followUpTask: { findUnique: async () => stored, create: async ({ data }: any) => { creates += 1; stored = { id: "f1", ...data }; return stored; } },
+  };
+  const lifecycle = new CustomerLifecycleService(prisma);
+  const input = { conversationId: "c1", channel: "WHATSAPP" as const, dueAt: new Date(Date.now() + 30 * 60_000), timezone: "Africa/Cairo", reason: "Customer requested follow-up", messageIntent: {}, dedupeSource: '{"kind":"RELATIVE","amount":30,"unit":"MINUTE"}' };
+  assert.equal((await lifecycle.createFollowUp(input)).id, "f1");
+  assert.equal((await lifecycle.createFollowUp(input)).id, "f1");
+  assert.equal(creates, 1);
+});
+
+test("follow-up persistence failure is returned as FAILED and never authorized as success", async () => {
+  const policy = new ActionPolicyService({} as any, { conversationTimezone: async () => "Africa/Cairo", createFollowUp: async () => { throw new Error("db down"); } } as any);
+  const result = await policy.execute([{ type: "CREATE_FOLLOWUP", reason: "explicit", payload: { temporal: { kind: "RELATIVE", amount: 30, unit: "MINUTE" } } }], { channel: "WHATSAPP", conversationId: "c1", requestId: "r1", state: initialNadimState({ channel: "WHATSAPP", locale: "ar-EG" }) });
+  assert.equal(result[0].status, "FAILED");
+});
+
+test("successful +30 minute action persists the deterministic dueAt in the conversation timezone", async () => {
+  let captured: any;
+  const policy = new ActionPolicyService({} as any, { conversationTimezone: async () => "Africa/Cairo", createFollowUp: async (input: any) => { captured = input; return { id: "followup-1" }; } } as any);
+  const before = Date.now();
+  const [result] = await policy.execute([{ type: "CREATE_FOLLOWUP", reason: "explicit", payload: { temporal: { kind: "RELATIVE", amount: 30, unit: "MINUTE" } } }], { channel: "WHATSAPP", conversationId: "c1", requestId: "r1", state: initialNadimState({ channel: "WHATSAPP", locale: "ar-EG" }) });
+  assert.equal(result.status, "SUCCEEDED");
+  assert.equal(captured.timezone, "Africa/Cairo");
+  assert.ok(captured.dueAt.getTime() >= before + 30 * 60_000 && captured.dueAt.getTime() < before + 30 * 60_000 + 1_000);
 });

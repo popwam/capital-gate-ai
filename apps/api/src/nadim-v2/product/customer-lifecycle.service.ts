@@ -90,9 +90,22 @@ export class CustomerLifecycleService {
     return requirement;
   }
 
+  async setRequirementStatus(id: string, status: PropertyRequirementStatus) {
+    return this.prisma.propertyRequirement.update({ where: { id }, data: { status } });
+  }
+
+  async conversationTimezone(conversationId: string) {
+    const conversation = await this.prisma.nadimConversation.findFirst({
+      where: { id: conversationId, deletedAt: null },
+      select: { timezone: true, customer: { select: { timezone: true } } },
+    });
+    if (!conversation) throw new NotFoundException({ code: "NADIM_CONVERSATION_NOT_FOUND", message: "Conversation not found", safe: true });
+    return conversation.timezone ?? conversation.customer?.timezone ?? undefined;
+  }
+
   async createFollowUp(input: {
     conversationId: string; channel: NadimChannel; externalUserId?: string; dueAt: Date; timezone: string;
-    reason: string; messageIntent: Record<string, unknown>; renderedMessage?: string; propertyRequirementId?: string;
+    reason: string; messageIntent: Record<string, unknown>; renderedMessage?: string; propertyRequirementId?: string; dedupeSource?: string;
   }) {
     if (!this.validTimezone(input.timezone)) throw new BadRequestException({ code: "TIMEZONE_REQUIRED", message: "A valid customer timezone is required", safe: true });
     if (!Number.isFinite(input.dueAt.getTime()) || input.dueAt <= new Date()) throw new BadRequestException({ code: "INVALID_FOLLOWUP_TIME", message: "Follow-up time must be in the future", safe: true });
@@ -100,18 +113,31 @@ export class CustomerLifecycleService {
     const conversation = await this.prisma.nadimConversation.findUniqueOrThrow({ where: { id: input.conversationId } });
     const outboundAddress = safeText(input.externalUserId ?? conversation.externalUserId, 300);
     if (!outboundAddress) throw new BadRequestException({ code: "FOLLOWUP_ADDRESS_REQUIRED", message: "A delivery address is required", safe: true });
-    return this.prisma.followUpTask.create({ data: {
-      customerId,
-      conversationId: input.conversationId,
-      propertyRequirementId: input.propertyRequirementId,
-      channel: input.channel,
-      outboundAddress,
-      dueAt: input.dueAt,
-      timezone: input.timezone,
-      reason: safeText(input.reason, 500) || "Customer requested follow-up",
-      messageIntent: json(input.messageIntent),
-      renderedMessage: safeText(input.renderedMessage, 2_000) || null,
-    } });
+    const bucket = Math.floor(Date.now() / (10 * 60_000));
+    const dedupeKey = createHash("sha256").update(`${input.conversationId}:${input.dedupeSource ?? input.reason}:${bucket}`, "utf8").digest("hex");
+    const existing = await this.prisma.followUpTask.findUnique({ where: { dedupeKey } });
+    if (existing) return existing;
+    try {
+      return await this.prisma.followUpTask.create({ data: {
+        customerId,
+        conversationId: input.conversationId,
+        propertyRequirementId: input.propertyRequirementId,
+        channel: input.channel,
+        outboundAddress,
+        dueAt: input.dueAt,
+        timezone: input.timezone,
+        reason: safeText(input.reason, 500) || "Customer requested follow-up",
+        messageIntent: json(input.messageIntent),
+        renderedMessage: safeText(input.renderedMessage, 2_000) || null,
+        dedupeKey,
+      } });
+    } catch (error) {
+      if ((error as { code?: string }).code === "P2002") {
+        const duplicate = await this.prisma.followUpTask.findUnique({ where: { dedupeKey } });
+        if (duplicate) return duplicate;
+      }
+      throw error;
+    }
   }
 
   async recordHumanActivity(input: { channel: string; externalUserId: string; occurredAt?: string | number }) {

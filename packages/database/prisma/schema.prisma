@@ -1110,6 +1110,7 @@ model FollowUpTask {
   reason                String
   messageIntent         Json
   renderedMessage       String?
+  dedupeKey             String?              @unique
   safeDuringHuman       Boolean              @default(false)
   claimedAt             DateTime?
   claimedBy             String?

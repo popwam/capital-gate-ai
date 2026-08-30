@@ -1,6 +1,31 @@
-# Cg Ai
+# Maqar / مَقار
 
-Cg Ai is an Arabic-first real-estate conversation and inventory platform. PostgreSQL remains the source of truth; the AI explains and compares verified application data rather than inventing inventory facts.
+Arabic-first, AI-powered real-estate customer service grounded in verified inventory.
+
+## Live Demo / GitHub
+
+[GitHub](https://github.com/popwam/cg-ai)
+
+## Screenshots
+
+| Nadim Web conversation | Customer-service Dashboard |
+| --- | --- |
+| ![Nadim Web conversation](docs/screenshots/nadim-web.png) | ![Customer-service Dashboard](docs/screenshots/dashboard-conversations.png) |
+
+## Key Features
+
+- AI-first real-estate customer service with Nadim
+- Verified inventory search
+- Multi-requirement customer lifecycle
+- WhatsApp + Web conversation continuity
+- Human handoff
+- Secure conversation sharing
+- Scheduled follow-ups
+- Deterministic truth and action safety
+
+## Tech Stack
+
+Next.js · NestJS · Prisma · PostgreSQL · n8n · Evolution API / WhatsApp · AWS Bedrock GLM + Groq
 
 ## Architecture
 

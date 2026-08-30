@@ -10,6 +10,7 @@ import {
 } from "./lead-crm.controller";
 import {
   AdminConversationExportQueryDto,
+  AdminConversationListQueryDto,
   LeadListQueryDto,
 } from "./lead-crm.dto";
 import { LeadCrmService } from "./lead-crm.service";
@@ -114,6 +115,11 @@ function fixture() {
         ];
       },
     },
+    nadimConversation: {
+      count: async (args: any) => { calls.push(["nadimConversation.count", args]); return 1; },
+      findMany: async (args: any) => { calls.push(["nadimConversation.findMany", args]); return args.select?.turns ? [{ id: "nadim-1", locale: "ar-EG", summary: {}, state: {}, externalUserId: "201000000000", customer: { name: "Customer" }, createdAt: new Date(), updatedAt: new Date(), turns: [{ id: "t1", userMessage: "عايز شقة", assistantReply: "تمام", createdAt: new Date() }] }] : [{ id: "nadim-1", channel: "WHATSAPP", locale: "ar-EG", mode: "HUMAN", externalUserId: "201000000000", createdAt: new Date(), updatedAt: new Date(), customer: { name: "Customer" }, activeRequirement: { title: "Apartment · New Cairo", status: "MATCHED", propertyType: "Apartment", locations: ["New Cairo"] }, propertyRequirements: [{ title: "Apartment · New Cairo", status: "MATCHED" }], _count: { turns: 4, participants: 2, followUpTasks: 1 } }]; },
+      findFirst: async () => ({ id: "nadim-1", channel: "WHATSAPP", locale: "ar-EG", timezone: "Africa/Cairo", mode: "HUMAN", activeRequirementId: "r1", customerContext: {}, summary: {}, externalUserId: "201000000000", createdAt: new Date(), updatedAt: new Date(), customer: { name: "Customer" }, turns: [{ id: "t1", channel: "WHATSAPP", userMessage: "عايز شقة", assistantReply: "تمام", createdAt: new Date() }, { id: "t2", channel: "WHATSAPP", userMessage: "تابع معايا", assistantReply: "", createdAt: new Date() }], propertyRequirements: [{ id: "r1", title: "Apartment · New Cairo", status: "MATCHED", locations: ["New Cairo"], preferredDevelopers: [], preferredProjects: [], updatedAt: new Date() }], followUpTasks: [{ id: "f1", dueAt: new Date(), timezone: "Africa/Cairo", status: "PENDING", reason: "requested", channel: "WHATSAPP" }], participants: [{ id: "p1", channel: "WHATSAPP", role: "OWNER", status: "ACTIVE", joinedAt: new Date(), externalUserId: "201000000000" }] }),
+    },
     $transaction: async (arg: any) =>
       typeof arg === "function" ? arg(tx) : Promise.all(arg),
   };
@@ -188,11 +194,25 @@ test("conversation export reuses search filters, returns the requested file, and
   const result = await service.exportConversations(query, "admin-1");
   assert.equal(result.contentType, "application/json; charset=utf-8");
   assert.equal(JSON.parse(result.body.toString("utf8")).count, 1);
-  const find = calls.find(([name]) => name === "conversation.findMany")[1];
-  assert.equal(find.where.AND[0].OR[0].title.contains, "Home");
+  const find = calls.find(([name]) => name === "nadimConversation.findMany")[1];
+  assert.equal(find.where.OR[0].externalUserId.contains, "Home");
   const audit = calls.find(([name]) => name === "audit")[1];
   assert.equal(audit[1], "CONVERSATIONS_EXPORTED");
   assert.equal(audit[4].format, "json");
+});
+
+test("Dashboard conversation contracts expose real Nadim mode, requirements, follow-ups, participants, and no blank assistant bubble", async () => {
+  const { service } = fixture();
+  const list = await service.conversations(Object.assign(new AdminConversationListQueryDto(), { page: 1, limit: 20 }));
+  assert.equal(list.items[0].mode, "HUMAN");
+  assert.equal(list.items[0].activeRequirement?.status, "MATCHED");
+  assert.equal(list.items[0]._count.followUpTasks, 1);
+  const detail = await service.conversation("nadim-1");
+  assert.equal(detail.propertyRequirements[0].active, true);
+  assert.equal(detail.followUpTasks.length, 1);
+  assert.equal(detail.participants.length, 1);
+  assert.equal(detail.messages.length, 3);
+  assert.ok(detail.messages.every((message: any) => message.content));
 });
 
 test("AdminAuthGuard rejects unauthorized lead access", async () => {

@@ -11,6 +11,7 @@ import {
 import { NadimState } from "../domain/nadim-state";
 import { DialogueModelService } from "../providers/dialogue-model.service";
 import { DialogueProviderChainError } from "../providers/dialogue-provider";
+import { extractFollowUpTemporalRequest } from "../product/follow-up-time";
 
 export type UnderstandingResult = {
   understanding: NadimUnderstanding;
@@ -290,7 +291,9 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
     });
   }
 
-  const understood = intent !== "UNKNOWN";
+  const followUpTemporal = extractFollowUpTemporalRequest(rawText);
+  const explicitFollowUp = Boolean(followUpTemporal && /(?:تابع|كلمني|ارجع|فكرني|follow\s*up|call\s+me|remind\s+me|get\s+back)/iu.test(text));
+  const understood = intent !== "UNKNOWN" || explicitFollowUp;
   const classificationSource = unintelligible ? "DETERMINISTIC_GIBBERISH" : "DETERMINISTIC_EXPLICIT";
   return {
     intent,
@@ -299,7 +302,8 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
     operations: unintelligible ? [] : operations,
     ordinalReferences: references,
     unitReference,
-    actionRequested: ["LEAD_REQUEST", "CALLBACK_REQUEST", "VIEWING_REQUEST", "RESERVATION_REQUEST", "HUMAN_HANDOFF"].includes(intent),
+    actionRequested: explicitFollowUp || ["LEAD_REQUEST", "CALLBACK_REQUEST", "VIEWING_REQUEST", "RESERVATION_REQUEST", "HUMAN_HANDOFF"].includes(intent),
+    proposedActions: explicitFollowUp ? [{ type: "CREATE_FOLLOWUP", reason: "Customer explicitly requested a future follow-up", payload: { temporal: followUpTemporal, sourceText: rawText.slice(0, 500) } }] : undefined,
     stateQuery: queryTarget,
     ambiguity,
     responseGoal: responseGoal(intent, queryTarget),
@@ -370,6 +374,10 @@ export class UnderstandingService {
       try {
         const result = await dialogue.decide(message, state, context, trace);
         const decision = result.value;
+        const explicitTemporal = extractFollowUpTemporalRequest(message);
+        const explicitFollowUp = Boolean(explicitTemporal && /(?:تابع|كلمني|ارجع|فكرني|follow\s*up|call\s+me|remind\s+me|get\s+back)/iu.test(message));
+        const proposedActions = [...decision.proposedActions];
+        if (explicitFollowUp && !proposedActions.some((action) => action.type === "CREATE_FOLLOWUP")) proposedActions.push({ type: "CREATE_FOLLOWUP", reason: "Customer explicitly requested a future follow-up", payload: { temporal: explicitTemporal, sourceText: message.slice(0, 500) } });
         const operationsAllowed = decision.understood
           && decision.confidence >= 0.72
           && ["DISCOVERY", "STRUCTURED_REQUEST"].includes(decision.conversationalType);
@@ -389,7 +397,7 @@ export class UnderstandingService {
           ordinalReferences: [],
           unitReference: this.referenceArgument(decision, "unitReference"),
           projectReference: this.referenceArgument(decision, "projectReference"),
-          actionRequested: false,
+          actionRequested: explicitFollowUp,
           stateQuery,
           responseGoal: decision.conversationalGoal,
           responsePlan: decision.responsePlan,
@@ -404,7 +412,7 @@ export class UnderstandingService {
           classificationSource: decision.intent ? "MODEL_STRUCTURED" : "MODEL_SEMANTIC",
           unknownReason: decision.understood ? undefined : decision.clarificationReason ?? "MODEL_COULD_NOT_INTERPRET",
           proposedToolCalls: decision.proposedToolCalls,
-          proposedActions: decision.proposedActions,
+          proposedActions,
           customerContextUpdates: Object.fromEntries(Object.entries(decision.customerContextUpdates)
             .filter(([key]) => /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(key))
             .slice(0, 20)),

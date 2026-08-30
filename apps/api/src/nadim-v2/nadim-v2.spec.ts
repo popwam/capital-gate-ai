@@ -477,6 +477,34 @@ test("21 action failure never produces a success claim", async () => {
   assert.doesNotMatch(reply.reply, /تم تسجيل طلب المعاينة بنجاح/u);
 });
 
+test("proximity comparison without matching verified landmark evidence cannot name a closer property", async () => {
+  const unsafeModel: any = { available: () => true, compose: async () => ({ value: "East Gardens أقرب للجامعة الأمريكية.", provider: "test", model: "test", fallbackUsed: false, latencyMs: 1 }) };
+  const guarded = new ResponseComposerService(unsafeModel);
+  const current = state({ comparisonUnitIds: ["u1", "u2"] });
+  const result = await guarded.compose({ userMessage: "مين الأقرب للجامعة الأمريكية؟", understanding: { intent: "COMPARISON", confidence: 1, operations: [], ordinalReferences: [], actionRequested: false }, state: current, plan: { goal: "COMPARISON", steps: [{ tool: "COMPARE_PROPERTIES", arguments: { unitIds: ["u1", "u2"] } }] }, toolResults: [{ tool: "COMPARE_PROPERTIES", ok: true, data: [{ id: "u1", project: { name: "East Gardens" }, proximities: [] }, { id: "u2", project: { name: "Cairo Heights" }, proximities: [] }], latencyMs: 1 }], proposedActions: [], executedActions: [] });
+  assert.match(result.reply, /(?:معنديش مسافة موثقة|do not have a verified distance)/iu);
+  assert.doesNotMatch(result.reply, /East Gardens أقرب/iu);
+});
+
+test("media composition exposes verified URLs, reports missing assets, and rejects delivery promises", async () => {
+  const unsafeModel: any = { available: () => true, compose: async () => ({ value: "هبعتلك الصور والماستر بلان واللوكيشن.", provider: "test", model: "test", fallbackUsed: false, latencyMs: 1 }) };
+  const guarded = new ResponseComposerService(unsafeModel);
+  const current = state({ selectedUnitId: "u1" });
+  const result = await guarded.compose({ userMessage: "ابعتلي الصور والماستر بلان واللوكيشن", understanding: { intent: "MEDIA_REQUEST", confidence: 1, operations: [], ordinalReferences: [], actionRequested: false }, state: current, plan: { goal: "MEDIA_REQUEST", steps: [{ tool: "GET_MEDIA", arguments: { unitId: "u1" } }] }, toolResults: [{ tool: "GET_MEDIA", ok: true, data: { media: [{ type: "IMAGE", url: "https://assets.example/unit.jpg" }], location: { latitude: null, longitude: null } }, latencyMs: 1 }], proposedActions: [], executedActions: [] });
+  assert.match(result.reply, /https:\/\/assets\.example\/unit\.jpg/u);
+  assert.match(result.reply, /(?:مفيش ماستر بلان|No verified master plan)/iu);
+  assert.match(result.reply, /(?:مش عندي لوكيشن دقيق|No precise verified location)/iu);
+  assert.doesNotMatch(result.reply, /هبعتلك/u);
+});
+
+test("absent media and failed media retrieval never claim that anything was sent", async () => {
+  for (const toolResult of [{ tool: "GET_MEDIA", ok: true, data: { media: [], location: null }, latencyMs: 1 }, { tool: "GET_MEDIA", ok: false, errorCode: "TOOL_EXECUTION_FAILED", latencyMs: 1 }] as const) {
+    const selected = state({ selectedUnitId: "u1" });
+    const result = await composer.compose({ userMessage: "ابعتلي الصور والماستر بلان واللوكيشن", understanding: { intent: "MEDIA_REQUEST", confidence: 1, operations: [], ordinalReferences: [], actionRequested: false }, state: selected, plan: { goal: "MEDIA_REQUEST", steps: [{ tool: "GET_MEDIA", arguments: { unitId: "u1" } }] }, toolResults: [toolResult], proposedActions: [], executedActions: [] });
+    assert.doesNotMatch(result.reply, /(?:بعتلك|هبعتلك|هيوصلك|sent|delivered)/iu);
+  }
+});
+
 test("22 human handoff is proposed but not fabricated", async () => {
   const intent = await understand("عايز حد من المبيعات");
   const policy = actionPolicy();
@@ -737,6 +765,26 @@ test("reuse of an idempotency key with materially different input returns confli
   } finally {
     if (enabled === undefined) delete process.env.NADIM_V2_ENABLED; else process.env.NADIM_V2_ENABLED = enabled;
   }
+});
+
+test("property requirement is persisted before search and survives tool failure; verified no-match becomes NEEDS_MATCH", async () => {
+  const enabled = process.env.NADIM_V2_ENABLED; process.env.NADIM_V2_ENABLED = "true";
+  try {
+    for (const [toolResult, expectedStatus] of [[{ tool: "PROPERTY_SEARCH", ok: false, errorCode: "TOOL_EXECUTION_FAILED", latencyMs: 1 }, undefined], [{ tool: "PROPERTY_SEARCH", ok: true, data: [], latencyMs: 1 }, "NEEDS_MATCH"]] as const) {
+      const order: string[] = []; const statuses: string[] = [];
+      const lifecycle: any = { saveRequirement: async () => { order.push("requirement"); return { id: "requirement-1" }; }, setRequirementStatus: async (_id: string, status: string) => { statuses.push(status); } };
+      const service = new NadimV2Service(
+        { replayIdempotent: async () => null, resolve: async () => ({ conversation: { id: "c1", mode: "AI" }, state: initialNadimState({ channel: "WEB", locale: "ar-EG" }) }), persist: async () => undefined } as any,
+        { understand: async () => ({ understanding: { intent: "PROPERTY_SEARCH", confidence: 1, operations: [{ operation: "SET", field: "locations", value: ["التجمع"] }, { operation: "SET", field: "propertyTypes", value: ["Apartment"] }, { operation: "SET", field: "bedrooms", value: 3 }], ordinalReferences: [], actionRequested: false } }) } as any,
+        new StateEngineService(), new PlannerService(), { execute: async () => { order.push("search"); return [toolResult]; } } as any,
+        { propose: () => [], execute: async () => [] } as any, { compose: async () => ({ reply: "safe", providerLatencyMs: 0 }) } as any,
+        undefined, undefined, undefined, lifecycle,
+      );
+      await service.turn({ channel: "WEB", message: "عايز شقة 3 غرف في التجمع", locale: "ar-EG" });
+      assert.deepEqual(order, ["requirement", "search"]);
+      assert.deepEqual(statuses, expectedStatus ? [expectedStatus] : []);
+    }
+  } finally { if (enabled === undefined) delete process.env.NADIM_V2_ENABLED; else process.env.NADIM_V2_ENABLED = enabled; }
 });
 
 test("controller accepts a trimmed header key and derives one from canonical metadata", async () => {
