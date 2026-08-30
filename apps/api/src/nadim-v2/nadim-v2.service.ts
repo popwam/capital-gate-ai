@@ -24,6 +24,17 @@ function safeDiagnosticMeaning(value?: string) {
     .slice(0, 240);
 }
 
+function explicitlyStartsAnotherRequirement(message: string) {
+  return /(?:طلب\s+(?:تاني|ثاني|جديد|مستقل)|عندي\s+(?:كمان\s+)?طلب|كمان\s+(?:عايز|عاوز|أبي|ابغى)|another\s+(?:request|requirement)|separate\s+(?:request|requirement))/iu.test(message);
+}
+
+function requestedRequirementIndex(message: string) {
+  if (!/(?:ارجع|إرجع|كمل|كمّل|return|continue).{0,28}(?:طلب|requirement)/iu.test(message)) return undefined;
+  if (/(?:التاني|الثاني|second|فيلا|villa)/iu.test(message)) return 1;
+  if (/(?:الأول|الاول|first|شقة|apartment)/iu.test(message)) return 0;
+  return undefined;
+}
+
 @Injectable()
 export class NadimV2Service {
   private readonly logger = new Logger(NadimV2Service.name);
@@ -70,6 +81,26 @@ export class NadimV2Service {
     }
 
     const resolved = await this.conversations.resolve(input);
+    const requirementIndex = requestedRequirementIndex(input.message);
+    if (requirementIndex !== undefined && this.lifecycle) {
+      const requirements = (resolved.conversationContext.customerContext?.propertyRequirements ?? []) as Array<Record<string, any>>;
+      const requirement = requirements[requirementIndex];
+      if (requirement?.id) {
+        await this.lifecycle.activateRequirement(resolved.conversation.id, String(requirement.id));
+        resolved.state = {
+          ...resolved.state,
+          search: {
+            locations: Array.isArray(requirement.locations) ? requirement.locations : [], projects: [], developers: [],
+            propertyTypes: requirement.propertyType ? [String(requirement.propertyType)] : [],
+            bedrooms: requirement.bedrooms ?? undefined, bathrooms: requirement.bathrooms ?? undefined,
+            budgetMin: requirement.budgetMin ?? undefined, budgetMax: requirement.budgetMax ?? undefined,
+            currency: requirement.currency ?? undefined, purpose: requirement.purpose ?? undefined,
+          },
+          selectedUnitId: undefined, selectedProjectId: undefined, comparisonUnitIds: [], lastResultIds: [],
+        };
+        resolved.conversationContext.customerContext = { ...resolved.conversationContext.customerContext, activeRequirementId: requirement.id };
+      }
+    }
     const currentMode = (resolved.mode ?? resolved.conversation.mode ?? "AI") as NadimConversationMode;
     let claimedTurnId: string | undefined;
     if (idempotencyKey && requestHash) {
@@ -145,12 +176,20 @@ export class NadimV2Service {
       const styledPrevious = understood.brainDecision
         ? this.languageStyles.applySemanticRequest(brainInputState, understood.understanding.responseStyleRequest ?? undefined)
         : detectedState;
-      let state = this.stateEngine.apply(styledPrevious, understood.understanding, {
+      const awaitingIndependentRequirement = resolved.state.pendingClarification?.reason === "NEW_REQUIREMENT_EXPECTED";
+      const startsIndependentRequirement = explicitlyStartsAnotherRequirement(input.message) || awaitingIndependentRequirement;
+      const stateBeforeOperations = startsIndependentRequirement
+        ? { ...styledPrevious, search: { locations: [], projects: [], developers: [], propertyTypes: [] }, selectedUnitId: undefined, selectedProjectId: undefined, comparisonUnitIds: [], lastResultIds: [], pendingClarification: undefined }
+        : styledPrevious;
+      let state = this.stateEngine.apply(stateBeforeOperations, understood.understanding, {
         channel: input.channel,
         customerId: resolved.customerId,
         externalUserId: input.externalUserId,
         locale: input.locale,
       });
+      if (explicitlyStartsAnotherRequirement(input.message) && !this.hasRequirementCriteria(state)) {
+        state = { ...state, pendingClarification: { reason: "NEW_REQUIREMENT_EXPECTED" } };
+      }
 
       let control: ControlDecision = reactivationControl ?? { mode, suppressReply: false, deleteConfirmed: false };
       if (this.controls && !reactivationControl) {
@@ -176,7 +215,7 @@ export class NadimV2Service {
             externalUserId: input.externalUserId,
             state,
             status: "OPEN",
-            allowNew: understood.understanding.intent === "PROPERTY_SEARCH",
+            allowNew: startsIndependentRequirement || understood.understanding.intent === "PROPERTY_SEARCH",
           })
         : undefined;
 

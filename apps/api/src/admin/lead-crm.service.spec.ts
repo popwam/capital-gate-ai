@@ -215,6 +215,29 @@ test("Dashboard conversation contracts expose real Nadim mode, requirements, fol
   assert.ok(detail.messages.every((message: any) => message.content));
 });
 
+test("Dashboard human reply persists once in Nadim and every Web binding while HUMAN", async () => {
+  const writes: any[] = [];
+  const prisma: any = {
+    nadimConversation: {
+      findFirst: async () => ({ id: "nadim-1", mode: "HUMAN", webConversations: [{ id: "web-owner" }, { id: "web-member" }] }),
+      update: (args: any) => (writes.push(["activity", args]), Promise.resolve(args)),
+    },
+    nadimTurn: { create: (args: any) => (writes.push(["turn", args]), Promise.resolve(args)) },
+    message: { createMany: (args: any) => (writes.push(["messages", args]), Promise.resolve({ count: args.data.length })) },
+    $transaction: async (operations: Promise<unknown>[]) => Promise.all(operations),
+  };
+  const audit: any = { record: async (...args: any[]) => writes.push(["audit", args]) };
+  const service = new LeadCrmService(prisma, audit);
+  const result = await service.sendHumanMessage("nadim-1", "  معاك أحمد من الفريق.  ", "admin-1");
+  assert.equal(result.role, "HUMAN");
+  assert.equal(result.content, "معاك أحمد من الفريق.");
+  assert.equal(writes.find(([name]) => name === "turn")[1].data.modelProvider, "HUMAN");
+  const webMessages = writes.find(([name]) => name === "messages")[1].data;
+  assert.equal(webMessages.length, 2);
+  assert.ok(webMessages.every((message: any) => message.toolPayload.author === "HUMAN"));
+  assert.ok(writes.some(([name]) => name === "activity"));
+});
+
 test("AdminAuthGuard rejects unauthorized lead access", async () => {
   const guard = new AdminAuthGuard({
     verify: async () => {

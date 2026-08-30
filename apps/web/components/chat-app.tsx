@@ -10,7 +10,7 @@ import { ApiMessage, conversationsApi, nadimWebApi } from "@/lib/api";
 import { appendUniqueMessage, mergeConversationIndex, shouldLoadConversationHistory } from "@/lib/chat-state";
 import { textDirection } from "@/lib/text-direction";
 
-type MessageKind = "text" | "properties" | "media" | "documents" | "map" | "lead_prompt" | "lead_created" | "conversation_closed";
+type MessageKind = "text" | "properties" | "media" | "documents" | "map" | "lead_prompt" | "lead_created" | "conversation_closed" | "human_message";
 type Message = { id: string; role: "user" | "assistant"; text: string; kind?: MessageKind; payload?: any };
 type Conversation = { id: string; title: string; updatedAt: string; messages: Message[]; nadimConversationId?: string; mode?: "AI" | "HUMAN" | "PAUSED"; closed?: boolean };
 type ActionSend = (value: string, displayValue?: string) => void;
@@ -88,6 +88,16 @@ export default function ChatApp() {
     }).catch(error => { if (!cancelled) setConnectionError(error.message); });
     return () => { cancelled = true; };
   }, [activeId]);
+
+  useEffect(() => {
+    if (!active || active.mode !== "HUMAN" || activeId === "fresh") return;
+    let cancelled = false;
+    const refresh = () => conversationsApi.messages(activeId).then(items => {
+      if (!cancelled) setConversations(prev => prev.map(c => c.id === activeId ? { ...c, messages: items.map(normalizeMessage) } : c));
+    }).catch(() => undefined);
+    const timer = window.setInterval(() => { void refresh(); }, 3_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [active?.mode, activeId]);
 
   function newChat() { setActiveId("fresh"); setDrawer(false); setInput(""); setFreshMessages([]); setFreshTitle(""); }
 
@@ -212,7 +222,7 @@ export default function ChatApp() {
           )}
         </div>
         {connectionError && <div className="absolute bottom-[132px] left-1/2 z-30 -translate-x-1/2 rounded-full px-4 py-2 text-[11px] font-semibold text-white" style={{ background: 'var(--error-text)', boxShadow: 'var(--shadow-lg)' }}>{connectionError}</div>}
-        {active?.closed ? <ClosedComposer isArabic={isArabic} onNew={newChat}/> : active?.mode === "HUMAN" ? <HumanHandoffComposer isArabic={isArabic} onReturn={returnToNadim} disabled={generating}/> : <Composer input={input} setInput={setInput} send={() => send()} disabled={generating} isArabic={isArabic}/>}
+        {active?.closed ? <ClosedComposer isArabic={isArabic} onNew={newChat}/> : <><Composer input={input} setInput={setInput} send={() => send()} disabled={generating} isArabic={isArabic} humanMode={active?.mode === "HUMAN"}/>{active?.mode === "HUMAN" ? <HumanHandoffComposer isArabic={isArabic} onReturn={returnToNadim} disabled={generating}/> : null}</>}
       </section>
     </main>
   );
@@ -239,6 +249,7 @@ function AssistantAvatar({ isArabic }: { isArabic: boolean }) { return <div clas
 
 function MessageView({ message, onAction, isLast, isArabic }: { message:Message;onAction:ActionSend;isLast:boolean;isArabic:boolean }) {
   const assistant = message.role === "assistant";
+  const human = message.kind === "human_message" || message.payload?.author === "HUMAN";
   const actions = Array.isArray(message.payload?.uiActions) ? message.payload.uiActions : [];
   const cards = actions.find((action:any) => action.type === "PROPERTY_CARDS")?.payload?.properties ?? [];
   const photos = actions.find((action:any) => action.type === "PROJECT_PHOTOS")?.payload?.media ?? [];
@@ -250,9 +261,9 @@ function MessageView({ message, onAction, isLast, isArabic }: { message:Message;
   const closedAction = actions.find((action:any) => action.type === "CONVERSATION_CLOSED");
   const contact = Boolean(contactAction);
   return <div className={`message-rise mb-6 flex gap-2.5 ${assistant ? "justify-start" : "justify-end"}`}>
-    {assistant && <AssistantAvatar isArabic={isArabic}/>}
+    {assistant && (human ? <div className="grid h-7 min-w-7 shrink-0 place-items-center rounded-lg bg-amber-700 px-2 text-white" aria-label={isArabic ? "الفريق البشري" : "Human team"}><span className="text-[10px] font-black">{isArabic ? "الفريق" : "Team"}</span></div> : <AssistantAvatar isArabic={isArabic}/>)}
     <div className={assistant ? "max-w-[94%] sm:max-w-[86%]" : "max-w-[88%] sm:max-w-[78%]"}>
-      <div dir={textDirection(message.text)} className={assistant ? "chat-copy message-assistant pt-0.5 text-start text-[15px] leading-[1.85] sm:text-[16px]" : "chat-copy message-user rounded-[10px] px-3.5 py-2.5 text-start text-[14px] leading-[1.75] sm:text-[15px]"}><RichChatText text={message.text}/></div>
+      <div dir={textDirection(message.text)} className={assistant ? `chat-copy message-assistant pt-0.5 text-start text-[15px] leading-[1.85] sm:text-[16px] ${human ? "border-s-2 border-amber-600 ps-3" : ""}` : "chat-copy message-user rounded-[10px] px-3.5 py-2.5 text-start text-[14px] leading-[1.75] sm:text-[15px]"}><RichChatText text={message.text}/></div>
       {!!cards.length && <PropertyResults properties={cards} onAction={onAction} isArabic={isArabic}/>}
       {!!photos.length && <MediaGallery media={photos}/>}
       {!!brochures.length && <Documents documents={brochures}/>}
@@ -359,15 +370,15 @@ function ClosedComposer({isArabic,onNew}:{isArabic:boolean;onNew:()=>void}) {
 }
 
 function HumanHandoffComposer({isArabic,onReturn,disabled}:{isArabic:boolean;onReturn:()=>void;disabled:boolean}) {
-  return <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-8 sm:px-6" style={{ background: 'linear-gradient(to top, var(--surface-base), var(--surface-base) 64%, transparent)' }}><div className="pointer-events-auto mx-auto flex max-w-[820px] items-center justify-between gap-3 rounded-xl border border-[var(--border-default)] bg-white p-3"><div><p className="text-[13px] font-bold" style={{ color: 'var(--ink-primary)' }}>{isArabic?"المحادثة مع الفريق البشري":"A team member owns this conversation"}</p><p className="mt-0.5 text-[11px]" style={{ color: 'var(--ink-tertiary)' }}>{isArabic?"نديم مش هيرد لحد ما ترجّعه للمحادثة.":"Nadim will stay silent until you return control."}</p></div><button disabled={disabled} onClick={onReturn} className="btn-primary min-h-10 shrink-0 rounded-lg px-3 text-[12px] font-bold text-white disabled:opacity-50" style={{ background: 'var(--forest)' }}>{isArabic?"رجّع نديم":"Return Nadim"}</button></div></div>;
+  return <div className="pointer-events-none absolute inset-x-0 bottom-[76px] z-20 px-3 sm:px-6"><div className="pointer-events-auto mx-auto flex max-w-[820px] items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/95 px-3 py-2 shadow-sm"><div><p className="text-[12px] font-bold text-amber-950">{isArabic?"أنت الآن تتحدث مع الفريق البشري":"You are now talking to the human team"}</p><p className="mt-0.5 text-[10px] text-amber-800">{isArabic?"اكتب بشكل طبيعي؛ نديم سيظل صامتًا.":"Keep typing normally; Nadim will stay silent."}</p></div><button disabled={disabled} onClick={onReturn} className="min-h-11 shrink-0 rounded-lg border border-amber-300 bg-white px-3 text-[11px] font-bold text-amber-950 disabled:opacity-50">{isArabic?"رجّع نديم":"Return Nadim"}</button></div></div>;
 }
 
-function Composer({ input, setInput, send, disabled, isArabic }: {input:string;setInput:(v:string)=>void;send:()=>void;disabled:boolean;isArabic:boolean}) {
+function Composer({ input, setInput, send, disabled, isArabic, humanMode = false }: {input:string;setInput:(v:string)=>void;send:()=>void;disabled:boolean;isArabic:boolean;humanMode?:boolean}) {
   return <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-8 sm:px-6" style={{ background: 'linear-gradient(to top, var(--surface-base), var(--surface-base) 68%, transparent)' }}>
     <div className="pointer-events-auto mx-auto max-w-[820px]">
       <div className="input-focus-glow flex items-end gap-1 rounded-xl border border-[var(--border-default)] bg-white px-1.5 py-1 transition shadow-[0_3px_12px_rgba(30,45,40,.05)]">
         <label htmlFor="message-input" className="sr-only">{isArabic ? "اكتب رسالتك" : "Type your message"}</label>
-        <textarea id="message-input" dir={input ? textDirection(input) : (isArabic ? "rtl" : "ltr")} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();send();}}} rows={1} placeholder={isArabic ? "اسأل عن وحدة، منطقة، أو ميزانية..." : "Ask about a unit, location, or budget..."} className="scrollbar-none block max-h-32 min-h-11 flex-1 resize-none bg-transparent px-2.5 py-2.5 text-start text-[15px] leading-6 text-[var(--ink-primary)] caret-[var(--accent)] outline-none" aria-label={isArabic ? "اكتب رسالتك" : "Type your message"}/>
+        <textarea id="message-input" dir={input ? textDirection(input) : (isArabic ? "rtl" : "ltr")} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)){e.preventDefault();send();}}} rows={1} placeholder={humanMode ? (isArabic ? "اكتب رسالتك للفريق..." : "Write to the team...") : isArabic ? "اسأل عن وحدة، منطقة، أو ميزانية..." : "Ask about a unit, location, or budget..."} className="scrollbar-none block max-h-32 min-h-11 flex-1 resize-none bg-transparent px-2.5 py-2.5 text-start text-[15px] leading-6 text-[var(--ink-primary)] caret-[var(--accent)] outline-none" aria-label={humanMode ? (isArabic ? "اكتب رسالتك للفريق" : "Write to the team") : isArabic ? "اكتب رسالتك" : "Type your message"}/>
         <button disabled={disabled || !input.trim()} onClick={send} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg transition" aria-label={isArabic?"إرسال":"Send"}><span className="grid h-8 w-8 place-items-center rounded-lg text-white" style={{ background: disabled || !input.trim() ? 'var(--border-default)' : 'var(--accent)' }}><ArrowUp size={15}/></span></button>
       </div>
     </div>

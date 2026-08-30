@@ -62,6 +62,8 @@ export class ResponseComposerService {
 
   async compose(input: CompositionInput): Promise<CompositionResult> {
     const fallback = this.deterministic(input);
+    const requirementHistory = this.requirementHistoryAnswer(input);
+    if (requirementHistory) return { reply: requirementHistory, providerLatencyMs: 0 };
     const verifiedEmptySearch = this.verifiedEmptySearch(input);
     const searchResult = input.toolResults.find((result) => result.tool === "PROPERTY_SEARCH");
     if (!this.dialogue.available()) return { reply: fallback, providerErrorCategory: "NOT_CONFIGURED", providerLatencyMs: 0 };
@@ -124,6 +126,24 @@ export class ResponseComposerService {
           : 0,
       };
     }
+  }
+
+  private requirementHistoryAnswer(input: CompositionInput) {
+    const match = input.userMessage.match(/(?:طلبي|الطلب)\s+(الأول|الاول|التاني|الثاني|first|second)/iu);
+    if (!match) return undefined;
+    const requirements = (input.conversationContext?.customerContext?.propertyRequirements ?? []) as Array<Record<string, any>>;
+    const index = /(?:التاني|الثاني|second)/iu.test(match[1]) ? 1 : 0;
+    const requirement = requirements[index];
+    if (!requirement) return this.responseStyle.clarification(this.responseStyle.style(input.state), "REQUIREMENT_REFERENCE_NOT_FOUND");
+    const details = [
+      requirement.propertyType,
+      requirement.bedrooms != null ? `${requirement.bedrooms} غرف` : undefined,
+      ...(Array.isArray(requirement.locations) ? requirement.locations : []),
+      requirement.budgetMax != null ? `لحد ${Number(requirement.budgetMax).toLocaleString("en-US")} ${requirement.currency ?? ""}` : undefined,
+    ].filter(Boolean).join(" · ");
+    return input.state.languageStyle.preferredResponseStyle === "EN_US"
+      ? `Your ${index === 0 ? "first" : "second"} requirement was: ${details}.`
+      : `طلبك ${index === 0 ? "الأول" : "التاني"} كان: ${details}.`;
   }
 
   private deterministic(input: CompositionInput) {

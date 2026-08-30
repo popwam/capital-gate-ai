@@ -17,6 +17,7 @@ import {
 } from "./lead-crm.dto";
 import { createConversationExport } from "./conversation-export";
 import { CustomerLifecycleService } from "../nadim-v2/product/customer-lifecycle.service";
+import { randomUUID } from "node:crypto";
 
 type JsonObject = Record<string, any>;
 
@@ -705,7 +706,7 @@ export class LeadCrmService {
         customer: { select: { name: true } },
         turns: {
           orderBy: { createdAt: "asc" },
-          select: { id: true, channel: true, userMessage: true, assistantReply: true, createdAt: true },
+          select: { id: true, channel: true, userMessage: true, assistantReply: true, modelProvider: true, createdAt: true },
         },
         propertyRequirements: { orderBy: { updatedAt: "desc" }, select: { id: true, title: true, status: true, purpose: true, propertyType: true, locations: true, preferredDevelopers: true, preferredProjects: true, bedrooms: true, bathrooms: true, areaMin: true, areaMax: true, budgetMin: true, budgetMax: true, currency: true, updatedAt: true } },
         followUpTasks: { where: { status: { in: ["PENDING", "CLAIMED"] } }, orderBy: { dueAt: "asc" }, select: { id: true, dueAt: true, timezone: true, status: true, reason: true, channel: true } },
@@ -719,8 +720,8 @@ export class LeadCrmService {
       externalUserId: undefined,
       customer: undefined,
       messages: item.turns.flatMap((turn) => [
-        { id: `${turn.id}:user`, role: "USER", content: turn.userMessage, channel: turn.channel, createdAt: turn.createdAt },
-        ...(turn.assistantReply ? [{ id: `${turn.id}:assistant`, role: "ASSISTANT", content: turn.assistantReply, channel: turn.channel, createdAt: turn.createdAt }] : []),
+        ...(turn.userMessage ? [{ id: `${turn.id}:user`, role: "USER", content: turn.userMessage, channel: turn.channel, createdAt: turn.createdAt }] : []),
+        ...(turn.assistantReply ? [{ id: `${turn.id}:assistant`, role: turn.modelProvider === "HUMAN" ? "HUMAN" : "ASSISTANT", content: turn.assistantReply, channel: turn.channel, createdAt: turn.createdAt }] : []),
       ]),
       turns: undefined,
       propertyRequirements: item.propertyRequirements.map((requirement) => ({ ...requirement, active: requirement.id === item.activeRequirementId })),
@@ -746,6 +747,33 @@ export class LeadCrmService {
     if (!url) { await this.lifecycle.revokeToken(created.id, id); throw new BadRequestException(type === "WEB_SHARE" ? "WEB_BASE_URL is not configured" : "WHATSAPP_BUSINESS_NUMBER is not configured"); }
     await this.audit.record(adminUserId, "NADIM_CONVERSATION_LINK_CREATED", "NadimConversation", id, { type });
     return { tokenId: created.id, url, expiresAt: created.expiresAt };
+  }
+
+  async sendHumanMessage(id: string, rawContent: string, adminUserId: string) {
+    const content = rawContent.trim();
+    if (!content) throw new BadRequestException("Message content is required");
+    const conversation = await this.prisma.nadimConversation.findFirst({
+      where: { id, deletedAt: null }, select: { id: true, mode: true, webConversations: { select: { id: true } } },
+    });
+    if (!conversation) throw new NotFoundException("Conversation not found");
+    if (conversation.mode !== "HUMAN") throw new BadRequestException("Conversation must be in HUMAN mode before a human reply is sent");
+    const now = new Date();
+    const turnId = `human_${randomUUID()}`;
+    await this.prisma.$transaction([
+      this.prisma.nadimTurn.create({ data: {
+        id: turnId, conversationId: id, channel: "WEB", userMessage: "", assistantReply: content,
+        intent: { type: "HUMAN_MESSAGE", adminUserId }, plan: { goal: "HUMAN_REPLY", steps: [] },
+        toolResults: [], proposedActions: [], executedActions: [], modelProvider: "HUMAN", model: "DASHBOARD_AGENT",
+        fallbackUsed: false, success: true, latencyMs: 0, createdAt: now,
+      } }),
+      this.prisma.message.createMany({ data: conversation.webConversations.map((binding) => ({
+        id: `human_${binding.id}_${turnId}`, conversationId: binding.id, role: "ASSISTANT" as const, content,
+        toolPayload: { type: "human_message", author: "HUMAN" }, createdAt: now,
+      })), skipDuplicates: true }),
+      this.prisma.nadimConversation.update({ where: { id }, data: { lastHumanMessageAt: now } }),
+    ]);
+    await this.audit.record(adminUserId, "NADIM_HUMAN_MESSAGE_SENT", "NadimConversation", id);
+    return { id: `${turnId}:assistant`, role: "HUMAN", content, channel: "WEB", createdAt: now };
   }
 
   async deleteConversation(id: string, confirmation: "DELETE", adminUserId: string) {

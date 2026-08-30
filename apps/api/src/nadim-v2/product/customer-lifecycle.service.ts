@@ -94,6 +94,15 @@ export class CustomerLifecycleService {
     return this.prisma.propertyRequirement.update({ where: { id }, data: { status } });
   }
 
+  async activateRequirement(conversationId: string, requirementId: string) {
+    const requirement = await this.prisma.propertyRequirement.findFirst({
+      where: { id: requirementId, conversationId, status: { not: "CLOSED" } },
+    });
+    if (!requirement) throw new NotFoundException({ code: "PROPERTY_REQUIREMENT_NOT_FOUND", message: "Property requirement not found", safe: true });
+    await this.prisma.nadimConversation.update({ where: { id: conversationId }, data: { activeRequirementId: requirement.id } });
+    return requirement;
+  }
+
   async conversationTimezone(conversationId: string) {
     const conversation = await this.prisma.nadimConversation.findFirst({
       where: { id: conversationId, deletedAt: null },

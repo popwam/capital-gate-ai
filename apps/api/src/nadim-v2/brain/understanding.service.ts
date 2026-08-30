@@ -233,14 +233,15 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
   const languageOnly = Boolean(state.languageStyle?.explicitRequestThisTurn || addressOnlyRequest)
     && !hasMutation
     && !/(?:شقة|فيلا|وحدة|مشروع|سعر|ميزانية|تقسيط|مقدم|غرف|حمام|مساحة|متاح|صور|معاينة|حجز|apartment|villa|unit|project|price|budget|payment|bedroom|bathroom|area|available|media|viewing|reservation)/iu.test(text);
-  const mediaRequest = /(?:وريني|ابعت(?:لي)?|هات|عايز|عاوز|أبي|ابي|أبغى|ابغى|show(?:\s+me)?|send(?:\s+me)?).{0,24}(?:الصور|الصورة|صور|صورة|photos?|images?|media)|^(?:صور|صورة|photos?|images?|media)[؟?!.،,\s]*$/iu.test(text);
+  const mediaRequest = /(?:وريني|ابعت(?:لي)?|هات|عايز|عاوز|أبي|ابي|أبغى|ابغى|فيه?|هل\s+في|show(?:\s+me)?|send(?:\s+me)?|are\s+there).{0,28}(?:الصور|الصورة|صور|صورة|ماستر\s*بلان|floor\s*plan|master\s*plan|photos?|images?|media)|^(?:صور|صورة|photos?|images?|media)[؟?!.،,\s]*$/iu.test(text);
+  const proximityRequest = /(?:أقرب|الاقرب|الأقرب|أبعد|الابعد|الأبعد|مسافة|وقت\s+الطريق|closer|nearest|farther|distance|travel\s*time)/iu.test(text);
   let intent: NadimUnderstanding["intent"] = "UNKNOWN";
   if (/^(?:اهلا|أهلا|أهلين|هلا|السلام عليكم|صباح الخير|مساء الخير|hi|hello|hey)(?=\s|$|[،,.!?])/iu.test(text)) intent = "GREETING";
   if (hasSearch && (hasMutation || explicitSearchExecution)) intent = "PROPERTY_SEARCH";
   else if (hasSearch) intent = "CONVERSATION";
   else if (hasMutation) intent = activeSearch ? "MODIFY_SEARCH" : discoveryOnlyMutation ? "CONVERSATION" : "PROPERTY_SEARCH";
   if (reset) intent = broadResetSearch ? "PROPERTY_SEARCH" : "RESET_SEARCH";
-  if (/(?:قارن|مقارنة|compare)/iu.test(text)) intent = "COMPARISON";
+  if (/(?:قارن|مقارنة|compare)/iu.test(text) || (proximityRequest && state.comparisonUnitIds.length >= 2)) intent = "COMPARISON";
   else if (mediaRequest) intent = "MEDIA_REQUEST";
   else if (paymentQuestion && !["PROPERTY_SEARCH", "MODIFY_SEARCH"].includes(intent)) intent = "PAYMENT_PLAN_QUESTION";
   else if (/(?:السعر|سعرها|سعره|price|how much)/iu.test(text)) intent = "PRICE_QUESTION";
@@ -249,7 +250,7 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
   if (resultSelection && ["UNKNOWN", "PROPERTY_SEARCH"].includes(intent)) intent = "PROPERTY_QUESTION";
   if (/(?:احجز|حجز|reservation|reserve)/iu.test(text)) intent = "RESERVATION_REQUEST";
   else if (/(?:معاينة|viewing|visit)/iu.test(text)) intent = "VIEWING_REQUEST";
-  else if (/(?:مش\s+عايز\s+أكمل\s+مع\s+(?:ال)?(?:ai|ذكاء)|عايز\s+(?:أكلم|اتكلم\s+مع)\s+حد|موظف|حد من المبيعات|human|sales agent|representative|talk to (?:a )?(?:person|human))/iu.test(text)) intent = "HUMAN_HANDOFF";
+  else if (/(?:مش\s+عايز\s+أكمل\s+مع\s+(?:ال)?(?:ai|ذكاء)|عايز\s+(?:أكلم|اتكلم\s+مع)\s+حد|(?:عايز|عاوز).{0,12}حد.{0,24}(?:خدمة\s+العملاء|الفريق|المبيعات)|موظف|حد من المبيعات|human|sales agent|representative|talk to (?:a )?(?:person|human))/iu.test(text)) intent = "HUMAN_HANDOFF";
   else if (!languageOnly && /(?:كلمني|اتصل بي|اتصلوا|callback|call me)/iu.test(text)) intent = "CALLBACK_REQUEST";
   else if (/(?:سيب بياناتي|مهتم|contact me|lead)/iu.test(text)) intent = "LEAD_REQUEST";
   if (/(?:اسمك\s*(?:إيه|ايه|اي)?|إنت\s+مين|انت\s+مين|مين\s+نديم|what(?:'s| is)\s+your\s+name|who\s+are\s+you)/iu.test(text)) intent = "ASSISTANT_IDENTITY";
@@ -293,7 +294,18 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
 
   const followUpTemporal = extractFollowUpTemporalRequest(rawText);
   const explicitFollowUp = Boolean(followUpTemporal && /(?:تابع|كلمني|ارجع|فكرني|follow\s*up|call\s+me|remind\s+me|get\s+back)/iu.test(text));
-  const understood = intent !== "UNKNOWN" || explicitFollowUp;
+  const shareRequest = /(?:(?:هات|ابعت|اديني|عايز|عاوز).{0,18})?(?:رابط|لينك).{0,18}(?:المحادثة|الويب)|(?:conversation|web)\s+(?:link|url)|(?:أكمل|اكمل|continue).{0,20}(?:الويب|web)/iu.test(text);
+  const whatsappHandoff = /(?:أكمل|اكمل|continue).{0,24}(?:واتساب|whatsapp)/iu.test(text);
+  const deleteRequest = /(?:امسح|احذف|حذف|delete|erase).{0,20}(?:المحادثة|الشات|conversation|chat)/iu.test(text);
+  const deletionPending = Boolean(context?.pendingDeletion?.expiresAt && Date.parse(context.pendingDeletion.expiresAt) > Date.now());
+  const deleteConfirmation = deletionPending && /^(?:أيوه|ايوه|نعم|أكيد|اكد|أكد|yes|confirm)(?:\s+(?:امسحها|احذفها|delete\s+it))?[.!،,\s]*$/iu.test(text);
+  const deterministicActions: NonNullable<NadimUnderstanding["proposedActions"]> = [
+    ...(explicitFollowUp ? [{ type: "CREATE_FOLLOWUP", reason: "Customer explicitly requested a future follow-up", payload: { temporal: followUpTemporal, sourceText: rawText.slice(0, 500) } }] : []),
+    ...(shareRequest ? [{ type: "CREATE_CONVERSATION_SHARE_LINK", reason: "Customer requested a secure Web conversation link", payload: {} }] : []),
+    ...(whatsappHandoff ? [{ type: "CREATE_WHATSAPP_HANDOFF_LINK", reason: "Customer requested WhatsApp continuation", payload: {} }] : []),
+    ...(deleteConfirmation ? [{ type: "CONFIRM_CONVERSATION_DELETION", reason: "Customer confirmed a pending deletion", payload: {} }] : deleteRequest ? [{ type: "REQUEST_CONVERSATION_DELETION", reason: "Customer requested conversation deletion", payload: {} }] : []),
+  ];
+  const understood = intent !== "UNKNOWN" || deterministicActions.length > 0;
   const classificationSource = unintelligible ? "DETERMINISTIC_GIBBERISH" : "DETERMINISTIC_EXPLICIT";
   return {
     intent,
@@ -302,8 +314,8 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
     operations: unintelligible ? [] : operations,
     ordinalReferences: references,
     unitReference,
-    actionRequested: explicitFollowUp || ["LEAD_REQUEST", "CALLBACK_REQUEST", "VIEWING_REQUEST", "RESERVATION_REQUEST", "HUMAN_HANDOFF"].includes(intent),
-    proposedActions: explicitFollowUp ? [{ type: "CREATE_FOLLOWUP", reason: "Customer explicitly requested a future follow-up", payload: { temporal: followUpTemporal, sourceText: rawText.slice(0, 500) } }] : undefined,
+    actionRequested: deterministicActions.length > 0 || ["LEAD_REQUEST", "CALLBACK_REQUEST", "VIEWING_REQUEST", "RESERVATION_REQUEST", "HUMAN_HANDOFF"].includes(intent),
+    proposedActions: deterministicActions.length ? deterministicActions : undefined,
     stateQuery: queryTarget,
     ambiguity,
     responseGoal: responseGoal(intent, queryTarget),
@@ -326,7 +338,7 @@ function semanticFallback(
   reason: string,
   source: NadimUnderstanding["classificationSource"] = "DETERMINISTIC_SAFE_FALLBACK",
 ): NadimUnderstanding {
-  if (deterministic.intent !== "UNKNOWN" || !looksLikeNaturalConversation(message)) {
+  if (deterministic.intent !== "UNKNOWN" || deterministic.actionRequested || !looksLikeNaturalConversation(message)) {
     return { ...deterministic, classificationSource: source, unknownReason: deterministic.intent === "UNKNOWN" ? reason : undefined };
   }
   return {
@@ -374,14 +386,18 @@ export class UnderstandingService {
       try {
         const result = await dialogue.decide(message, state, context, trace);
         const decision = result.value;
-        const explicitTemporal = extractFollowUpTemporalRequest(message);
-        const explicitFollowUp = Boolean(explicitTemporal && /(?:تابع|كلمني|ارجع|فكرني|follow\s*up|call\s+me|remind\s+me|get\s+back)/iu.test(message));
+        const deterministic = explicitUnderstanding(message, state, context);
         const proposedActions = [...decision.proposedActions];
-        if (explicitFollowUp && !proposedActions.some((action) => action.type === "CREATE_FOLLOWUP")) proposedActions.push({ type: "CREATE_FOLLOWUP", reason: "Customer explicitly requested a future follow-up", payload: { temporal: explicitTemporal, sourceText: message.slice(0, 500) } });
+        for (const action of deterministic.proposedActions ?? []) {
+          if (!proposedActions.some((candidate) => candidate.type === action.type)) proposedActions.push(action as typeof proposedActions[number]);
+        }
         const operationsAllowed = decision.understood
           && decision.confidence >= 0.72
           && ["DISCOVERY", "STRUCTURED_REQUEST"].includes(decision.conversationalType);
-        const intent = !decision.understood
+        const explicitIntentWins = ["MEDIA_REQUEST", "COMPARISON", "PRICE_QUESTION", "PAYMENT_PLAN_QUESTION", "AVAILABILITY_QUESTION", "LOCATION_QUESTION", "HUMAN_HANDOFF", "ASSISTANT_IDENTITY", "ASSISTANT_NATURE"].includes(deterministic.intent);
+        const intent = explicitIntentWins
+          ? deterministic.intent
+          : !decision.understood
           ? "UNKNOWN"
           : decision.intent && decision.intent !== "UNKNOWN" ? decision.intent : "CONVERSATION";
         const stateQueries = decision.stateQueries;
@@ -397,7 +413,7 @@ export class UnderstandingService {
           ordinalReferences: [],
           unitReference: this.referenceArgument(decision, "unitReference"),
           projectReference: this.referenceArgument(decision, "projectReference"),
-          actionRequested: explicitFollowUp,
+          actionRequested: deterministic.actionRequested,
           stateQuery,
           responseGoal: decision.conversationalGoal,
           responsePlan: decision.responsePlan,

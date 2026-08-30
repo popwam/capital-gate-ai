@@ -235,3 +235,12 @@ test("the server adapter retains the customer-chat per-device rate limit", () =>
   assert.throws(() => checkNadimWebRateLimit(token, 1_000), (error: any) => error.status === 429 && error.code === "WEB_CHAT_RATE_LIMITED");
   assert.doesNotThrow(() => checkNadimWebRateLimit(token, 61_001));
 });
+
+test("Web HUMAN mode keeps the customer composer enabled and refreshes human replies", () => {
+  const client = readFileSync(new URL("../components/chat-app.tsx", import.meta.url), "utf8");
+  assert.match(client, /mode !== "HUMAN"/u);
+  assert.match(client, /window\.setInterval/u);
+  assert.match(client, /active\?\.mode === "HUMAN"[\s\S]{0,300}HumanHandoffComposer/u);
+  assert.match(client, /<Composer input=\{input\}/u);
+  assert.doesNotMatch(client, /mode === "HUMAN" \? <HumanHandoffComposer[^:]+: <Composer/u);
+});

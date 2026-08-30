@@ -455,6 +455,19 @@ test("17 unknown fact does not hallucinate", async () => {
   assert.doesNotMatch(reply.reply, /مليون/u);
 });
 
+test("Arabic price and installment questions without verified facts invent no figures and offer a next step", async () => {
+  const selected = state({ selectedUnitId: "u-missing" });
+  for (const [message, intentType, tool] of [
+    ["كام سعرها؟", "PRICE_QUESTION", "GET_UNIT_FACTS"],
+    ["فيه نظام أقساط؟", "PAYMENT_PLAN_QUESTION", "GET_PAYMENT_PLAN"],
+  ] as const) {
+    const intent: NadimUnderstanding = { intent: intentType, confidence: 1, operations: [], ordinalReferences: [], actionRequested: false };
+    const reply = await composer.compose({ userMessage: message, understanding: intent, state: selected, plan: planner.plan(intent, selected), toolResults: [{ tool, ok: false, errorCode: "VERIFIED_DATA_NOT_FOUND", latencyMs: 1 }], proposedActions: [], executedActions: [] });
+    assert.doesNotMatch(reply.reply, /\b\d+(?:[.,]\d+)?\s*(?:مليون|جنيه|%|شهر|سنة)/u);
+    assert.match(reply.reply, /(?:أتابع|الفريق|المبيعات|مش موثق|مش موثقة|معنديش)/u);
+  }
+});
+
 test("18 explicit contact request proposes a lead action", async () => {
   const intent = await understand("أنا مهتم سيب بياناتي");
   assert.equal(actionPolicy().propose(intent, state())[0].type, "CREATE_LEAD");
@@ -1000,4 +1013,30 @@ test("realistic nine-turn customer-service conversation stays contextual and fac
   assert.match(final.reply, /3/u);
   assert.match(final.reply, /التجمع/u);
   assert.match(final.reply, /10\s*مليون|10,000,000/u);
+});
+
+test("live Arabic product commands retain semantic routing during provider outage", async () => {
+  const compared = state({ comparisonUnitIds: ["unit-1", "unit-2"], lastResultIds: ["unit-1", "unit-2"] });
+  assert.equal((await understand("مين فيهم أقرب للجامعة الأمريكية؟", compared)).intent, "COMPARISON");
+  assert.equal((await understand("في صور للأول؟", compared)).intent, "MEDIA_REQUEST");
+  const share = await understand("هاتلي رابط المحادثة", compared);
+  assert.equal(share.proposedActions?.[0]?.type, "CREATE_CONVERSATION_SHARE_LINK");
+  const human = await understand("عايز حد من خدمة العملاء يكلمني", compared);
+  assert.equal(human.intent, "HUMAN_HANDOFF");
+  const deletion = await understand("امسح المحادثة", compared);
+  assert.equal(deletion.proposedActions?.[0]?.type, "REQUEST_CONVERSATION_DELETION");
+  for (const result of [share, human, deletion]) assert.notEqual(result.responseGoal, "CONTINUE_CONVERSATION_SAFELY");
+});
+
+test("pending delete confirmation and multi-intent requirement plus follow-up produce separate executable actions", async () => {
+  const pendingContext: NadimConversationContext = {
+    stage: "ACTIVE_SEARCH", recentTurns: [],
+    pendingDeletion: { requestedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() },
+  };
+  const confirmation = (await understandingService.understand("ايوه امسحها", state(), {}, pendingContext)).understanding;
+  assert.equal(confirmation.proposedActions?.[0]?.type, "CONFIRM_CONVERSATION_DELETION");
+  const combined = await understand("عايز فيلا في زايد لحد 25 مليون وتابع معايا بعد نص ساعة");
+  assert.equal(combined.intent, "PROPERTY_SEARCH");
+  assert.ok(combined.operations.some((operation) => operation.field === "propertyTypes"));
+  assert.equal(combined.proposedActions?.some((action) => action.type === "CREATE_FOLLOWUP"), true);
 });

@@ -19,6 +19,7 @@ import {
   AdminConversationListQueryDto,
   AdminConversationModeDto,
   AdminConversationDeleteDto,
+  AdminConversationHumanMessageDto,
   CreateLeadNoteDto,
   LeadListQueryDto,
   UpdateLeadDto,
@@ -112,6 +113,9 @@ export class AdminConversationsController {
   }
   @Post(":id/whatsapp") whatsapp(@Param("id") id: string, @Req() req: any) {
     return this.crm.createConversationLink(id, "WHATSAPP_HANDOFF", this.admin(req));
+  }
+  @Post(":id/messages") message(@Param("id") id: string, @Body() body: AdminConversationHumanMessageDto, @Req() req: any) {
+    return this.crm.sendHumanMessage(id, body.content, this.admin(req));
   }
   @Delete(":id") remove(@Param("id") id: string, @Body() body: AdminConversationDeleteDto, @Req() req: any) {
     return this.crm.deleteConversation(id, body.confirmation, this.admin(req));

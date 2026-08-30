@@ -78,6 +78,11 @@ export class AdminConversationDeleteDto {
   @IsIn(["DELETE"]) confirmation!: "DELETE";
 }
 
+export class AdminConversationHumanMessageDto {
+  @Transform(({ value }) => typeof value === "string" ? value.trim() : value)
+  @IsString() @MaxLength(8_000) content!: string;
+}
+
 export class TrustAlertFeedbackDto {
   @IsIn(["ADMIN_CONFIRMED_REAL", "ADMIN_CONFIRMED_FAKE", "RESOLVED"]) disposition!: "ADMIN_CONFIRMED_REAL" | "ADMIN_CONFIRMED_FAKE" | "RESOLVED";
   @IsString() @MaxLength(1_000) @IsOptional() note?: string;
