@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import { Prisma, UnitStatus, ApprovalStatus, DocumentType } from "@prisma/client";
 import { PrismaService } from "./database/prisma.service";
 import { StructuredIntent } from "./providers/ai-provider";
@@ -412,12 +412,14 @@ export class PropertySearchService {
       normalized.replace(/_/g, "-"),
       normalized.replace(/-/g, "_"),
     ].filter(Boolean))];
-    const unit = await this.prisma.unit.findFirst({
+    const matches = await this.prisma.unit.findMany({
       where: {
         OR: variants.map((value) => ({ externalUnitId: { equals: value, mode: "insensitive" as const } })),
         status: UnitStatus.AVAILABLE,
         archivedAt: null,
       },
+      take: 2,
+      orderBy: [{ externalUnitId: "asc" }, { id: "asc" }],
       include: {
         developer: { select: { id: true, name: true, nameAr: true, nameEn: true, brandName: true } },
         project: { include: { location: true, developer: true, gates: { where: { isActive: true } } } },
@@ -428,6 +430,8 @@ export class PropertySearchService {
         media: { orderBy: { sortOrder: "asc" } },
       },
     });
+    if (matches.length > 1) throw new ConflictException("Unit code matches more than one available unit");
+    const unit = matches[0];
     if (!unit) return null;
     const withPlans = await this.attachEffectivePaymentPlans([unit]);
     return (await this.attachEffectiveMedia(withPlans))[0];
@@ -488,7 +492,32 @@ export class PropertySearchService {
     return this.attachEffectiveMedia(withPlans);
   }
 
-  async getPaymentPlans(unitId: string) { const unit = await this.prisma.unit.findUnique({ where: { id: unitId }, select: { id: true, projectId: true, phaseId: true, price: true, currency: true, paymentPlans: { where: { isActive: true } } } }); if (!unit) throw new NotFoundException("Property not found"); return (await this.attachEffectivePaymentPlans([unit]))[0].paymentPlans; }
+  async getPaymentPlanResult(unitId: string) {
+    const unit = await this.prisma.unit.findFirst({
+      where: { id: unitId, status: UnitStatus.AVAILABLE, archivedAt: null },
+      select: {
+        id: true, externalUnitId: true, projectId: true, phaseId: true, price: true, currency: true,
+        project: { select: { name: true, nameAr: true, nameEn: true } },
+        paymentPlans: { where: { isActive: true } },
+      },
+    });
+    if (!unit) throw new NotFoundException("Property not found");
+    const effective = (await this.attachEffectivePaymentPlans([unit]))[0];
+    const plans = effective.paymentPlans.filter((plan) => {
+      if (plan.unitId != null) return plan.unitId === unit.id;
+      if (plan.phaseId != null) return plan.phaseId === unit.phaseId && plan.projectId === unit.projectId;
+      return plan.projectId === unit.projectId;
+    });
+    return {
+      unit: {
+        id: unit.id,
+        externalUnitId: unit.externalUnitId,
+        projectId: unit.projectId,
+        projectName: unit.project.nameAr ?? unit.project.nameEn ?? unit.project.name,
+      },
+      plans,
+    };
+  }
   async compareProperties(ids: string[]) { return this.prisma.unit.findMany({ where: { id: { in: ids }, status: UnitStatus.AVAILABLE }, include: { project: true, paymentPlans: { where: { isActive: true } }, offers: { where: { isActive: true } } } }); }
   async getProjectMedia(projectId: string) { return this.cache?.getOrLoad("project-media", projectId, 15 * 60_000, () => this.prisma.media.findMany({ where: { projectId, phaseId: null, type: "IMAGE", purpose: "GALLERY" }, orderBy: { sortOrder: "asc" } })) ?? this.prisma.media.findMany({ where: { projectId, phaseId: null, type: "IMAGE", purpose: "GALLERY" }, orderBy: { sortOrder: "asc" } }); }
   async getProjectDocuments(projectId: string, type?: DocumentType) { const key = `${projectId}:${type ?? "ALL"}`; return this.cache?.getOrLoad("project-documents", key, 15 * 60_000, () => this.prisma.document.findMany({ where: { projectId, phaseId: null, ...(type ? { type } : {}) }, orderBy: { createdAt: "desc" } })) ?? this.prisma.document.findMany({ where: { projectId, phaseId: null, ...(type ? { type } : {}) }, orderBy: { createdAt: "desc" } }); }

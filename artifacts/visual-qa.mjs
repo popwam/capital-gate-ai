@@ -12,7 +12,8 @@ const properties = [
   { id:"u-east", externalUnitId:"EG-301", unitType:"Apartment", bedrooms:3, bathrooms:3, builtUpArea:165, price:7_900_000, currency:"EGP", status:"AVAILABLE", deliveryDate:"2028-12-31", project:{name:"East Gardens",location:{name:"التجمع الخامس"}}, media:[], paymentPlans:[{durationMonths:96,downPaymentPercent:0.10,currency:"EGP"}] },
   { id:"u-cairo", externalUnitId:"CH-155", unitType:"Apartment", bedrooms:3, bathrooms:2, builtUpArea:155, price:8_800_000, currency:"EGP", status:"AVAILABLE", deliveryDate:"2029-12-31", project:{name:"Cairo Heights",location:{name:"القاهرة الجديدة"}}, media:[], paymentPlans:[{durationMonths:84,downPaymentPercent:0.15,currency:"EGP"}] },
 ];
-const ui = [{type:"PROPERTY_RESULTS",data:{properties}},{type:"PROPERTY_COMPARISON",data:{properties}}];
+const paymentResult = {unit:{id:"u-east",externalUnitId:"TEST-APT-301",projectId:"p-east",projectName:"East Gardens Test"},plans:[{id:"plan-east",name:"Controlled installment plan",durationMonths:96,downPaymentPercent:10,currency:"EGP",owner:{type:"UNIT",id:"u-east"}}]};
+const ui = [{type:"PROPERTY_RESULTS",data:{properties}},{type:"PROPERTY_COMPARISON",data:{properties}},{type:"PAYMENT_PLANS",data:paymentResult}];
 const messages = [
   {id:"m1",role:"USER",content:"أنا بدور على شقة 3 غرف في التجمع لحد 10 مليون.",createdAt:new Date().toISOString()},
   {id:"m2",role:"ASSISTANT",content:"لقيتلك اختيارين مناسبين 👇",toolPayload:{type:"nadim_v2",ui},createdAt:new Date().toISOString()},

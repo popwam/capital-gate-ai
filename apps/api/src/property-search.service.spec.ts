@@ -25,8 +25,29 @@ test("location resolution checks multilingual canonical fields and approved alia
 test("controlled inventory seed keeps unit payment plans single-owned and approved Cairo/Zayed aliases in Git", () => {
   const source = readFileSync(resolve(process.cwd(), "../../scripts/seed-controlled-inventory.mjs"), "utf8");
   assert.doesNotMatch(source, /paymentPlan\.create\([^]*?unitId:\s*unit\.id[^]*?projectId:\s*project\.id/iu);
+  assert.match(source, /"APT-301","Apartment",3,3,165,7900000,"AVAILABLE",8,2028/u);
+  assert.match(source, /"APT-210","Apartment",3,2,155,8800000,"AVAILABLE",9,2029/u);
+  assert.match(source, /unitId:\s*unit\.id[^]*?durationMonths:\s*years\s*\*\s*12/u);
   for (const alias of ["التجمع", "التجمع الخامس", "القاهرة الجديدة", "نيو كايرو", "new cairo", "fifth settlement", "زايد", "الشيخ زايد", "شيخ زايد", "sheikh zayed", "zayed"]) assert.match(source, new RegExp(alias, "iu"));
   assert.match(source, /approvalStatus:\s*"APPROVED"/u);
+});
+
+test("exact-unit payment lookup retains identity and rejects plans owned by another unit", async () => {
+  const direct = [
+    { id: "plan-301", unitId: "u301", projectId: null, phaseId: null, durationMonths: 96, isActive: true },
+    { id: "stale-210", unitId: "u210", projectId: null, phaseId: null, durationMonths: 108, isActive: true },
+  ];
+  const prisma = {
+    unit: { findFirst: async () => ({
+      id: "u301", externalUnitId: "TEST-APT-301", projectId: "p-east", phaseId: null,
+      price: 7_900_000, currency: "EGP", project: { name: "East Gardens Test", nameAr: null, nameEn: null }, paymentPlans: direct,
+    }) },
+    paymentPlan: { findMany: async () => [] },
+  };
+  const result = await new PropertySearchService(prisma as any).getPaymentPlanResult("u301");
+  assert.equal(result.unit.externalUnitId, "TEST-APT-301");
+  assert.equal(result.unit.projectName, "East Gardens Test");
+  assert.deepEqual(result.plans.map((plan: any) => [plan.id, plan.durationMonths]), [["plan-301", 96]]);
 });
 
 test("built-up-area aggregation is database-backed and keeps the prior minimum filter", async () => {
@@ -77,12 +98,13 @@ test("normalized searches hit cache and inventory invalidation forces fresh resu
 
 test("exact external unit lookup takes the identifier as one atomic value", async () => {
   let captured: any;
-  const prisma = { unit: { findFirst: async (query: any) => { captured = query; return null; } } };
+  const prisma = { unit: { findMany: async (query: any) => { captured = query; return []; } } };
   const service = new PropertySearchService(prisma as any);
   await service.findUnitByExternalId("G60 4/2");
   assert.ok(captured.where.OR.every((candidate: any) => candidate.externalUnitId.equals === "G60 4/2"));
   assert.equal(captured.where.bedrooms, undefined);
   assert.equal(captured.where.bathrooms, undefined);
+  assert.equal(captured.take, 2);
 });
 
 test("contextual unit lookups cannot revive unavailable or archived candidates", async () => {

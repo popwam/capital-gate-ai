@@ -6,6 +6,7 @@ import { NadimPlan, NadimToolResult } from "../domain/nadim-plan";
 import { NadimSearchState, NadimState } from "../domain/nadim-state";
 import { DeterministicTimeService } from "./deterministic-time.service";
 import { normalizePaymentPlan } from "../domain/payment-percentage";
+import type { VerifiedPaymentPlan, VerifiedUnitPaymentPlanResult } from "../domain/verified-payment-plan";
 
 function serialize<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -53,6 +54,27 @@ function compactUnit(unit: any) {
     media: Array.isArray(unit.media) ? unit.media.map((item: any) => ({ id: item.id, type: item.type, url: item.url, altText: item.altTextAr ?? item.altTextEn ?? item.altText ?? null })).slice(0, 12) : [],
     proximities: Array.isArray(unit.proximities) ? unit.proximities.map((item: any) => ({ targetType: item.targetType, targetName: item.landmark?.nameAr ?? item.landmark?.nameEn ?? item.landmark?.name ?? item.gate?.nameAr ?? item.gate?.nameEn ?? item.gate?.name ?? item.amenity?.nameAr ?? item.amenity?.nameEn ?? item.amenity?.name, distanceMeters: item.distanceMeters == null ? null : Number(item.distanceMeters), walkingMinutes: item.walkingMinutes, drivingMinutes: item.drivingMinutes, verifiedAt: item.verifiedAt })) : [],
   });
+}
+
+function compactPaymentPlan(plan: any): VerifiedPaymentPlan {
+  const normalized = normalizePaymentPlan(plan);
+  const owner = plan.unitId != null
+    ? { type: "UNIT" as const, id: String(plan.unitId) }
+    : plan.phaseId != null
+      ? { type: "PHASE" as const, id: String(plan.phaseId) }
+      : { type: "PROJECT" as const, id: String(plan.projectId) };
+  return {
+    id: String(plan.id),
+    name: plan.name ?? null,
+    durationMonths: plan.durationMonths ?? null,
+    downPaymentAmount: plan.downPaymentAmount == null ? null : Number(plan.downPaymentAmount),
+    downPaymentPercent: normalized.downPaymentPercent == null ? null : Number(normalized.downPaymentPercent),
+    installmentAmount: plan.installmentAmount == null ? null : Number(plan.installmentAmount),
+    installmentFrequency: plan.installmentFrequency ?? null,
+    effectiveTotalPrice: plan.effectiveTotalPrice == null ? null : Number(plan.effectiveTotalPrice),
+    currency: plan.currency ?? null,
+    owner,
+  };
 }
 
 function searchIntent(search: NadimSearchState, locale: string): StructuredIntent {
@@ -118,20 +140,25 @@ export class ToolExecutorService {
       return units.map(compactUnit);
     }
     if (tool === "GET_UNIT_FACTS") {
-      const unit = args.unitId
-        ? await this.properties.getProperty(String(args.unitId))
-        : await this.resolveRecentUnitReference(String(args.unitReference ?? ""), state);
+      const unit = args.unitReference
+        ? await this.resolveRecentUnitReference(String(args.unitReference), state)
+        : args.unitId ? await this.properties.getProperty(String(args.unitId)) : null;
       if (!unit) throw Object.assign(new Error("Property not found"), { status: 404 });
       return compactUnit(unit);
     }
-    if (tool === "GET_PAYMENT_PLAN") return serialize((await this.properties.getPaymentPlans(String(args.unitId))).map((plan: any) => normalizePaymentPlan(plan)));
+    if (tool === "GET_PAYMENT_PLAN") {
+      const unitId = await this.resolveUnitId(args, state);
+      const result = await this.properties.getPaymentPlanResult(unitId);
+      if (result.unit.id !== unitId) throw Object.assign(new Error("Payment plan unit ownership mismatch"), { code: "PAYMENT_PLAN_OWNERSHIP_MISMATCH" });
+      return serialize({ unit: result.unit, plans: result.plans.map(compactPaymentPlan) } satisfies VerifiedUnitPaymentPlanResult);
+    }
     if (tool === "COMPARE_PROPERTIES") return (await this.properties.compareProperties((args.unitIds as string[]) ?? [])).map(compactUnit);
     if (tool === "GET_AVAILABILITY") {
-      const unit = await this.properties.getProperty(String(args.unitId));
+      const unit = await this.properties.getProperty(await this.resolveUnitId(args, state));
       return serialize({ unitId: unit.id, externalUnitId: unit.externalUnitId, status: unit.status, availabilityUpdatedAt: unit.availabilityUpdatedAt });
     }
     if (tool === "GET_MEDIA") {
-      const unit = await this.properties.getProperty(String(args.unitId));
+      const unit = await this.properties.getProperty(await this.resolveUnitId(args, state));
       const projectAssets = await this.prisma.media.findMany({ where: { projectId: unit.projectId, unitId: null }, select: { id: true, type: true, url: true, altText: true, altTextAr: true, altTextEn: true }, orderBy: { sortOrder: "asc" }, take: 30 });
       const media = [...compactUnit(unit).media, ...projectAssets.map((item) => ({ id: item.id, type: item.type, url: item.url, altText: item.altTextAr ?? item.altTextEn ?? item.altText }))]
         .filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index);
@@ -139,7 +166,7 @@ export class ToolExecutorService {
     }
     if (tool === "GET_PROJECT_FACTS") return serialize(await this.properties.getProject(String(args.projectId)));
     if (tool === "GET_LOCATION") {
-      const unit = await this.properties.getProperty(String(args.unitId));
+      const unit = await this.properties.getProperty(await this.resolveUnitId(args, state));
       return compactUnit(unit).project?.location ?? null;
     }
     if (tool === "CUSTOMER_LOOKUP") return this.prisma.customer.findUnique({ where: { id: String(args.customerId) }, select: { id: true, name: true, normalizedPhone: true, normalizedEmail: true } });
@@ -148,11 +175,17 @@ export class ToolExecutorService {
   }
 
   private async resolveRecentUnitReference(reference: string, state: NadimState) {
+    const normalized = reference.normalize("NFKC").toLocaleLowerCase().replace(/[أإآ]/gu, "ا").replace(/[^\p{L}\p{N}.]+/gu, " ").trim();
+    const units = state.lastResultIds.length
+      ? (await Promise.all(state.lastResultIds.slice(0, 10).map((id) => this.properties.getProperty(id).catch(() => null)))).filter(Boolean) as any[]
+      : [];
+    const normalizedCode = reference.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+    const recentExact = units.filter((unit) => String(unit.externalUnitId ?? "").normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "") === normalizedCode);
+    if (recentExact.length > 1) throw Object.assign(new Error("Property reference is ambiguous"), { status: 409 });
+    if (recentExact.length === 1) return recentExact[0];
     const exact = reference ? await this.properties.findUnitByExternalId(reference) : null;
     if (exact) return exact;
-    const normalized = reference.normalize("NFKC").toLocaleLowerCase().replace(/[أإآ]/gu, "ا").replace(/[^\p{L}\p{N}.]+/gu, " ").trim();
-    if (!normalized || !state.lastResultIds.length) return null;
-    const units = (await Promise.all(state.lastResultIds.slice(0, 10).map((id) => this.properties.getProperty(id).catch(() => null)))).filter(Boolean) as any[];
+    if (!normalized || !units.length) return null;
     const numeric = normalized.match(/\b(\d+(?:\.\d+)?)\b/u)?.[1];
     const candidates = units.filter((unit) => {
       const project = String(unit.project?.nameAr ?? unit.project?.nameEn ?? unit.project?.name ?? "").normalize("NFKC").toLocaleLowerCase().replace(/[أإآ]/gu, "ا");
@@ -166,9 +199,21 @@ export class ToolExecutorService {
     return candidates[0] ?? null;
   }
 
+  private async resolveUnitId(args: Record<string, unknown>, state: NadimState) {
+    if (typeof args.unitReference === "string" && args.unitReference.trim()) {
+      const unit = await this.resolveRecentUnitReference(args.unitReference, state);
+      if (!unit?.id) throw Object.assign(new Error("Property reference was not resolved"), { code: "UNIT_REFERENCE_NOT_FOUND" });
+      return String(unit.id);
+    }
+    if (typeof args.unitId === "string" && args.unitId) return args.unitId;
+    throw Object.assign(new Error("Property reference is required"), { code: "UNIT_REFERENCE_NOT_FOUND" });
+  }
+
   private errorCode(error: unknown) {
     if ((error as { code?: string })?.code === "FX_UNAVAILABLE") return "FX_UNAVAILABLE";
     if ((error as { code?: string })?.code === "TIMEZONE_REQUIRED") return "TIMEZONE_REQUIRED";
+    if ((error as { code?: string })?.code === "UNIT_REFERENCE_NOT_FOUND") return "UNIT_REFERENCE_NOT_FOUND";
+    if ((error as { code?: string })?.code === "PAYMENT_PLAN_OWNERSHIP_MISMATCH") return "PAYMENT_PLAN_OWNERSHIP_MISMATCH";
     const status = (error as { status?: number; getStatus?: () => number })?.getStatus?.() ?? (error as { status?: number })?.status;
     if (status === 404) return "VERIFIED_DATA_NOT_FOUND";
     if (status === 409) return "REFERENCE_AMBIGUOUS";

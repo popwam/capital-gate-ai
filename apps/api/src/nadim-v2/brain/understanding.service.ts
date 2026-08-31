@@ -233,7 +233,9 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
 
   // "من الأول" is a reset idiom, not an ordinal selection.
   const references = reset ? [] : ordinals(text);
-  const unitReference = text.match(/\b(?:unit|وحدة)\s*[:#-]?\s*([\p{L}\d][\p{L}\d_\-/ ]{1,40})/iu)?.[1]?.trim();
+  const inventoryCode = text.match(/\b(?=[\p{L}\d_/-]{3,60}\b)(?=[\p{L}\d_/-]*\p{L})(?=[\p{L}\d_/-]*\d)[\p{L}\d]+(?:[_/-][\p{L}\d]+)+\b/iu)?.[0];
+  let unitReference = inventoryCode
+    ?? text.match(/\b(?:unit|(?:ال)?وحدة)\s*[:#-]?\s*([\p{L}\d][\p{L}\d_\-/ ]{1,40})/iu)?.[1]?.trim();
   const resultSelection = references.length > 0 && state.lastResultIds.length > 0;
   const paymentPreferenceContext = hasSearch || (hasActiveSearch(state) && modifyingSearch);
   if (paymentPreferenceContext && /(?:تقسيط طويل|مدة أطول|مدة اطول|long(?:er)? installments?)/iu.test(text)) {
@@ -251,7 +253,13 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
     && /(?:زودها|زوّدها|وسعها|وسّعها|increase it|raise it)\s+(?:شوية|شوي|a (?:bit|little))/iu.test(text)
     && !hasMutation;
   const queryTarget = stateQueryTarget(text, state, context);
-  const paymentQuestion = /(?:نظام التقسيط|خطة السداد|خطط السداد|المقدم\s+كام|التقسيط\s+على\s+كام\s*(?:سنة|سنين|شهر)?|payment plan|down payment|how (?:many|long).*(?:installment|year|month))/iu.test(text);
+  const paymentQuestion = /(?:(?:نظام|خطة|خطط)\s+(?:ال)?(?:دفع|سداد|تقسيط)|(?:الدفع|السداد)\s+(?:بتاع|ل(?:لوحدة)?|for)|المقدم\s+كام|التقسيط\s+على\s+كام\s*(?:سنة|سنين|شهر)?|payment plan|down payment|how (?:many|long).*(?:installment|year|month))/iu.test(text);
+  if (!unitReference && paymentQuestion) {
+    const pricedReference = text.match(/(?:بـ?|بسعر|price(?:d)?\s*(?:at)?)\s*(\d+(?:\.\d+)?)/iu)?.[1];
+    const namedReference = text.match(/(?:بتاع|for)\s+([\p{L}\d][\p{L}\d ._/-]{1,80}?)(?:[؟?!.،,]|$)/iu)?.[1]?.trim();
+    const genericReference = namedReference && /^(?:(?:ال)?وحدة\s+(?:دي|ديت|هذه)|it|this\s+unit)$/iu.test(namedReference);
+    unitReference = pricedReference ?? (genericReference ? undefined : namedReference);
+  }
   const addressOnlyRequest = state.languageStyle?.grammaticalAddressChangedThisTurn
     && /(?:صيغة|خاطبني|مؤنث|مذكر|محايد|address me|feminine|masculine|gender[- ]neutral)/iu.test(text);
   const languageOnly = Boolean(state.languageStyle?.explicitRequestThisTurn || addressOnlyRequest)

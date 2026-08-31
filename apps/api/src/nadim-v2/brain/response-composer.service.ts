@@ -139,7 +139,10 @@ export class ResponseComposerService {
     const search = input.toolResults.find((result) => result.tool === "PROPERTY_SEARCH" && result.ok && Array.isArray(result.data) && result.data.length);
     const comparison = input.toolResults.find((result) => result.tool === "COMPARE_PROPERTIES" && result.ok && Array.isArray(result.data) && result.data.length);
     const media = input.toolResults.find((result) => result.tool === "GET_MEDIA" && result.ok);
-    const payment = input.toolResults.find((result) => result.tool === "GET_PAYMENT_PLAN" && result.ok && Array.isArray(result.data) && result.data.length);
+    const payment = input.toolResults.find((result) => {
+      if (result.tool !== "GET_PAYMENT_PLAN" || !result.ok || !result.data || Array.isArray(result.data)) return false;
+      return Array.isArray((result.data as { plans?: unknown[] }).plans) && Boolean((result.data as { plans: unknown[] }).plans.length);
+    });
     const links = input.executedActions.filter((action) => action.status === "SUCCEEDED" && ["CREATE_CONVERSATION_SHARE_LINK", "CREATE_WHATSAPP_HANDOFF_LINK"].includes(action.type));
     if (!search && !comparison && !media && !payment && !links.length) return undefined;
     if (search) parts.push(arabic ? `لقيتلك ${(search.data as any[]).length} اختيار مناسب 👇` : `I found ${(search.data as any[]).length} matching options:`);
@@ -239,7 +242,14 @@ export class ResponseComposerService {
     }
     if (input.understanding.intent === "PAYMENT_PLAN_QUESTION") {
       const result = input.toolResults.find((item) => item.tool === "GET_PAYMENT_PLAN");
-      return this.responseStyle.paymentPlans(style, dataOf(result), Boolean(result?.ok));
+      if (result?.errorCode === "UNIT_REFERENCE_NOT_FOUND" || result?.errorCode === "REFERENCE_AMBIGUOUS") {
+        return this.responseStyle.clarification(style, result.errorCode);
+      }
+      const data = result?.data && !Array.isArray(result.data)
+        ? result.data as { unit?: { externalUnitId?: string; projectName?: string }; plans?: unknown[] }
+        : undefined;
+      const plans = data?.plans ?? (Array.isArray(result?.data) ? result.data : []);
+      return this.responseStyle.paymentPlans(style, plans, Boolean(result?.ok), data?.unit);
     }
     if (input.understanding.intent === "PRICE_QUESTION") {
       const result = input.toolResults.find((item) => item.tool === "GET_UNIT_FACTS");

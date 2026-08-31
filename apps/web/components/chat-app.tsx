@@ -260,7 +260,8 @@ function MessageView({ message, onAction, isLast, isArabic }: { message:Message;
   const brochures = actions.find((action:any) => action.type === "PROJECT_BROCHURE")?.payload?.documents ?? [];
   const location = structuredUi.find((item:any) => item.type === "LOCATION")?.data?.location ?? actions.find((action:any) => action.type === "PROJECT_LOCATION")?.payload?.map;
   const shareLink = structuredUi.find((item:any) => item.type === "SHARE_LINK" || item.type === "WHATSAPP_LINK");
-  const paymentPlans = structuredUi.find((item:any) => item.type === "PAYMENT_PLANS")?.data?.plans ?? [];
+  const paymentPayload = structuredUi.find((item:any) => item.type === "PAYMENT_PLANS")?.data;
+  const paymentPlans = paymentPayload?.plans ?? [];
   const distance = actions.find((action:any) => action.type === "DISTANCE_RESULT")?.payload;
   const contactAction = actions.find((action:any) => action.type === "CONTACT_REQUEST");
   const paymentAction = actions.find((action:any) => action.type === "PAYMENT_CHOICES");
@@ -276,7 +277,7 @@ function MessageView({ message, onAction, isLast, isArabic }: { message:Message;
       {!!brochures.length && <Documents documents={brochures}/>}
       {!!location && <MapResult map={location}/>}
       {!!shareLink?.data?.url && <SecureLink url={shareLink.data.url} whatsapp={shareLink.type === "WHATSAPP_LINK"} isArabic={isArabic}/>}
-      {!!paymentPlans.length && <PaymentPlanList plans={paymentPlans} isArabic={isArabic}/>}
+      {!!paymentPlans.length && <PaymentPlanList plans={paymentPlans} unit={paymentPayload?.unit} isArabic={isArabic}/>}
       {!!distance && <DistanceResult result={distance}/>}
       {!!paymentAction && <PaymentChoices action={paymentAction.payload} onAction={onAction} isArabic={isArabic}/>}
       {!!closedAction && <ConversationClosedNotice isArabic={isArabic}/>}
@@ -361,7 +362,7 @@ function PropertyComparison({properties,isArabic}:{properties:any[];isArabic:boo
 
 function SecureLink({url,whatsapp,isArabic}:{url:string;whatsapp:boolean;isArabic:boolean}) { return <a href={url} target="_blank" rel="noreferrer" className="mt-3 flex min-h-12 items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 text-[12px] font-bold text-emerald-900"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white">{whatsapp?<Smartphone size={15}/>:<Share2 size={15}/>}</span><span className="min-w-0 flex-1">{whatsapp?(isArabic?"كمّل على واتساب":"Continue on WhatsApp"):(isArabic?"افتح رابط المحادثة الآمن":"Open secure conversation link")}</span><ExternalLink size={14}/></a>; }
 
-function PaymentPlanList({plans,isArabic}:{plans:any[];isArabic:boolean}) { return <section className="mt-3 rounded-2xl border border-[var(--border-default)] bg-white p-3" aria-label={isArabic?"خطط السداد":"Payment plans"}><h4 className="text-[12px] font-extrabold">{isArabic?"خطط السداد الموثقة":"Verified payment plans"}</h4><div className="mt-2 grid gap-2 sm:grid-cols-2">{plans.slice(0,4).map((plan,index)=>{const percent=formatPaymentPercent(plan.downPaymentPercent);return <div key={plan.id??index} className="rounded-xl bg-[#f5f7f4] p-3 text-[11px]"><b className="block" dir="auto">{plan.name??(isArabic?`الخطة ${index+1}`:`Plan ${index+1}`)}</b><p className="mt-1 text-[#64716b]">{[plan.durationMonths?`${plan.durationMonths} ${isArabic?"شهر":"months"}`:null,percent?`${isArabic?"مقدم":"DP"} ${percent}`:null,plan.installmentAmount!=null?`${new Intl.NumberFormat("en").format(Number(plan.installmentAmount))} ${plan.currency??"EGP"}`:null].filter(Boolean).join(" · ")}</p></div>})}</div></section>; }
+function PaymentPlanList({plans,unit,isArabic}:{plans:any[];unit?:{externalUnitId?:string;projectName?:string};isArabic:boolean}) { return <section className="mt-3 rounded-2xl border border-[var(--border-default)] bg-white p-3" aria-label={isArabic?"خطط السداد":"Payment plans"}><div><h4 className="text-[12px] font-extrabold">{isArabic?"خطط السداد الموثقة":"Verified payment plans"}</h4>{(unit?.projectName||unit?.externalUnitId)&&<p className="mt-0.5 text-[11px] text-[#64716b]" dir="auto">{unit.projectName??unit.externalUnitId}</p>}</div><div className="mt-2 grid gap-2 sm:grid-cols-2">{plans.slice(0,4).map((plan,index)=>{const percent=formatPaymentPercent(plan.downPaymentPercent);return <div key={plan.id??index} className="rounded-xl bg-[#f5f7f4] p-3 text-[11px]"><b className="block" dir="auto">{plan.name??(isArabic?`الخطة ${index+1}`:`Plan ${index+1}`)}</b><p className="mt-1 text-[#64716b]">{[plan.durationMonths?`${plan.durationMonths} ${isArabic?"شهر":"months"}`:null,percent?`${isArabic?"مقدم":"DP"} ${percent}`:null,plan.installmentAmount!=null?`${new Intl.NumberFormat("en").format(Number(plan.installmentAmount))} ${plan.currency??"EGP"}`:null].filter(Boolean).join(" · ")}</p></div>})}</div></section>; }
 
 function humanPropertyLabel(property:any,isArabic:boolean) {
   const area=property?.builtUpArea!=null?`${Number(property.builtUpArea)} ${isArabic?"م²":"m²"}`:null;

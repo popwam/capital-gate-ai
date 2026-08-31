@@ -109,6 +109,86 @@ test("payment-plan questions remain questions about a selected unit", async () =
   assert.equal(planner.plan(intent, selected).steps[0].tool, "GET_PAYMENT_PLAN");
 });
 
+test("explicit inventory codes are payment references and override a stale selected unit", async () => {
+  const stale = state({ selectedUnitId: "u210", lastResultIds: ["u301", "u210"] });
+  for (const message of [
+    "نظام دفع الوحدة TEST-APT-301",
+    "نظام دفع TEST-APT-301",
+    "الدفع بتاع TEST-APT-301",
+    "payment plan for TEST-APT-301",
+    "what's the payment plan for TEST-APT-301?",
+  ]) {
+    const intent = await understand(message, stale);
+    const next = stateEngine.apply(stale, intent, { channel: "WEB" });
+    const step = planner.plan(intent, next).steps[0];
+    assert.equal(intent.intent, "PAYMENT_PLAN_QUESTION", message);
+    assert.equal(intent.unitReference, "TEST-APT-301", message);
+    assert.deepEqual(step, { tool: "GET_PAYMENT_PLAN", arguments: { unitReference: "TEST-APT-301" } }, message);
+  }
+});
+
+test("exact payment references retain 96 then 108 then 96 with one canonical result", async () => {
+  const units: Record<string, any> = {
+    u301: { id: "u301", externalUnitId: "TEST-APT-301", price: 7_900_000, project: { id: "p-east", name: "East Gardens Test" } },
+    u210: { id: "u210", externalUnitId: "TEST-APT-210", price: 8_800_000, project: { id: "p-cairo", name: "Cairo Heights Test" } },
+  };
+  const durations: Record<string, number> = { u301: 96, u210: 108 };
+  const properties = {
+    findUnitByExternalId: async (reference: string) => Object.values(units).find((unit: any) => unit.externalUnitId.toLowerCase() === reference.toLowerCase()) ?? null,
+    getProperty: async (id: string) => units[id],
+    getPaymentPlanResult: async (id: string) => ({
+      unit: { id, externalUnitId: units[id].externalUnitId, projectId: units[id].project.id, projectName: units[id].project.name },
+      plans: [{ id: `plan-${id}`, unitId: id, durationMonths: durations[id], downPaymentPercent: 0.1, currency: "EGP" }],
+    }),
+  };
+  const executor = new ToolExecutorService(properties as any, {} as any);
+  let current = state({ lastResultIds: ["u301", "u210"] });
+  const observed: number[] = [];
+  let finalResult: any;
+  for (const message of ["نظام دفع الأولى", "نظام دفع التانية", "نظام دفع الوحدة TEST-APT-301"]) {
+    const intent = await understand(message, current);
+    current = stateEngine.apply(current, intent, { channel: "WEB" });
+    const results = await executor.execute(planner.plan(intent, current), current);
+    finalResult = results[0];
+    observed.push(finalResult.data.plans[0].durationMonths);
+    if (intent.unitReference) current = { ...current, selectedUnitId: finalResult.data.unit.id };
+  }
+  assert.deepEqual(observed, [96, 108, 96]);
+  assert.equal(finalResult.data.unit.externalUnitId, "TEST-APT-301");
+  assert.equal(finalResult.data.plans[0].owner.id, "u301");
+  assert.equal(finalResult.data.plans[0].downPaymentPercent, 10);
+
+  for (const message of ["الدفع بتاع East Gardens Test", "الدفع بتاع الوحدة اللي بـ7.9"]) {
+    const intent = await understand(message, current);
+    const result = (await executor.execute(planner.plan(intent, current), current))[0] as any;
+    assert.equal(result?.ok, true, `${message}: ${result?.errorCode ?? "NO_TOOL"}`);
+    assert.equal(result.data.unit.id, "u301", message);
+    assert.equal(result.data.plans[0].durationMonths, 96, message);
+  }
+
+  const ui = buildNadimUi([finalResult], []);
+  assert.deepEqual((ui[0] as any).data, finalResult.data);
+  const intent = await understand("نظام الدفع؟", current);
+  const reply = await composer.compose({
+    userMessage: "نظام الدفع؟", understanding: intent, state: current,
+    plan: planner.plan(intent, current), toolResults: [finalResult], proposedActions: [], executedActions: [],
+  });
+  assert.match(reply.reply, /East Gardens Test/u);
+  assert.match(reply.reply, /96 شهر/u);
+  assert.doesNotMatch(reply.reply, /108 شهر/u);
+
+  const mediaIntent = await understand("وفي صور ليها؟", current);
+  assert.deepEqual(planner.plan(mediaIntent, current).steps.map((step) => step.tool), ["GET_MEDIA"]);
+});
+
+test("an unresolved payment question asks for the unit specifically", async () => {
+  const intent = await understand("نظام الدفع؟", state());
+  const plan = planner.plan(intent, state());
+  const reply = await composer.compose({ userMessage: "نظام الدفع؟", understanding: intent, state: state(), plan, toolResults: [], proposedActions: [], executedActions: [] });
+  assert.equal(plan.clarification, "UNIT_SELECTION_REQUIRED");
+  assert.equal(reply.reply, "تقصد أنهي وحدة؟");
+});
+
 test("only active search state turns installment changes into MODIFY_SEARCH", async () => {
   const freshIntent = await understand("عايز شقة وتقسيط طويل");
   assert.equal(freshIntent.intent, "PROPERTY_SEARCH");

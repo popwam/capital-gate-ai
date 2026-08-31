@@ -192,6 +192,14 @@ export class ResponseStyleService {
       FRANCO_ARABIC: "e5tar wa7deten 3ashan a2arenhomlak.",
       MIXED_AR_EN: "اختار اتنين options وأنا أقارنهم بسرعة.",
     });
+    if (reason === "UNIT_REFERENCE_NOT_FOUND" || reason === "REFERENCE_AMBIGUOUS" || reason === "UNIT_SELECTION_REQUIRED") return this.pick(style, {
+      AR_EGYPTIAN: "تقصد أنهي وحدة؟",
+      AR_GULF: "تقصد أي وحدة؟",
+      AR_FORMAL: "أي وحدة تقصد؟",
+      EN_US: "Which unit do you mean?",
+      FRANCO_ARABIC: "ta2sed anhy wa7da?",
+      MIXED_AR_EN: "تقصد أنهي unit؟",
+    });
     return this.pick(style, {
       AR_EGYPTIAN: "حدد الوحدة اللي تقصدها، زي مثلًا: التانية.",
       AR_GULF: "حدد الوحدة اللي تقصدها، مثل: الخيار الثاني.",
@@ -351,7 +359,7 @@ export class ResponseStyleService {
     return this.pick(style, { AR_EGYPTIAN: `ده اللوكيشن الموثّق: ${url}`, AR_GULF: `هذا الموقع الموثّق: ${url}`, AR_FORMAL: `هذا هو الموقع الموثّق: ${url}`, EN_US: `Here is the verified location: ${url}`, FRANCO_ARABIC: `da el verified location: ${url}`, MIXED_AR_EN: `ده الـverified location: ${url}` });
   }
 
-  paymentPlans(style: NadimLanguageStyle, plans: any[], verified: boolean) {
+  paymentPlans(style: NadimLanguageStyle, plans: any[], verified: boolean, unit?: { externalUnitId?: string; projectName?: string }) {
     if (!verified) return this.unknown(style);
     if (!plans.length) return this.pick(style, {
       AR_EGYPTIAN: "مش ظاهر عندي نظام تقسيط موثّق للوحدة دي، فمش هخمن.",
@@ -382,7 +390,10 @@ export class ResponseStyleService {
       const facts = [plan.name, percent != null ? `${percent}%` : this.money(plan.downPaymentAmount, plan.currency, style), duration, this.money(plan.installmentAmount, plan.currency, style)].filter(Boolean);
       return `${index + 1}. ${facts.join(" · ")}`;
     });
-    return [intro, ...lines].join("\n");
+    const verifiedUnit = unit?.projectName || unit?.externalUnitId
+      ? `${unit.projectName ?? unit.externalUnitId}:`
+      : undefined;
+    return [verifiedUnit, intro, ...lines].filter(Boolean).join("\n");
   }
 
   price(style: NadimLanguageStyle, unit?: any) {

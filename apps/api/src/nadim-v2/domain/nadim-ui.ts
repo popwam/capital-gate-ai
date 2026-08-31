@@ -1,12 +1,13 @@
 import type { ExecutedAction } from "./nadim-action";
 import type { NadimToolResult } from "./nadim-plan";
+import type { VerifiedUnitPaymentPlanResult } from "./verified-payment-plan";
 
 export type NadimUiPayload =
   | { type: "PROPERTY_RESULTS"; data: { properties: unknown[] } }
   | { type: "PROPERTY_COMPARISON"; data: { properties: unknown[] } }
   | { type: "MEDIA"; data: { media: unknown[]; location?: unknown } }
   | { type: "LOCATION"; data: { location: unknown } }
-  | { type: "PAYMENT_PLANS"; data: { plans: unknown[] } }
+  | { type: "PAYMENT_PLANS"; data: VerifiedUnitPaymentPlanResult }
   | { type: "SHARE_LINK"; data: { url: string } }
   | { type: "WHATSAPP_LINK"; data: { url: string } };
 
@@ -24,8 +25,9 @@ export function buildNadimUi(toolResults: NadimToolResult[], actions: ExecutedAc
       if (options.includeMediaLocation && data.location) ui.push({ type: "LOCATION", data: { location: data.location } });
     } else if (result.tool === "GET_LOCATION" && result.data) {
       ui.push({ type: "LOCATION", data: { location: result.data } });
-    } else if (result.tool === "GET_PAYMENT_PLAN" && Array.isArray(result.data)) {
-      ui.push({ type: "PAYMENT_PLANS", data: { plans: result.data } });
+    } else if (result.tool === "GET_PAYMENT_PLAN" && result.data && !Array.isArray(result.data)) {
+      const data = result.data as VerifiedUnitPaymentPlanResult;
+      if (data.unit?.id && Array.isArray(data.plans)) ui.push({ type: "PAYMENT_PLANS", data });
     }
   }
   for (const action of actions) {

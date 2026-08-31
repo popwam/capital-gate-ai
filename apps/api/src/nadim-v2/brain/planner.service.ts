@@ -20,8 +20,14 @@ export class PlannerService {
         if (!(NADIM_TOOLS as readonly string[]).includes(proposal.tool)) return [];
         const tool = proposal.tool as NadimToolName;
         const arguments_ = { ...proposal.arguments };
-        if (["GET_UNIT_FACTS", "GET_PAYMENT_PLAN", "GET_AVAILABILITY", "GET_MEDIA", "GET_LOCATION"].includes(tool)
-          && !arguments_.unitId && state.selectedUnitId) arguments_.unitId = state.selectedUnitId;
+        if (["GET_UNIT_FACTS", "GET_PAYMENT_PLAN", "GET_AVAILABILITY", "GET_MEDIA", "GET_LOCATION"].includes(tool)) {
+          if (understanding.unitReference) {
+            arguments_.unitReference = understanding.unitReference;
+            delete arguments_.unitId;
+          } else if (!arguments_.unitReference && !arguments_.unitId && state.selectedUnitId) {
+            arguments_.unitId = state.selectedUnitId;
+          }
+        }
         if (tool === "COMPARE_PROPERTIES" && !arguments_.unitIds) arguments_.unitIds = state.comparisonUnitIds;
         if (tool === "PROPERTY_SEARCH") arguments_.limit = Math.min(10, Math.max(1, Number(arguments_.limit ?? 5)));
         return [{ tool, arguments: arguments_ }];
@@ -29,7 +35,9 @@ export class PlannerService {
       return { goal: understanding.responseGoal ?? understanding.intent, steps };
     }
     const selectedUnitId = state.selectedUnitId;
-    const unitArguments = selectedUnitId ? { unitId: selectedUnitId } : understanding.unitReference ? { unitReference: understanding.unitReference } : undefined;
+    const unitArguments = understanding.unitReference
+      ? { unitReference: understanding.unitReference }
+      : selectedUnitId ? { unitId: selectedUnitId } : undefined;
     switch (understanding.intent) {
       case "PROPERTY_SEARCH":
       case "MODIFY_SEARCH":
@@ -50,16 +58,16 @@ export class PlannerService {
           ? { goal: understanding.intent, steps: [{ tool: "GET_UNIT_FACTS", arguments: unitArguments }] }
           : { goal: understanding.intent, steps: [], clarification: "UNIT_SELECTION_REQUIRED" };
       case "PAYMENT_PLAN_QUESTION":
-        return selectedUnitId
-          ? { goal: understanding.intent, steps: [{ tool: "GET_PAYMENT_PLAN", arguments: { unitId: selectedUnitId } }] }
+        return unitArguments
+          ? { goal: understanding.intent, steps: [{ tool: "GET_PAYMENT_PLAN", arguments: unitArguments }] }
           : { goal: understanding.intent, steps: [], clarification: "UNIT_SELECTION_REQUIRED" };
       case "AVAILABILITY_QUESTION":
-        return selectedUnitId
-          ? { goal: understanding.intent, steps: [{ tool: "GET_AVAILABILITY", arguments: { unitId: selectedUnitId } }] }
+        return unitArguments
+          ? { goal: understanding.intent, steps: [{ tool: "GET_AVAILABILITY", arguments: unitArguments }] }
           : { goal: understanding.intent, steps: [], clarification: "UNIT_SELECTION_REQUIRED" };
       case "MEDIA_REQUEST":
-        return selectedUnitId
-          ? { goal: understanding.intent, steps: [{ tool: "GET_MEDIA", arguments: { unitId: selectedUnitId } }] }
+        return unitArguments
+          ? { goal: understanding.intent, steps: [{ tool: "GET_MEDIA", arguments: unitArguments }] }
           : { goal: understanding.intent, steps: [], clarification: "UNIT_SELECTION_REQUIRED" };
       default:
         return { goal: understanding.intent, steps: [] };

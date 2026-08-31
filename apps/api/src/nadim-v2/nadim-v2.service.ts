@@ -304,9 +304,14 @@ export class NadimV2Service {
           await this.lifecycle.setRequirementStatus(persistedRequirement.id, searchRows.length ? "MATCHED" : "NEEDS_MATCH");
         }
       }
-      const unitFacts = toolResults.find((result) => result.tool === "GET_UNIT_FACTS" && result.ok)?.data as { id?: string } | undefined;
-      if (!state.selectedUnitId && understood.understanding.unitReference && unitFacts?.id) {
-        state = { ...state, selectedUnitId: unitFacts.id };
+      const referencedToolResult = toolResults.find((result) => ["GET_UNIT_FACTS", "GET_PAYMENT_PLAN", "GET_AVAILABILITY", "GET_MEDIA"].includes(result.tool) && result.ok)?.data as {
+        id?: string;
+        unitId?: string;
+        unit?: { id?: string };
+      } | undefined;
+      const referencedUnitId = referencedToolResult?.unit?.id ?? referencedToolResult?.unitId ?? referencedToolResult?.id;
+      if (understood.understanding.unitReference && referencedUnitId) {
+        state = { ...state, selectedUnitId: referencedUnitId };
       }
 
       const proposedActions = control.action ? [] : this.actionPolicy.propose(understood.understanding, state)
