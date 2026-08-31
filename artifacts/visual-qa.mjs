@@ -9,13 +9,13 @@ const output = new URL("./visual-qa/", import.meta.url);
 await mkdir(output, { recursive: true });
 
 const properties = [
-  { id:"u-east", externalUnitId:"EG-301", unitType:"Apartment", bedrooms:3, bathrooms:3, builtUpArea:165, price:7_900_000, currency:"EGP", status:"AVAILABLE", deliveryDate:"2028-12-31", project:{name:"East Gardens",location:{name:"التجمع الخامس"}}, media:[], paymentPlans:[{durationMonths:96,downPaymentPercent:10,currency:"EGP"}] },
-  { id:"u-cairo", externalUnitId:"CH-155", unitType:"Apartment", bedrooms:3, bathrooms:2, builtUpArea:155, price:8_800_000, currency:"EGP", status:"AVAILABLE", deliveryDate:"2029-12-31", project:{name:"Cairo Heights",location:{name:"القاهرة الجديدة"}}, media:[], paymentPlans:[{durationMonths:84,downPaymentPercent:15,currency:"EGP"}] },
+  { id:"u-east", externalUnitId:"EG-301", unitType:"Apartment", bedrooms:3, bathrooms:3, builtUpArea:165, price:7_900_000, currency:"EGP", status:"AVAILABLE", deliveryDate:"2028-12-31", project:{name:"East Gardens",location:{name:"التجمع الخامس"}}, media:[], paymentPlans:[{durationMonths:96,downPaymentPercent:0.10,currency:"EGP"}] },
+  { id:"u-cairo", externalUnitId:"CH-155", unitType:"Apartment", bedrooms:3, bathrooms:2, builtUpArea:155, price:8_800_000, currency:"EGP", status:"AVAILABLE", deliveryDate:"2029-12-31", project:{name:"Cairo Heights",location:{name:"القاهرة الجديدة"}}, media:[], paymentPlans:[{durationMonths:84,downPaymentPercent:0.15,currency:"EGP"}] },
 ];
 const ui = [{type:"PROPERTY_RESULTS",data:{properties}},{type:"PROPERTY_COMPARISON",data:{properties}}];
 const messages = [
   {id:"m1",role:"USER",content:"أنا بدور على شقة 3 غرف في التجمع لحد 10 مليون.",createdAt:new Date().toISOString()},
-  {id:"m2",role:"ASSISTANT",content:"لقيتلك اختيارين مناسبين من المخزون الموثق. الأول أقوى في القيمة مقابل السعر: أكبر بـ10 متر، أرخص بـ900 ألف، وكمان فيه حمام زيادة.",toolPayload:{type:"nadim_v2",ui},createdAt:new Date().toISOString()},
+  {id:"m2",role:"ASSISTANT",content:"لقيتلك اختيارين مناسبين 👇",toolPayload:{type:"nadim_v2",ui},createdAt:new Date().toISOString()},
 ];
 
 async function mock(page) {
@@ -64,7 +64,7 @@ for (const target of [
     await page.waitForTimeout(900);
   }
   await page.screenshot({path:fileURLToPath(new URL(`${target.name}.png`,output)),fullPage:true});
-  const metrics = await page.evaluate(() => ({scrollWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth,dir:document.documentElement.dir,lang:document.documentElement.lang}));
+  const metrics = await page.evaluate(() => ({scrollWidth:document.documentElement.scrollWidth,clientWidth:document.documentElement.clientWidth,dir:document.documentElement.dir,lang:document.documentElement.lang,badFractionalPercent:document.body.innerText.includes("0.1%")||document.body.innerText.includes("0.15%"),hasNormalizedPercent:document.body.innerText.includes("10%")&&document.body.innerText.includes("15%")}));
   findings.push({target:target.name,metrics,errors});
   if(target.name==="chat-desktop-rtl") {
     await page.getByRole("button",{name:"Switch to English"}).click();
@@ -74,4 +74,4 @@ for (const target of [
 }
 await browser.close();
 await writeFile(new URL("findings.json",output),JSON.stringify(findings,null,2));
-if(findings.some(item=>item.errors.length||item.metrics.scrollWidth>item.metrics.clientWidth)) process.exitCode=1;
+if(findings.some(item=>item.errors.length||item.metrics.scrollWidth>item.metrics.clientWidth||item.metrics.badFractionalPercent||(item.target.startsWith("chat-")&&!item.metrics.hasNormalizedPercent))) process.exitCode=1;

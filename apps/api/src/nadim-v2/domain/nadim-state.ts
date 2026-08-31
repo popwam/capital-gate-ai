@@ -14,6 +14,16 @@ export type NadimSearchState = {
   budgetMin?: number;
   budgetMax?: number;
   currency?: string;
+  budget?: {
+    originalAmount: number;
+    originalCurrency: string;
+    normalizedAmount?: number;
+    normalizedCurrency?: "EGP";
+    fxRate?: number;
+    fxAsOf?: string;
+    fxSource?: string;
+    fxStatus: "VERIFIED" | "UNAVAILABLE";
+  };
   downPaymentMax?: number;
   installmentMonths?: number;
   installmentPreference?: "INSTALLMENTS" | "LONG_TERM";

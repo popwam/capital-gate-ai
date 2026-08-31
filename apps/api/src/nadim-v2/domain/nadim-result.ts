@@ -43,6 +43,10 @@ export type NadimTurnResult = {
     brainExecution: "PRIMARY_AI" | "SECONDARY_AI" | "DETERMINISTIC_OUTAGE_FALLBACK" | "DETERMINISTIC_POLICY";
     fallbackStage: "NONE" | "UNDERSTAND" | "TOOL_LOOP" | "COMPOSE" | "PROVIDER_OUTAGE";
     providerLatencyMs: number;
+    databaseLatencyMs?: number;
+    toolLatencyMs?: number;
+    actionLatencyMs?: number;
+    compositionLatencyMs?: number;
     providerErrorCategory?: string;
     contextUsed: string[];
     actionDecision: "EXECUTE" | "PROPOSE" | "NO_ACTION" | "SUPPRESS";

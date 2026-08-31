@@ -80,7 +80,16 @@ function amount(raw: string, scale?: string, implicitMillions = false) {
   const value = Number(raw.replace(/,/gu, ""));
   if (!Number.isFinite(value) || value < 0) return undefined;
   if (/^(?:مليون|million|m)$/iu.test(scale ?? "") || (implicitMillions && value <= 500)) return value * 1_000_000;
+  if (/^(?:ألف|الف|thousand|k)$/iu.test(scale ?? "")) return value * 1_000;
   return value;
+}
+
+function currencyCode(value: string) {
+  if (/(?:USD|دولار(?:\s+أمريكي)?)/iu.test(value)) return "USD";
+  if (/(?:SAR|ريال(?:\s+سعودي)?)/iu.test(value)) return "SAR";
+  if (/(?:AED|درهم(?:\s+إماراتي)?)/iu.test(value)) return "AED";
+  if (/(?:EGP|جنيه(?:\s+مصري)?)/iu.test(value)) return "EGP";
+  return undefined;
 }
 
 function ordinals(text: string) {
@@ -150,7 +159,7 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
   const lower = text.toLowerCase();
   const operations: StateOperation[] = [];
   const activeSearch = hasActiveSearch(state);
-  const modifyingSearch = /(?:خليها|خليه|خليهم|خلها|خلهم|نفس(?:ها|ه)?|نفس المواصفات|غي[ّ]?ر|عد[ّ]?ل|بدل|make it|make them|change|instead)/iu.test(text);
+  const modifyingSearch = /(?:خليها|خليه|خليهم|خلها|خلهم|زودها|زوّدها|نفس(?:ها|ه)?|نفس المواصفات|غي[ّ]?ر|عد[ّ]?ل|بدل|make it|make them|increase it|change|instead)/iu.test(text);
   const hasSearch = /(?:عايز|عاوز|أبي|ابي|أبغى|ابغى|ودي|بدور|دورلي|وريني|ابحث|find|show me|looking for|\bneed\b|search)/iu.test(text);
   const reset = /(?:ابد[أا]\s+(?:بحث|من جديد|من الأول|من الاول)|بحث جديد|نبدأ\s+من\s+(?:جديد|الأول|الاول)|سيب\s+اللي\s+فات|reset|new search|start over)/iu.test(text);
   const broadResetSearch = reset && /(?:امشي\s+(?:أي|اي)\s+حاجة|سيب\s+(?:كل\s+)?(?:الخيارات|المواصفات)\s+مفتوحة|anything|any(?:thing)?\s+(?:is\s+)?fine|search broadly)/iu.test(text);
@@ -176,6 +185,21 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
   if (maxBudget) {
     const value = amount(maxBudget[1], maxBudget[2], /(?:الميزانية|ميزانية)/u.test(maxBudget[0]));
     if (value !== undefined) operations.push({ operation: "SET", field: "budgetMax", value });
+  }
+  const explicitMoneyBudget = text.match(/(?:معايا|معي|ميزانيتي|ميزانية|budget(?:\s+(?:is|max))?|لحد|تحت|up\s+to|under|خليها|خليه|زودها|زوّدها|make\s+it|increase\s+it)\s*(?:ل[ـ-]?\s*)?(\d[\d,.]*)\s*(ألف|الف|thousand|k|مليون|million|m)?\s*(USD|SAR|AED|EGP|دولار(?:\s+أمريكي)?|ريال(?:\s+سعودي)?|درهم(?:\s+إماراتي)?|جنيه(?:\s+مصري)?)/iu);
+  const namedMillionBudget = explicitMoneyBudget ? undefined : text.match(/(?:معايا|معي|ميزانيتي|ميزانية|budget(?:\s+(?:is|max))?|لحد|تحت|up\s+to|under|خليها|خليه|زودها|زوّدها|make\s+it|increase\s+it)\s*(?:ل[ـ-]?\s*)?مليون\s*(USD|SAR|AED|EGP|دولار(?:\s+أمريكي)?|ريال(?:\s+سعودي)?|درهم(?:\s+إماراتي)?|جنيه(?:\s+مصري)?)/iu);
+  if (explicitMoneyBudget) {
+    const value = amount(explicitMoneyBudget[1], explicitMoneyBudget[2]);
+    const currency = currencyCode(explicitMoneyBudget[3]);
+    if (value !== undefined && currency) {
+      for (let index = operations.length - 1; index >= 0; index -= 1) {
+        if (["budgetMax", "currency"].includes(String(operations[index].field))) operations.splice(index, 1);
+      }
+      operations.push({ operation: "SET", field: "budgetMax", value }, { operation: "SET", field: "currency", value: currency });
+    }
+  } else if (namedMillionBudget) {
+    const currency = currencyCode(namedMillionBudget[1]);
+    if (currency) operations.push({ operation: "SET", field: "budgetMax", value: 1_000_000 }, { operation: "SET", field: "currency", value: currency });
   }
   const minBudget = text.match(/(?:من|ابتداء من|minimum|min(?:imum)?)\s*(\d[\d,.]*)\s*(مليون|million|m)/iu);
   if (minBudget) {
@@ -394,7 +418,7 @@ export class UnderstandingService {
         const operationsAllowed = decision.understood
           && decision.confidence >= 0.72
           && ["DISCOVERY", "STRUCTURED_REQUEST"].includes(decision.conversationalType);
-        const explicitIntentWins = ["MEDIA_REQUEST", "COMPARISON", "PRICE_QUESTION", "PAYMENT_PLAN_QUESTION", "AVAILABILITY_QUESTION", "LOCATION_QUESTION", "HUMAN_HANDOFF", "ASSISTANT_IDENTITY", "ASSISTANT_NATURE"].includes(deterministic.intent);
+        const explicitIntentWins = ["PROPERTY_SEARCH", "MODIFY_SEARCH", "MEDIA_REQUEST", "COMPARISON", "PRICE_QUESTION", "PAYMENT_PLAN_QUESTION", "AVAILABILITY_QUESTION", "LOCATION_QUESTION", "HUMAN_HANDOFF", "ASSISTANT_IDENTITY", "ASSISTANT_NATURE"].includes(deterministic.intent);
         const intent = explicitIntentWins
           ? deterministic.intent
           : !decision.understood
@@ -402,9 +426,22 @@ export class UnderstandingService {
           : decision.intent && decision.intent !== "UNKNOWN" ? decision.intent : "CONVERSATION";
         const stateQueries = decision.stateQueries;
         const stateQuery = stateQueries[0];
-        const operations = operationsAllowed && !stateQueries.length
-          ? decision.proposedStateOperations
-          : decision.proposedStateOperations.filter((operation) => operation.operation === "PRESERVE");
+        const equivalent = (left: StateOperation, right: StateOperation) => left.operation === right.operation
+          && left.field === right.field
+          && JSON.stringify(left.value)?.toLocaleLowerCase() === JSON.stringify(right.value)?.toLocaleLowerCase();
+        const deterministicFields = new Set(deterministic.operations
+          .filter((operation) => !decision.proposedStateOperations.some((candidate) => equivalent(operation, candidate)))
+          .map((operation) => operation.field));
+        const deterministicAdditions = deterministic.operations.filter((operation) => !decision.proposedStateOperations.some((candidate) => equivalent(operation, candidate)));
+        const operations = stateQueries.length
+          ? decision.proposedStateOperations.filter((operation) => operation.operation === "PRESERVE")
+          : [
+              ...(operationsAllowed ? decision.proposedStateOperations.filter((operation) => !deterministicFields.has(operation.field)) : []),
+              ...deterministicAdditions,
+            ];
+        const proposedToolCalls = deterministic.intent === "MEDIA_REQUEST"
+          ? decision.proposedToolCalls.filter((call) => call.tool === "GET_MEDIA" || (call.tool === "GET_LOCATION" && /(?:اللوكيشن|الموقع|location|map)/iu.test(message)))
+          : decision.proposedToolCalls;
         const understanding: NadimUnderstanding = {
           intent,
           confidence: decision.confidence,
@@ -427,7 +464,7 @@ export class UnderstandingService {
           conversationalType: decision.conversationalType,
           classificationSource: decision.intent ? "MODEL_STRUCTURED" : "MODEL_SEMANTIC",
           unknownReason: decision.understood ? undefined : decision.clarificationReason ?? "MODEL_COULD_NOT_INTERPRET",
-          proposedToolCalls: decision.proposedToolCalls,
+          proposedToolCalls: proposedToolCalls.length ? proposedToolCalls : ["PROPERTY_SEARCH", "MODIFY_SEARCH"].includes(intent) ? undefined : [],
           proposedActions,
           customerContextUpdates: Object.fromEntries(Object.entries(decision.customerContextUpdates)
             .filter(([key]) => /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(key))

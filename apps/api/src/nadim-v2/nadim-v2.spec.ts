@@ -816,6 +816,28 @@ test("property requirement is persisted before search and survives tool failure;
   } finally { if (enabled === undefined) delete process.env.NADIM_V2_ENABLED; else process.env.NADIM_V2_ENABLED = enabled; }
 });
 
+test("an explicit second villa requirement is activated and searched in the same turn", async () => {
+  const enabled = process.env.NADIM_V2_ENABLED; process.env.NADIM_V2_ENABLED = "true";
+  try {
+    const order: string[] = [];
+    const lifecycle: any = {
+      saveRequirement: async ({ allowNew, state: saved }: any) => { order.push("create-and-activate"); assert.equal(allowNew, true); assert.deepEqual(saved.search.propertyTypes, ["Villa"]); return { id: "villa-requirement" }; },
+      setRequirementStatus: async (_id: string, status: string) => { order.push(status); },
+      updateRequirementContext: async () => undefined,
+    };
+    const service = new NadimV2Service(
+      { replayIdempotent: async () => null, resolve: async () => ({ conversation: { id: "c1", mode: "AI" }, state: state({ search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 12_000_000, currency: "EGP" } }), conversationContext: { stage: "ACTIVE_SEARCH", recentTurns: [], customerContext: { activeRequirementId: "apartment-requirement", propertyRequirements: [] } } }), persist: async () => undefined } as any,
+      { understand: async () => ({ understanding: { intent: "PROPERTY_SEARCH", confidence: 1, operations: [{ operation: "SET", field: "locations", value: ["زايد"] }, { operation: "SET", field: "propertyTypes", value: ["Villa"] }, { operation: "SET", field: "budgetMax", value: 25_000_000 }, { operation: "SET", field: "currency", value: "EGP" }], ordinalReferences: [], actionRequested: false } }) } as any,
+      new StateEngineService(), new PlannerService(), { execute: async (searchPlan: any, current: NadimState) => { order.push("search"); assert.equal(searchPlan.steps[0]?.tool, "PROPERTY_SEARCH"); assert.deepEqual(current.search.locations, ["زايد"]); return [{ tool: "PROPERTY_SEARCH", ok: true, data: [{ id: "zayed-villa", unitType: "Villa", price: 24_000_000, currency: "EGP" }], latencyMs: 1 }]; } } as any,
+      { propose: () => [], execute: async () => [] } as any, { compose: async () => ({ reply: "لقيتلك اختيار مناسب", providerLatencyMs: 0 }) } as any,
+      undefined, undefined, undefined, lifecycle,
+    );
+    const result = await service.turn({ channel: "WEB", message: "عندي طلب تاني عايز فيلا في زايد تحت 25 مليون", locale: "ar-EG" });
+    assert.deepEqual(order, ["create-and-activate", "search", "MATCHED"]);
+    assert.deepEqual(result.state.lastResultIds, ["zayed-villa"]);
+  } finally { if (enabled === undefined) delete process.env.NADIM_V2_ENABLED; else process.env.NADIM_V2_ENABLED = enabled; }
+});
+
 test("controller accepts a trimmed header key and derives one from canonical metadata", async () => {
   const calls: any[] = [];
   const controller = new NadimV2Controller({ turn: async (...args: any[]) => { calls.push(args); return {}; } } as any);
@@ -1085,4 +1107,81 @@ test("saved requirement lists are answered from persisted customer context", asy
   assert.match(answer.reply, /2\. فيلا/u);
   assert.match(answer.reply, /12,000,000/u);
   assert.match(answer.reply, /25,000,000/u);
+});
+
+test("currency budgets retain their original amount and currency before verified FX", async () => {
+  for (const [message, expectedAmount, expectedCurrency] of [
+    ["معايا 300 ألف دولار وعايز شقة في التجمع", 300_000, "USD"],
+    ["ميزانيتي 250 ألف USD", 250_000, "USD"],
+    ["معايا مليون ريال سعودي", 1_000_000, "SAR"],
+    ["budget 500k AED", 500_000, "AED"],
+    ["ميزانيتي 15 مليون جنيه", 15_000_000, "EGP"],
+  ] as const) {
+    const intent = await understand(message);
+    const next = stateEngine.apply(state(), intent, { channel: "WEB" });
+    assert.equal(next.search.budgetMax, expectedAmount, message);
+    assert.equal(next.search.currency, expectedCurrency, message);
+  }
+  const usdState = stateEngine.apply(state(), await understand("معايا 300 ألف دولار وعايز شقة"), { channel: "WEB" });
+  const increased = stateEngine.apply(usdState, await understand("زودها لـ350 ألف دولار", usdState), { channel: "WEB" });
+  assert.equal(increased.search.budgetMax, 350_000);
+  assert.equal(increased.search.currency, "USD");
+  const changedCurrency = stateEngine.apply(increased, await understand("خليها 15 مليون جنيه", increased), { channel: "WEB" });
+  assert.equal(changedCurrency.search.budgetMax, 15_000_000);
+  assert.equal(changedCurrency.search.currency, "EGP");
+});
+
+test("independent action outcomes remain separate when one succeeds and one fails", async () => {
+  const previousBase = process.env.WEB_BASE_URL;
+  delete process.env.WEB_BASE_URL;
+  try {
+    const policy = new ActionPolicyService({ execute: async () => { throw new Error("not used"); } } as any, {
+      conversationTimezone: async () => "Africa/Cairo",
+      createFollowUp: async () => ({ id: "followup-1" }),
+      createToken: async () => ({ id: "share-1", token: "secret" }),
+      revokeToken: async () => undefined,
+    } as any);
+    const results = await policy.execute([
+      { type: "CREATE_FOLLOWUP", reason: "requested", payload: { temporal: { kind: "RELATIVE", amount: 30, unit: "MINUTE" } } },
+      { type: "CREATE_CONVERSATION_SHARE_LINK", reason: "requested", payload: {} },
+    ], { channel: "WEB", conversationId: "c1", requestId: "r1", state: state() });
+    assert.deepEqual(results.map((result) => [result.type, result.status]), [["CREATE_FOLLOWUP", "SUCCEEDED"], ["CREATE_CONVERSATION_SHARE_LINK", "FAILED"]]);
+  } finally {
+    if (previousBase === undefined) delete process.env.WEB_BASE_URL; else process.env.WEB_BASE_URL = previousBase;
+  }
+});
+
+test("property search uses only the verified normalized EGP budget and blocks unavailable FX", async () => {
+  let captured: any;
+  const executor = new ToolExecutorService({ searchProperties: async (intent: any) => { captured = intent; return []; } } as any, {} as any);
+  const converted = state({ search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], budgetMax: 300_000, currency: "USD", budget: { originalAmount: 300_000, originalCurrency: "USD", normalizedAmount: 15_000_000, normalizedCurrency: "EGP", fxRate: 50, fxAsOf: "2026-08-31T10:00:00.000Z", fxSource: "TEST_FX", fxStatus: "VERIFIED" } } });
+  const plan: any = { goal: "PROPERTY_SEARCH", steps: [{ tool: "PROPERTY_SEARCH", arguments: { limit: 5 } }] };
+  assert.equal((await executor.execute(plan, converted))[0].ok, true);
+  assert.equal(captured.budgetMax, 15_000_000);
+  assert.equal(captured.currency, "EGP");
+  captured = undefined;
+  const unavailable = state({ search: { ...converted.search, budget: { originalAmount: 300_000, originalCurrency: "USD", fxStatus: "UNAVAILABLE" } } });
+  const result = (await executor.execute(plan, unavailable))[0];
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, "FX_UNAVAILABLE");
+  assert.equal(captured, undefined);
+});
+
+test("structured media excludes location unless the current turn requested it", () => {
+  const result: any = [{ tool: "GET_MEDIA", ok: true, data: { media: [{ id: "photo" }], location: { latitude: 30, longitude: 31 } }, latencyMs: 1 }];
+  assert.deepEqual(buildNadimUi(result, []).map((item) => item.type), ["MEDIA"]);
+  assert.deepEqual(buildNadimUi(result, [], { includeMediaLocation: true }).map((item) => item.type), ["MEDIA", "LOCATION"]);
+});
+
+test("Web structured replies introduce UI without duplicating property prose or raw links", async () => {
+  const current = state();
+  const property = { id: "u1", externalUnitId: "TEST-1", project: { name: "East Gardens" }, price: 7_900_000, currency: "EGP" };
+  const result = await composer.compose({
+    userMessage: "هات النتائج والرابط", understanding: { intent: "PROPERTY_SEARCH", confidence: 1, operations: [], ordinalReferences: [], actionRequested: true }, state: current,
+    plan: { goal: "PROPERTY_SEARCH", steps: [{ tool: "PROPERTY_SEARCH", arguments: {} }] },
+    toolResults: [{ tool: "PROPERTY_SEARCH", ok: true, data: [property], latencyMs: 1 }], proposedActions: [],
+    executedActions: [{ type: "CREATE_CONVERSATION_SHARE_LINK", status: "SUCCEEDED", message: "https://example.test/c/secret" }], structuredPresentation: true,
+  });
+  assert.match(result.reply, /اختيار مناسب/u);
+  assert.doesNotMatch(result.reply, /TEST-1|7,?900,?000|https?:\/\//u);
 });

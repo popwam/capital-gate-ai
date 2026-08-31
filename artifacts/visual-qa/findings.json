@@ -5,7 +5,9 @@
       "scrollWidth": 1440,
       "clientWidth": 1440,
       "dir": "rtl",
-      "lang": "ar"
+      "lang": "ar",
+      "badFractionalPercent": false,
+      "hasNormalizedPercent": true
     },
     "errors": []
   },
@@ -15,7 +17,9 @@
       "scrollWidth": 390,
       "clientWidth": 390,
       "dir": "rtl",
-      "lang": "ar"
+      "lang": "ar",
+      "badFractionalPercent": false,
+      "hasNormalizedPercent": true
     },
     "errors": []
   },
@@ -25,7 +29,9 @@
       "scrollWidth": 1440,
       "clientWidth": 1440,
       "dir": "rtl",
-      "lang": "ar"
+      "lang": "ar",
+      "badFractionalPercent": false,
+      "hasNormalizedPercent": false
     },
     "errors": []
   }

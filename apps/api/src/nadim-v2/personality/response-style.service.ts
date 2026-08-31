@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { customerPaymentPercent } from "../domain/payment-percentage";
 import { ExecutedAction, ProposedAction } from "../domain/nadim-action";
 import { CurrentSearchQueryTarget, StateOperation } from "../domain/nadim-intent";
 import { NadimState } from "../domain/nadim-state";
@@ -377,7 +378,8 @@ export class ResponseStyleService {
         FRANCO_ARABIC: `${plan.durationMonths} months`,
         MIXED_AR_EN: `${plan.durationMonths} months`,
       });
-      const facts = [plan.name, plan.downPaymentPercent != null ? `${plan.downPaymentPercent}%` : this.money(plan.downPaymentAmount, plan.currency, style), duration, this.money(plan.installmentAmount, plan.currency, style)].filter(Boolean);
+      const percent = customerPaymentPercent(plan.downPaymentPercent);
+      const facts = [plan.name, percent != null ? `${percent}%` : this.money(plan.downPaymentAmount, plan.currency, style), duration, this.money(plan.installmentAmount, plan.currency, style)].filter(Boolean);
       return `${index + 1}. ${facts.join(" · ")}`;
     });
     return [intro, ...lines].join("\n");

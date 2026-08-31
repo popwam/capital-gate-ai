@@ -15,6 +15,7 @@ import { NadimTurnDto } from "./dto/nadim-turn.dto";
 import { LanguageStyleDetectorService } from "./personality/language-style-detector.service";
 import { nadimTurnRequestHash, NadimConversationService } from "./persistence/nadim-conversation.service";
 import { CustomerLifecycleService } from "./product/customer-lifecycle.service";
+import { FxRateService } from "./product/fx-rate.service";
 
 function safeDiagnosticMeaning(value?: string) {
   if (!value) return undefined;
@@ -65,6 +66,16 @@ function stateFromRequirement(previous: any, requirement: Record<string, any>) {
       budgetMin: requirement.budgetMin ?? undefined,
       budgetMax: requirement.budgetMax ?? undefined,
       currency: requirement.currency ?? undefined,
+      budget: requirement.budgetOriginalAmount != null ? {
+        originalAmount: Number(requirement.budgetOriginalAmount),
+        originalCurrency: String(requirement.budgetOriginalCurrency ?? requirement.currency ?? "EGP"),
+        normalizedAmount: requirement.budgetNormalizedAmount == null ? undefined : Number(requirement.budgetNormalizedAmount),
+        normalizedCurrency: requirement.budgetNormalizedCurrency === "EGP" ? "EGP" : undefined,
+        fxRate: requirement.fxRate == null ? undefined : Number(requirement.fxRate),
+        fxAsOf: requirement.fxAsOf ? new Date(requirement.fxAsOf).toISOString() : undefined,
+        fxSource: requirement.fxSource ?? undefined,
+        fxStatus: requirement.budgetNormalizedAmount == null ? "UNAVAILABLE" : "VERIFIED",
+      } : undefined,
       purpose: requirement.purpose ?? undefined,
       installmentPreference: requirement.paymentPreference ?? undefined,
       deliveryMaxYears: delivery ? Number(delivery) : undefined,
@@ -94,6 +105,7 @@ export class NadimV2Service {
     @Optional() private readonly toolLoop?: ToolLoopService,
     @Optional() private readonly controls?: ConversationControlService,
     @Optional() private readonly lifecycle?: CustomerLifecycleService,
+    @Optional() private readonly fx?: FxRateService,
   ) {
     this.languageStyles = languageStyles ?? new LanguageStyleDetectorService();
   }
@@ -122,7 +134,9 @@ export class NadimV2Service {
       input = { ...input, conversationId: linked.conversationId, message: "Continue this existing conversation from WhatsApp." };
     }
 
+    const resolveStarted = Date.now();
     const resolved = await this.conversations.resolve(input);
+    const databaseLatencyMs = Date.now() - resolveStarted;
     const currentMode = (resolved.mode ?? resolved.conversation.mode ?? "AI") as NadimConversationMode;
     let claimedTurnId: string | undefined;
     if (idempotencyKey && requestHash) {
@@ -199,7 +213,8 @@ export class NadimV2Service {
         ? this.languageStyles.applySemanticRequest(brainInputState, understood.understanding.responseStyleRequest ?? undefined)
         : detectedState;
       const requirements = (resolved.conversationContext?.customerContext?.propertyRequirements ?? []) as Array<Record<string, any>>;
-      const requirementRequest = requestedRequirement(input.message, requirements);
+      const beginsIndependentRequirement = explicitlyStartsAnotherRequirement(input.message);
+      const requirementRequest = beginsIndependentRequirement ? undefined : requestedRequirement(input.message, requirements);
       let switchedRequirementId: string | undefined;
       if (requirementRequest && this.lifecycle) {
         if (requirementRequest.requirement?.id) {
@@ -221,7 +236,7 @@ export class NadimV2Service {
         }
       }
       const awaitingIndependentRequirement = resolved.state.pendingClarification?.reason === "NEW_REQUIREMENT_EXPECTED";
-      const startsIndependentRequirement = explicitlyStartsAnotherRequirement(input.message) || awaitingIndependentRequirement;
+      const startsIndependentRequirement = beginsIndependentRequirement || awaitingIndependentRequirement;
       const stateBeforeOperations = startsIndependentRequirement
         ? { ...styledPrevious, search: { locations: [], projects: [], developers: [], propertyTypes: [] }, selectedUnitId: undefined, selectedProjectId: undefined, comparisonUnitIds: [], lastResultIds: [], pendingClarification: undefined }
         : styledPrevious;
@@ -231,7 +246,8 @@ export class NadimV2Service {
         externalUserId: input.externalUserId,
         locale: input.locale,
       });
-      if (explicitlyStartsAnotherRequirement(input.message) && !this.hasRequirementCriteria(state)) {
+      state = await this.normalizeBudget(state);
+      if (beginsIndependentRequirement && !this.hasRequirementCriteria(state)) {
         state = { ...state, pendingClarification: { reason: "NEW_REQUIREMENT_EXPECTED" } };
       }
 
@@ -293,7 +309,9 @@ export class NadimV2Service {
         state = { ...state, selectedUnitId: unitFacts.id };
       }
 
-      const proposedActions = control.action ? [] : this.actionPolicy.propose(understood.understanding, state);
+      const proposedActions = control.action ? [] : this.actionPolicy.propose(understood.understanding, state)
+        .filter((action) => !(persistedRequirement && action.type === "SAVE_PROPERTY_REQUIREMENT"));
+      const actionStarted = Date.now();
       const externalActions = control.action ? [] : await this.actionPolicy.execute(proposedActions, {
         channel: input.channel,
         customerId: state.customerId,
@@ -304,6 +322,7 @@ export class NadimV2Service {
           : requestId,
         state,
       });
+      const actionLatencyMs = Date.now() - actionStarted;
       const executedActions: ExecutedAction[] = [...(control.executed ? [control.executed] : []), ...externalActions];
 
       const activeRequirementId = persistedRequirement?.id
@@ -313,6 +332,7 @@ export class NadimV2Service {
         await this.lifecycle.updateRequirementContext(resolved.conversation.id, String(activeRequirementId), state);
       }
 
+      const compositionStarted = Date.now();
       const composed = await this.composer.compose({
         userMessage: input.message,
         understanding: understood.understanding,
@@ -324,7 +344,9 @@ export class NadimV2Service {
         previousTurn: resolved.previousTurn,
         conversationContext: { ...resolved.conversationContext, mode },
         trace,
+        structuredPresentation: input.channel === "WEB",
       });
+      const compositionLatencyMs = Date.now() - compositionStarted;
       state = this.stateEngine.withAssistantWording(state, composed.reply);
 
       const primaryModel = understood.model;
@@ -335,6 +357,7 @@ export class NadimV2Service {
       const understoodMeaning = safeDiagnosticMeaning(understood.understanding.understoodMeaning);
       const toolDecision = plan.steps.length ? "EXECUTE" as const : plan.clarification ? "CLARIFY" as const : "NO_TOOL" as const;
       const latencyMs = Date.now() - started;
+      const toolLatencyMs = toolResults.reduce((sum, result) => sum + result.latencyMs, 0);
       const response: NadimTurnResult = {
         ok: true,
         version: "v2",
@@ -347,7 +370,7 @@ export class NadimV2Service {
         intent: { type: understood.understanding.intent, confidence: understood.understanding.confidence },
         state,
         results: verifiedResults,
-        ui: buildNadimUi(toolResults, executedActions),
+        ui: buildNadimUi(toolResults, executedActions, { includeMediaLocation: /(?:اللوكيشن|الموقع|location|map)/iu.test(input.message) }),
         proposedActions,
         executedActions,
         metadata: {
@@ -374,6 +397,10 @@ export class NadimV2Service {
             ? composed.providerErrorCategory ? "COMPOSE" : loop.providerErrorCategory ? "TOOL_LOOP" : primaryModel.fallbackUsed ? "UNDERSTAND" : "NONE"
             : "PROVIDER_OUTAGE",
           providerLatencyMs,
+          databaseLatencyMs,
+          toolLatencyMs,
+          actionLatencyMs,
+          compositionLatencyMs,
           providerErrorCategory,
           contextUsed: this.contextUsed(resolved),
           actionDecision: executedActions.length ? "EXECUTE" : proposedActions.length ? "PROPOSE" : "NO_ACTION",
@@ -414,7 +441,7 @@ export class NadimV2Service {
         });
       }
 
-      this.logger.log(`NadimV2Turn ${JSON.stringify({ requestId, conversationId: resolved.conversation.id, channel: input.channel, mode, brainProvider: primaryModel?.provider ?? "deterministic", brainModel: primaryModel?.model ?? null, brainExecution: response.metadata.brainExecution, providerErrorCategory: providerErrorCategory ?? null, fallbackStage: response.metadata.fallbackStage, understoodMeaning: understoodMeaning ?? null, responseGoal: understood.understanding.responseGoal ?? plan.goal, contextUsed: response.metadata.contextUsed, toolDecision, tools: plan.steps.map((step) => step.tool), toolIterations: loop.iterations, actionDecision: response.metadata.actionDecision, actions: executedActions.map((action) => ({ type: action.type, status: action.status, errorCode: action.errorCode })), success: true, latencyMs })}`);
+      this.logger.log(`NadimV2Turn ${JSON.stringify({ requestId, conversationId: resolved.conversation.id, channel: input.channel, mode, brainProvider: primaryModel?.provider ?? "deterministic", brainModel: primaryModel?.model ?? null, brainExecution: response.metadata.brainExecution, providerErrorCategory: providerErrorCategory ?? null, fallbackStage: response.metadata.fallbackStage, understoodMeaning: understoodMeaning ?? null, responseGoal: understood.understanding.responseGoal ?? plan.goal, contextUsed: response.metadata.contextUsed, toolDecision, tools: plan.steps.map((step) => step.tool), toolIterations: loop.iterations, actionDecision: response.metadata.actionDecision, actions: executedActions.map((action) => ({ type: action.type, status: action.status, errorCode: action.errorCode })), success: true, latencyMs, providerLatencyMs, databaseLatencyMs, toolLatencyMs, actionLatencyMs, compositionLatencyMs })}`);
       return response;
     } catch (error) {
       if (claimedTurnId) await this.conversations.markIdempotentFailed(claimedTurnId).catch(() => undefined);
@@ -425,6 +452,24 @@ export class NadimV2Service {
   private hasRequirementCriteria(state: { search: { locations: string[]; projects: string[]; developers: string[]; propertyTypes: string[]; bedrooms?: number; budgetMin?: number; budgetMax?: number } }) {
     const search = state.search;
     return Boolean(search.locations.length || search.projects.length || search.developers.length || search.propertyTypes.length || search.bedrooms != null || search.budgetMin != null || search.budgetMax != null);
+  }
+
+  private async normalizeBudget(state: any) {
+    const amount = state.search.budgetMax;
+    if (amount == null) return { ...state, search: { ...state.search, budget: undefined } };
+    const currency = String(state.search.currency ?? "EGP").toUpperCase();
+    const current = state.search.budget;
+    if (current?.originalAmount === amount && current?.originalCurrency === currency) return state;
+    if (currency === "EGP") {
+      return { ...state, search: { ...state.search, currency, budget: { originalAmount: amount, originalCurrency: currency, normalizedAmount: amount, normalizedCurrency: "EGP", fxRate: 1, fxAsOf: new Date().toISOString(), fxSource: "IDENTITY", fxStatus: "VERIFIED" } } };
+    }
+    try {
+      const budget = await this.fx?.normalize(amount, currency);
+      if (!budget) throw Object.assign(new Error("FX unavailable"), { code: "FX_UNAVAILABLE" });
+      return { ...state, search: { ...state.search, currency, budget } };
+    } catch {
+      return { ...state, search: { ...state.search, currency, budget: { originalAmount: amount, originalCurrency: currency, fxStatus: "UNAVAILABLE" } } };
+    }
   }
 
   private async executeToolLoop(plan: { goal: string; steps: any[]; clarification?: string }, state: any, decision: any, trace: any): Promise<ToolLoopResult> {

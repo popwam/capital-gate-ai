@@ -5,6 +5,7 @@ import { PropertySearchService } from "../../property-search.service";
 import { NadimPlan, NadimToolResult } from "../domain/nadim-plan";
 import { NadimSearchState, NadimState } from "../domain/nadim-state";
 import { DeterministicTimeService } from "./deterministic-time.service";
+import { normalizePaymentPlan } from "../domain/payment-percentage";
 
 function serialize<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -38,7 +39,7 @@ function compactUnit(unit: any) {
       id: unit.developer.id,
       name: unit.developer.nameAr ?? unit.developer.nameEn ?? unit.developer.brandName ?? unit.developer.name,
     } : null,
-    paymentPlans: Array.isArray(unit.paymentPlans) ? unit.paymentPlans.map((plan: any) => ({
+    paymentPlans: Array.isArray(unit.paymentPlans) ? unit.paymentPlans.map((plan: any) => normalizePaymentPlan({
       id: plan.id,
       name: plan.name,
       durationMonths: plan.durationMonths,
@@ -55,6 +56,9 @@ function compactUnit(unit: any) {
 }
 
 function searchIntent(search: NadimSearchState, locale: string): StructuredIntent {
+  if (search.currency && search.currency.toUpperCase() !== "EGP" && !search.budget?.normalizedAmount) {
+    throw Object.assign(new Error("Verified FX is required before searching EGP inventory"), { code: "FX_UNAVAILABLE" });
+  }
   return {
     language: locale,
     locations: search.locations,
@@ -66,8 +70,8 @@ function searchIntent(search: NadimSearchState, locale: string): StructuredInten
     builtUpAreaMin: search.areaMin,
     builtUpAreaMax: search.areaMax,
     budgetMin: search.budgetMin,
-    budgetMax: search.budgetMax,
-    currency: search.currency,
+    budgetMax: search.budget?.normalizedAmount ?? search.budgetMax,
+    currency: search.budget?.normalizedCurrency ?? search.currency,
     maxDownPayment: search.downPaymentMax,
     preferredPaymentDurationMonths: search.installmentMonths,
     softPreferences: search.installmentPreference === "LONG_TERM"
@@ -120,7 +124,7 @@ export class ToolExecutorService {
       if (!unit) throw Object.assign(new Error("Property not found"), { status: 404 });
       return compactUnit(unit);
     }
-    if (tool === "GET_PAYMENT_PLAN") return serialize(await this.properties.getPaymentPlans(String(args.unitId)));
+    if (tool === "GET_PAYMENT_PLAN") return serialize((await this.properties.getPaymentPlans(String(args.unitId))).map((plan: any) => normalizePaymentPlan(plan)));
     if (tool === "COMPARE_PROPERTIES") return (await this.properties.compareProperties((args.unitIds as string[]) ?? [])).map(compactUnit);
     if (tool === "GET_AVAILABILITY") {
       const unit = await this.properties.getProperty(String(args.unitId));
@@ -163,6 +167,7 @@ export class ToolExecutorService {
   }
 
   private errorCode(error: unknown) {
+    if ((error as { code?: string })?.code === "FX_UNAVAILABLE") return "FX_UNAVAILABLE";
     if ((error as { code?: string })?.code === "TIMEZONE_REQUIRED") return "TIMEZONE_REQUIRED";
     const status = (error as { status?: number; getStatus?: () => number })?.getStatus?.() ?? (error as { status?: number })?.status;
     if (status === 404) return "VERIFIED_DATA_NOT_FOUND";

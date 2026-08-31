@@ -24,6 +24,7 @@ import { GroqDialogueProvider } from "./providers/groq-dialogue.provider";
 import { NadimGatewayGuard } from "./security/nadim-gateway.guard";
 import { CustomerLifecycleController } from "./product/customer-lifecycle.controller";
 import { CustomerLifecycleService } from "./product/customer-lifecycle.service";
+import { FX_RATE_PROVIDER, FxRateService, HttpFxRateProvider } from "./product/fx-rate.service";
 
 @Module({
   imports: [DatabaseModule],
@@ -50,6 +51,9 @@ import { CustomerLifecycleService } from "./product/customer-lifecycle.service";
     NadimConversationService,
     NadimGatewayGuard,
     CustomerLifecycleService,
+    HttpFxRateProvider,
+    { provide: FX_RATE_PROVIDER, useExisting: HttpFxRateProvider },
+    FxRateService,
     NadimV2Service,
   ],
   exports: [DialogueModelService, CustomerLifecycleService],

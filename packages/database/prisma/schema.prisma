@@ -1073,6 +1073,13 @@ model PropertyRequirement {
   budgetMin              Decimal?                  @db.Decimal(16, 2)
   budgetMax              Decimal?                  @db.Decimal(16, 2)
   currency               String?
+  budgetOriginalAmount   Decimal?                  @db.Decimal(16, 2)
+  budgetOriginalCurrency String?
+  budgetNormalizedAmount Decimal?                  @db.Decimal(16, 2)
+  budgetNormalizedCurrency String?
+  fxRate                 Decimal?                  @db.Decimal(18, 8)
+  fxAsOf                 DateTime?
+  fxSource               String?
   paymentPreference      String?
   deliveryPreference     String?
   recentResultIds        String[]                  @default([])

@@ -75,6 +75,35 @@ test("the public understanding path is AI-first and intent remains optional meta
   assert.deepEqual(result.understanding.proposedToolCalls, []);
 });
 
+test("a healthy AI omission cannot suppress a clear new requirement search", async () => {
+  const model = dialogueDecision(decision({
+    understoodMeaning: "The customer has a second independent villa requirement.",
+    conversationalGoal: "SAVE_AND_SEARCH_NEW_REQUIREMENT",
+    conversationalType: "STRUCTURED_REQUEST",
+    intent: "PROPERTY_SEARCH",
+    proposedStateOperations: [],
+    proposedToolCalls: [],
+  }));
+  const understood = (await new UnderstandingService(model as any).understand("عندي طلب تاني عايز فيلا في زايد تحت 25 مليون", state())).understanding;
+  const next = new StateEngineService().apply(state(), understood, { channel: "WEB" });
+  assert.equal(next.search.propertyTypes[0], "Villa");
+  assert.deepEqual(next.search.locations, ["زايد"]);
+  assert.equal(next.search.budgetMax, 25_000_000);
+  assert.equal(new PlannerService().plan(understood, next).steps[0]?.tool, "PROPERTY_SEARCH");
+});
+
+test("an explicit Web human intent activates HUMAN even when the model omitted the control action", async () => {
+  let mode: string | undefined;
+  const controls = new ConversationControlService({ setMode: async (_id: string, next: string) => { mode = next; } } as any);
+  const result = await controls.apply({
+    conversationId: "web-conversation", mode: "AI", hasIdempotencyKey: true,
+    understanding: { intent: "HUMAN_HANDOFF", confidence: 0.95, operations: [], ordinalReferences: [], actionRequested: true, proposedActions: [] },
+  });
+  assert.equal(mode, "HUMAN");
+  assert.equal(result.mode, "HUMAN");
+  assert.equal(result.executed?.status, "SUCCEEDED");
+});
+
 test("multi-goal decisions combine capability, language, and search without an intent bottleneck", async () => {
   const model = dialogueDecision(decision({
     understoodMeaning: "The customer asks what Nadim can do, requests English, and asks for a verified apartment search.",
@@ -96,6 +125,21 @@ test("multi-goal decisions combine capability, language, and search without an i
   assert.equal(understood.responsePlan?.length, 3);
   assert.equal(plan.steps[0].tool, "PROPERTY_SEARCH");
   assert.deepEqual(next.search.locations, ["New Cairo"]);
+});
+
+test("independent comparison/payment and media/location goals remain in one bounded plan", () => {
+  const planner = new PlannerService();
+  const selected = state({ selectedUnitId: "unit-2", comparisonUnitIds: ["unit-1", "unit-2"] });
+  const comparison = planner.plan({
+    intent: "COMPARISON", confidence: 1, operations: [], ordinalReferences: [], actionRequested: false,
+    proposedToolCalls: [{ tool: "COMPARE_PROPERTIES", arguments: {} }, { tool: "GET_PAYMENT_PLAN", arguments: {} }],
+  }, selected);
+  assert.deepEqual(comparison.steps.map((step) => step.tool), ["COMPARE_PROPERTIES", "GET_PAYMENT_PLAN"]);
+  const media = planner.plan({
+    intent: "MEDIA_REQUEST", confidence: 1, operations: [], ordinalReferences: [], actionRequested: false,
+    proposedToolCalls: [{ tool: "GET_MEDIA", arguments: {} }, { tool: "GET_LOCATION", arguments: {} }],
+  }, selected);
+  assert.deepEqual(media.steps.map((step) => step.tool), ["GET_MEDIA", "GET_LOCATION"]);
 });
 
 test("multiple memory questions read deterministic state without inventory", async () => {

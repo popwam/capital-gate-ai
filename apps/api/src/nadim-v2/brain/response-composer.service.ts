@@ -27,6 +27,7 @@ type CompositionInput = {
   previousTurn?: { userMessage: string; assistantReply: string };
   conversationContext?: NadimConversationContext;
   trace?: { conversationId?: string; requestId?: string };
+  structuredPresentation?: boolean;
 };
 
 function dataOf(result?: NadimToolResult) {
@@ -64,6 +65,8 @@ export class ResponseComposerService {
     const fallback = this.deterministic(input);
     const requirementHistory = this.requirementHistoryAnswer(input);
     if (requirementHistory) return { reply: requirementHistory, providerLatencyMs: 0 };
+    const structuredReply = this.structuredWebReply(input);
+    if (structuredReply) return { reply: structuredReply, providerLatencyMs: 0 };
     const verifiedEmptySearch = this.verifiedEmptySearch(input);
     const searchResult = input.toolResults.find((result) => result.tool === "PROPERTY_SEARCH");
     if (!this.dialogue.available()) return { reply: fallback, providerErrorCategory: "NOT_CONFIGURED", providerLatencyMs: 0 };
@@ -128,6 +131,29 @@ export class ResponseComposerService {
     }
   }
 
+  private structuredWebReply(input: CompositionInput) {
+    if (!input.structuredPresentation || input.state.channel !== "WEB") return undefined;
+    if (this.isProximityQuestion(input.userMessage)) return undefined;
+    const arabic = input.state.languageStyle.preferredResponseStyle !== "EN_US";
+    const parts: string[] = [];
+    const search = input.toolResults.find((result) => result.tool === "PROPERTY_SEARCH" && result.ok && Array.isArray(result.data) && result.data.length);
+    const comparison = input.toolResults.find((result) => result.tool === "COMPARE_PROPERTIES" && result.ok && Array.isArray(result.data) && result.data.length);
+    const media = input.toolResults.find((result) => result.tool === "GET_MEDIA" && result.ok);
+    const payment = input.toolResults.find((result) => result.tool === "GET_PAYMENT_PLAN" && result.ok && Array.isArray(result.data) && result.data.length);
+    const links = input.executedActions.filter((action) => action.status === "SUCCEEDED" && ["CREATE_CONVERSATION_SHARE_LINK", "CREATE_WHATSAPP_HANDOFF_LINK"].includes(action.type));
+    if (!search && !comparison && !media && !payment && !links.length) return undefined;
+    if (search) parts.push(arabic ? `لقيتلك ${(search.data as any[]).length} اختيار مناسب 👇` : `I found ${(search.data as any[]).length} matching options:`);
+    if (comparison) parts.push(arabic ? "قارنت الاختيارات من البيانات الموثقة:" : "Here’s the verified comparison:");
+    if (media) parts.push(arabic ? "دي الصور الموثقة المتاحة:" : "Here are the available verified photos:");
+    if (payment) parts.push(arabic ? "دي خطط السداد الموثقة المتاحة:" : "Here are the available verified payment plans:");
+    for (const action of input.executedActions) {
+      if (action.status === "SUCCEEDED" && action.type === "CREATE_CONVERSATION_SHARE_LINK") parts.push(arabic ? "تقدر تفتح أو تشارك نفس المحادثة من الزر ده:" : "You can open or share this conversation using the button below:");
+      else if (action.status === "SUCCEEDED" && action.type === "CREATE_WHATSAPP_HANDOFF_LINK") parts.push(arabic ? "تقدر تكمل نفس المحادثة على واتساب من الزر ده:" : "Continue the same conversation on WhatsApp using the button below:");
+      else parts.push(this.responseStyle.actionResult(this.responseStyle.style(input.state), action));
+    }
+    return parts.join("\n");
+  }
+
   private requirementHistoryAnswer(input: CompositionInput) {
     const asksForAll = /(?:طلبات[يى]\s*(?:إيه|ايه|اي|ما\s+هي)|إيه\s+طلبات[يى]|what\s+are\s+my\s+(?:property\s+)?requirements|list\s+my\s+(?:property\s+)?requirements)/iu.test(input.userMessage);
     if (asksForAll) {
@@ -186,6 +212,9 @@ export class ResponseComposerService {
     if (input.plan.goal === "PROPERTY_SEARCH") {
       const result = input.toolResults.find((item) => item.tool === "PROPERTY_SEARCH");
       if (!result) return this.responseStyle.searchNotRun(style);
+      if (!result.ok && result.errorCode === "FX_UNAVAILABLE") return style === "EN_US"
+        ? "I kept your original budget, but I can’t search EGP inventory until a verified exchange rate is available. I won’t guess the conversion."
+        : "حفظت ميزانيتك بعملتها الأصلية، لكن مش هقدر أبحث في مخزون الجنيه قبل ما يتوفر سعر صرف موثّق، ومش هخمّن التحويل.";
       if (!result.ok || !Array.isArray(result.data)) return this.responseStyle.searchFailed(style);
       const change = input.understanding.intent === "MODIFY_SEARCH"
         ? this.responseStyle.operationSummary(style, input.state.lastOperations, input.state)

@@ -67,6 +67,8 @@ export class ConversationControlService {
     if (command) return command;
     const allowed = new Set<NadimControlAction>(["HUMAN_HANDOFF", "RETURN_TO_AI", "REQUEST_CONVERSATION_DELETION", "CONFIRM_CONVERSATION_DELETION"]);
     const proposed = understanding?.proposedActions?.find((item) => allowed.has(item.type as NadimControlAction));
-    return proposed?.type as NadimControlAction | undefined;
+    if (proposed) return proposed.type as NadimControlAction;
+    if (understanding?.intent === "HUMAN_HANDOFF" && understanding.actionRequested) return "HUMAN_HANDOFF";
+    return undefined;
   }
 }
