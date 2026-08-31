@@ -29,7 +29,7 @@ export abstract class OpenAICompatibleDialogueProvider implements DialogueProvid
           stream: options.stream ?? false,
           ...(options.jsonMode ? { response_format: { type: "json_object" } } : {}),
         }),
-        signal: AbortSignal.timeout(options.stream ? 60_000 : 35_000),
+        signal: AbortSignal.timeout(options.stream ? 45_000 : 18_000),
       });
     } catch {
       throw new DialogueProviderError(this.provider, "NETWORK");

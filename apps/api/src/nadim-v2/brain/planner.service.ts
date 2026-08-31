@@ -25,7 +25,7 @@ export class PlannerService {
         if (tool === "COMPARE_PROPERTIES" && !arguments_.unitIds) arguments_.unitIds = state.comparisonUnitIds;
         if (tool === "PROPERTY_SEARCH") arguments_.limit = Math.min(10, Math.max(1, Number(arguments_.limit ?? 5)));
         return [{ tool, arguments: arguments_ }];
-      }).slice(0, 2);
+      }).slice(0, 4);
       return { goal: understanding.responseGoal ?? understanding.intent, steps };
     }
     const selectedUnitId = state.selectedUnitId;

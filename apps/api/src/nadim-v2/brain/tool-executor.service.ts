@@ -116,7 +116,7 @@ export class ToolExecutorService {
     if (tool === "GET_UNIT_FACTS") {
       const unit = args.unitId
         ? await this.properties.getProperty(String(args.unitId))
-        : await this.properties.findUnitByExternalId(String(args.unitReference));
+        : await this.resolveRecentUnitReference(String(args.unitReference ?? ""), state);
       if (!unit) throw Object.assign(new Error("Property not found"), { status: 404 });
       return compactUnit(unit);
     }
@@ -143,10 +143,30 @@ export class ToolExecutorService {
     return null;
   }
 
+  private async resolveRecentUnitReference(reference: string, state: NadimState) {
+    const exact = reference ? await this.properties.findUnitByExternalId(reference) : null;
+    if (exact) return exact;
+    const normalized = reference.normalize("NFKC").toLocaleLowerCase().replace(/[أإآ]/gu, "ا").replace(/[^\p{L}\p{N}.]+/gu, " ").trim();
+    if (!normalized || !state.lastResultIds.length) return null;
+    const units = (await Promise.all(state.lastResultIds.slice(0, 10).map((id) => this.properties.getProperty(id).catch(() => null)))).filter(Boolean) as any[];
+    const numeric = normalized.match(/\b(\d+(?:\.\d+)?)\b/u)?.[1];
+    const candidates = units.filter((unit) => {
+      const project = String(unit.project?.nameAr ?? unit.project?.nameEn ?? unit.project?.name ?? "").normalize("NFKC").toLocaleLowerCase().replace(/[أإآ]/gu, "ا");
+      const external = String(unit.externalUnitId ?? "").toLocaleLowerCase();
+      const priceMillions = unit.price == null ? undefined : Number(unit.price) / 1_000_000;
+      return (external && normalized.includes(external))
+        || (project && (normalized.includes(project) || project.includes(normalized)))
+        || (numeric !== undefined && priceMillions !== undefined && Math.abs(priceMillions - Number(numeric)) < 0.001);
+    });
+    if (candidates.length > 1) throw Object.assign(new Error("Property reference is ambiguous"), { status: 409 });
+    return candidates[0] ?? null;
+  }
+
   private errorCode(error: unknown) {
     if ((error as { code?: string })?.code === "TIMEZONE_REQUIRED") return "TIMEZONE_REQUIRED";
     const status = (error as { status?: number; getStatus?: () => number })?.getStatus?.() ?? (error as { status?: number })?.status;
     if (status === 404) return "VERIFIED_DATA_NOT_FOUND";
+    if (status === 409) return "REFERENCE_AMBIGUOUS";
     return "TOOL_EXECUTION_FAILED";
   }
 }

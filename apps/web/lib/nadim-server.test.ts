@@ -74,6 +74,21 @@ test("the returned Nadim conversation id is sent on every following turn", async
   assert.equal(firstBody.conversationId, "nadim-existing");
 });
 
+test("structured Nadim UI survives the same-origin adapter and persistence payload", async () => {
+  let persisted: any;
+  const ui = [{ type: "PROPERTY_RESULTS", data: { properties: [{ id: "u1", project: { name: "East Gardens" } }] } }];
+  const result = await forwardNadimWebTurn({
+    legacyConversationId: "web-ui", deviceToken: "device-token-with-sufficient-length", message: "وريني", eventId: "ui-event",
+  }, async (url, init = {}) => {
+    if (String(url).endsWith("/v2/nadim/turn")) return Response.json({ conversationId: "nadim-ui", reply: "لقيت اختيار.", ui });
+    persisted = JSON.parse(String(init.body));
+    return Response.json({ id: "assistant-ui", role: "ASSISTANT", content: "لقيت اختيار.", toolPayload: { ui }, createdAt: new Date(0).toISOString() });
+  }, { NADIM_GATEWAY_SECRET: "server-secret", NADIM_API_URL: "http://private-api" });
+  assert.deepEqual(persisted.resultMetadata.ui, ui);
+  assert.deepEqual(result.ui, ui);
+  assert.deepEqual((result.message?.toolPayload as any).ui, ui);
+});
+
 test("browser code calls only the same-origin adapter and contains no gateway secret variable", () => {
   const client = readFileSync(new URL("./api.ts", import.meta.url), "utf8");
   assert.match(client, /fetch\("\/api\/nadim\/turn"/u);

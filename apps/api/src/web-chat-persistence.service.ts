@@ -48,6 +48,7 @@ export class WebChatPersistenceService {
         brainVersion: "v2",
         nadimConversationId: input.nadimConversationId,
         eventId: input.eventId,
+        ...(Array.isArray(input.resultMetadata?.ui) ? { ui: input.resultMetadata.ui } : {}),
         ...(input.resultMetadata ? { metadata: input.resultMetadata } : {}),
       })) as Prisma.InputJsonValue,
     });

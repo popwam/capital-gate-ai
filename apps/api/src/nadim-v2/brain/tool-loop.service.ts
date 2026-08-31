@@ -19,7 +19,7 @@ export type ToolLoopResult = {
 
 @Injectable()
 export class ToolLoopService {
-  private readonly maxIterations = 2;
+  private readonly maxIterations = 4;
 
   constructor(
     private readonly tools: ToolExecutorService,
@@ -35,6 +35,7 @@ export class ToolLoopService {
     let model: ToolLoopResult["model"];
     let providerLatencyMs = 0;
     let providerErrorCategory: string | undefined;
+    let continuationUsed = false;
 
     while (queue.length && iterations < this.maxIterations) {
       const step = queue.shift()!;
@@ -45,8 +46,13 @@ export class ToolLoopService {
       if (result) results.push(result);
       iterations += 1;
 
-      if (!decision || !this.dialogue.available() || iterations >= this.maxIterations) continue;
+      // A complete multi-tool plan already came from the primary brain. Running
+      // another model call between those independent tools adds latency and can
+      // accidentally discard one goal. A single bounded continuation remains
+      // available for genuinely result-dependent plans.
+      if (!decision || !this.dialogue.available() || continuationUsed || plan.steps.length > 1 || iterations >= this.maxIterations) continue;
       try {
+        continuationUsed = true;
         const continuation = await this.dialogue.continueAfterTools({
           originalDecision: finalDecision,
           deterministicState: state,

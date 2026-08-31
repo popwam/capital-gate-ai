@@ -223,10 +223,10 @@ export class NadimConversationService {
     });
     const requirements = customerId && typeof this.prisma.propertyRequirement?.findMany === "function"
       ? await this.prisma.propertyRequirement.findMany({
-          where: { customerId, status: { not: "CLOSED" } },
+          where: { customerId, conversationId: conversation.id, status: { not: "CLOSED" } },
           orderBy: { createdAt: "asc" },
           take: 10,
-          select: { id: true, title: true, purpose: true, propertyType: true, locations: true, bedrooms: true, bathrooms: true, budgetMin: true, budgetMax: true, currency: true, status: true, createdAt: true, updatedAt: true },
+          select: { id: true, title: true, purpose: true, propertyType: true, locations: true, preferredDevelopers: true, preferredProjects: true, bedrooms: true, bathrooms: true, areaMin: true, areaMax: true, budgetMin: true, budgetMax: true, currency: true, paymentPreference: true, deliveryPreference: true, recentResultIds: true, selectedUnitId: true, selectedProjectId: true, comparisonUnitIds: true, status: true, createdAt: true, updatedAt: true },
         })
       : [];
     const recentTurns = recentRows.reverse().map(recentTurnContext);
@@ -245,6 +245,8 @@ export class NadimConversationService {
           ...requirement,
           budgetMin: requirement.budgetMin == null ? null : Number(requirement.budgetMin),
           budgetMax: requirement.budgetMax == null ? null : Number(requirement.budgetMax),
+          areaMin: requirement.areaMin == null ? null : Number(requirement.areaMin),
+          areaMax: requirement.areaMax == null ? null : Number(requirement.areaMax),
         })),
       },
       pendingDeletion: plainObject(conversation.pendingDeletion) as NadimConversationContext["pendingDeletion"],

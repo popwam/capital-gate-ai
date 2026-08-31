@@ -27,7 +27,7 @@ export const STATE_FIELDS = [
 ] as const;
 export type StateField = (typeof STATE_FIELDS)[number];
 export type StateOperation = { operation: "SET" | "REMOVE" | "RESET" | "PRESERVE"; field?: StateField | "SEARCH"; value?: unknown };
-export const CURRENT_SEARCH_QUERY_TARGETS = [...STATE_FIELDS, "SEARCH", "SELECTED_RESULT"] as const;
+export const CURRENT_SEARCH_QUERY_TARGETS = [...STATE_FIELDS, "SEARCH", "SELECTED_RESULT", "PROPERTY_REQUIREMENTS"] as const;
 export type CurrentSearchQueryTarget = (typeof CURRENT_SEARCH_QUERY_TARGETS)[number];
 
 const OperationSchema = z.object({
@@ -38,7 +38,7 @@ const OperationSchema = z.object({
 
 const ReferenceResolutionSchema = z.object({
   expression: z.string().min(1).max(100),
-  resolvedAs: z.enum(["ACTIVE_SEARCH", "SEARCH_BUDGET", "SELECTED_UNIT", "SELECTED_PROJECT", "RECENT_RESULT", "RECENT_DIALOGUE", "CUSTOMER_CONTEXT", "UNRESOLVED"]),
+  resolvedAs: z.enum(["ACTIVE_SEARCH", "ACTIVE_REQUIREMENT", "PROPERTY_REQUIREMENT", "SEARCH_BUDGET", "SELECTED_UNIT", "SELECTED_PROJECT", "RECENT_RESULT", "RECENT_DIALOGUE", "CUSTOMER_CONTEXT", "UNRESOLVED"]),
   confidence: z.number().min(0).max(1),
 }).strict();
 

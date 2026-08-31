@@ -12,7 +12,7 @@ const StateOperationSchema = z.object({
 
 const ReferenceSchema = z.object({
   expression: z.string().min(1).max(100),
-  resolvedAs: z.enum(["ACTIVE_SEARCH", "SEARCH_BUDGET", "SELECTED_UNIT", "SELECTED_PROJECT", "RECENT_RESULT", "RECENT_DIALOGUE", "CUSTOMER_CONTEXT", "UNRESOLVED"]),
+  resolvedAs: z.enum(["ACTIVE_SEARCH", "ACTIVE_REQUIREMENT", "PROPERTY_REQUIREMENT", "SEARCH_BUDGET", "SELECTED_UNIT", "SELECTED_PROJECT", "RECENT_RESULT", "RECENT_DIALOGUE", "CUSTOMER_CONTEXT", "UNRESOLVED"]),
   confidence: z.number().min(0).max(1),
 }).strict();
 

@@ -15,7 +15,14 @@ export class StateEngineService {
     ].includes(understanding.intent)
       ? understanding.operations.filter((operation) => operation.operation === "PRESERVE")
       : understanding.operations;
+    const searchChanged = operations.some((operation) => operation.operation !== "PRESERVE");
     for (const operation of operations) state = this.applyOperation(state, operation);
+    if (searchChanged) {
+      state.selectedUnitId = undefined;
+      state.selectedProjectId = undefined;
+      state.comparisonUnitIds = [];
+      state.lastResultIds = [];
+    }
     state.channel = identity.channel;
     state.customerId = identity.customerId ?? state.customerId;
     state.externalUserId = identity.externalUserId ?? state.externalUserId;

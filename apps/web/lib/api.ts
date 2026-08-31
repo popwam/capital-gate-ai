@@ -2,7 +2,7 @@ const API_ROUTE = "/api/backend/v1";
 
 export type ApiConversation = { id: string; title: string | null; detectedLanguage?: string | null; nadimConversationId?: string | null; mode?: "AI" | "HUMAN" | "PAUSED"; createdAt: string; updatedAt: string; closed?: boolean; _count?: { messages: number } };
 export type ApiMessage = { id: string; role: "USER" | "ASSISTANT"; content: string; toolPayload?: Record<string, unknown> | null; createdAt: string };
-export type NadimWebTurnResponse = { conversationId: string; reply: string; message: ApiMessage | null; state?: { languageStyle?: { preferredResponseStyle?: string } }; suppressReply: boolean; mode: "AI" | "HUMAN" | "PAUSED"; deleted?: boolean };
+export type NadimWebTurnResponse = { conversationId: string; reply: string; message: ApiMessage | null; state?: { languageStyle?: { preferredResponseStyle?: string } }; ui?: unknown[]; suppressReply: boolean; mode: "AI" | "HUMAN" | "PAUSED"; deleted?: boolean };
 
 export type AdminMutationState = "saving" | "saved" | "error";
 export type AdminMutationDetail = { id: string; state: AdminMutationState; method: string; path: string; message?: string; requestId?: string };

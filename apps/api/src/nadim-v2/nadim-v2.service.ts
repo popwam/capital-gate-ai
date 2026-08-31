@@ -10,6 +10,7 @@ import { ToolLoopService, ToolLoopResult } from "./brain/tool-loop.service";
 import { UnderstandingResult, UnderstandingService } from "./brain/understanding.service";
 import { ExecutedAction, NadimConversationMode } from "./domain/nadim-action";
 import { NadimTurnResult } from "./domain/nadim-result";
+import { buildNadimUi } from "./domain/nadim-ui";
 import { NadimTurnDto } from "./dto/nadim-turn.dto";
 import { LanguageStyleDetectorService } from "./personality/language-style-detector.service";
 import { nadimTurnRequestHash, NadimConversationService } from "./persistence/nadim-conversation.service";
@@ -28,11 +29,52 @@ function explicitlyStartsAnotherRequirement(message: string) {
   return /(?:طلب\s+(?:تاني|ثاني|جديد|مستقل)|عندي\s+(?:كمان\s+)?طلب|كمان\s+(?:عايز|عاوز|أبي|ابغى)|another\s+(?:request|requirement)|separate\s+(?:request|requirement))/iu.test(message);
 }
 
-function requestedRequirementIndex(message: string) {
-  if (!/(?:ارجع|إرجع|كمل|كمّل|return|continue).{0,28}(?:طلب|requirement)/iu.test(message)) return undefined;
-  if (/(?:التاني|الثاني|second|فيلا|villa)/iu.test(message)) return 1;
-  if (/(?:الأول|الاول|first|شقة|apartment)/iu.test(message)) return 0;
-  return undefined;
+function normalizedReference(value: unknown) {
+  return String(value ?? "").normalize("NFKC").toLocaleLowerCase().replace(/[أإآ]/gu, "ا").replace(/ة/gu, "ه").replace(/[^\p{L}\p{N}.]+/gu, " ").trim();
+}
+
+function requestedRequirement(message: string, requirements: Array<Record<string, any>>) {
+  if (!/(?:ارجع|إرجع|كمل|كمّل|حوّل|حول|افتح|switch|return|continue|go\s+back).{0,36}(?:طلب|requirement)|(?:طلب|requirement).{0,24}(?:الأول|الاول|التاني|الثاني|first|second|شقة|فيلا|apartment|villa)/iu.test(message)) return undefined;
+  const text = normalizedReference(message);
+  const ordinal = /(?:الثاني|التاني|second)/iu.test(message) ? 2 : /(?:الاول|الأول|first)/iu.test(message) ? 1 : undefined;
+  if (ordinal) return { requirement: requirements[ordinal - 1], reason: requirements[ordinal - 1] ? undefined : "REQUIREMENT_REFERENCE_NOT_FOUND" };
+  const type = /(?:فيلا|villa)/iu.test(message) ? "villa" : /(?:شقه|شقة|apartment|flat)/iu.test(message) ? "apartment" : undefined;
+  const candidates = requirements.filter((requirement) => {
+    const propertyType = normalizedReference(requirement.propertyType);
+    const title = normalizedReference(requirement.title);
+    return type ? propertyType.includes(type) || title.includes(type) || (type === "apartment" && (propertyType.includes("شقه") || title.includes("شقه"))) || (type === "villa" && (propertyType.includes("فيلا") || title.includes("فيلا"))) : title.length > 2 && text.includes(title);
+  });
+  return candidates.length === 1
+    ? { requirement: candidates[0] }
+    : { reason: candidates.length > 1 ? "REQUIREMENT_REFERENCE_AMBIGUOUS" : "REQUIREMENT_REFERENCE_NOT_FOUND" };
+}
+
+function stateFromRequirement(previous: any, requirement: Record<string, any>) {
+  const delivery = String(requirement.deliveryPreference ?? "").match(/WITHIN_(\d+)_YEARS/u)?.[1];
+  return {
+    ...previous,
+    search: {
+      locations: Array.isArray(requirement.locations) ? requirement.locations : [],
+      projects: Array.isArray(requirement.preferredProjects) ? requirement.preferredProjects : [],
+      developers: Array.isArray(requirement.preferredDevelopers) ? requirement.preferredDevelopers : [],
+      propertyTypes: requirement.propertyType ? [String(requirement.propertyType)] : [],
+      bedrooms: requirement.bedrooms ?? undefined,
+      bathrooms: requirement.bathrooms ?? undefined,
+      areaMin: requirement.areaMin ?? undefined,
+      areaMax: requirement.areaMax ?? undefined,
+      budgetMin: requirement.budgetMin ?? undefined,
+      budgetMax: requirement.budgetMax ?? undefined,
+      currency: requirement.currency ?? undefined,
+      purpose: requirement.purpose ?? undefined,
+      installmentPreference: requirement.paymentPreference ?? undefined,
+      deliveryMaxYears: delivery ? Number(delivery) : undefined,
+    },
+    selectedUnitId: requirement.selectedUnitId ?? undefined,
+    selectedProjectId: requirement.selectedProjectId ?? undefined,
+    comparisonUnitIds: Array.isArray(requirement.comparisonUnitIds) ? requirement.comparisonUnitIds : [],
+    lastResultIds: Array.isArray(requirement.recentResultIds) ? requirement.recentResultIds : [],
+    pendingClarification: undefined,
+  };
 }
 
 @Injectable()
@@ -81,26 +123,6 @@ export class NadimV2Service {
     }
 
     const resolved = await this.conversations.resolve(input);
-    const requirementIndex = requestedRequirementIndex(input.message);
-    if (requirementIndex !== undefined && this.lifecycle) {
-      const requirements = (resolved.conversationContext.customerContext?.propertyRequirements ?? []) as Array<Record<string, any>>;
-      const requirement = requirements[requirementIndex];
-      if (requirement?.id) {
-        await this.lifecycle.activateRequirement(resolved.conversation.id, String(requirement.id));
-        resolved.state = {
-          ...resolved.state,
-          search: {
-            locations: Array.isArray(requirement.locations) ? requirement.locations : [], projects: [], developers: [],
-            propertyTypes: requirement.propertyType ? [String(requirement.propertyType)] : [],
-            bedrooms: requirement.bedrooms ?? undefined, bathrooms: requirement.bathrooms ?? undefined,
-            budgetMin: requirement.budgetMin ?? undefined, budgetMax: requirement.budgetMax ?? undefined,
-            currency: requirement.currency ?? undefined, purpose: requirement.purpose ?? undefined,
-          },
-          selectedUnitId: undefined, selectedProjectId: undefined, comparisonUnitIds: [], lastResultIds: [],
-        };
-        resolved.conversationContext.customerContext = { ...resolved.conversationContext.customerContext, activeRequirementId: requirement.id };
-      }
-    }
     const currentMode = (resolved.mode ?? resolved.conversation.mode ?? "AI") as NadimConversationMode;
     let claimedTurnId: string | undefined;
     if (idempotencyKey && requestHash) {
@@ -173,9 +195,31 @@ export class NadimV2Service {
         : detectedState;
       const understood = ownershipUnderstanding
         ?? await this.understanding.understand(input.message, brainInputState, trace, resolved.conversationContext);
-      const styledPrevious = understood.brainDecision
+      let styledPrevious = understood.brainDecision
         ? this.languageStyles.applySemanticRequest(brainInputState, understood.understanding.responseStyleRequest ?? undefined)
         : detectedState;
+      const requirements = (resolved.conversationContext?.customerContext?.propertyRequirements ?? []) as Array<Record<string, any>>;
+      const requirementRequest = requestedRequirement(input.message, requirements);
+      let switchedRequirementId: string | undefined;
+      if (requirementRequest && this.lifecycle) {
+        if (requirementRequest.requirement?.id) {
+          const requirement = await this.lifecycle.activateRequirement(resolved.conversation.id, String(requirementRequest.requirement.id));
+          styledPrevious = stateFromRequirement(styledPrevious, requirementRequest.requirement);
+          switchedRequirementId = String(requirement.id);
+          resolved.conversationContext.customerContext = { ...resolved.conversationContext.customerContext, activeRequirementId: requirement.id };
+          understood.understanding.intent = "CURRENT_SEARCH_QUERY";
+          understood.understanding.operations = [{ operation: "PRESERVE", field: "SEARCH" }];
+          understood.understanding.stateQuery = "SEARCH";
+          understood.understanding.stateQueries = ["SEARCH"];
+          understood.understanding.needsClarification = false;
+          understood.understanding.clarificationReason = undefined;
+          understood.understanding.responseGoal = "CONFIRM_ACTIVE_REQUIREMENT_AND_SUMMARIZE";
+        } else {
+          understood.understanding.needsClarification = true;
+          understood.understanding.clarificationReason = requirementRequest.reason;
+          understood.understanding.ambiguity = requirementRequest.reason;
+        }
+      }
       const awaitingIndependentRequirement = resolved.state.pendingClarification?.reason === "NEW_REQUIREMENT_EXPECTED";
       const startsIndependentRequirement = explicitlyStartsAnotherRequirement(input.message) || awaitingIndependentRequirement;
       const stateBeforeOperations = startsIndependentRequirement
@@ -215,7 +259,7 @@ export class NadimV2Service {
             externalUserId: input.externalUserId,
             state,
             status: "OPEN",
-            allowNew: startsIndependentRequirement || understood.understanding.intent === "PROPERTY_SEARCH",
+            allowNew: startsIndependentRequirement,
           })
         : undefined;
 
@@ -262,6 +306,13 @@ export class NadimV2Service {
       });
       const executedActions: ExecutedAction[] = [...(control.executed ? [control.executed] : []), ...externalActions];
 
+      const activeRequirementId = persistedRequirement?.id
+        ?? switchedRequirementId
+        ?? resolved.conversationContext?.customerContext?.activeRequirementId;
+      if (activeRequirementId && this.lifecycle && typeof (this.lifecycle as any).updateRequirementContext === "function") {
+        await this.lifecycle.updateRequirementContext(resolved.conversation.id, String(activeRequirementId), state);
+      }
+
       const composed = await this.composer.compose({
         userMessage: input.message,
         understanding: understood.understanding,
@@ -296,6 +347,7 @@ export class NadimV2Service {
         intent: { type: understood.understanding.intent, confidence: understood.understanding.confidence },
         state,
         results: verifiedResults,
+        ui: buildNadimUi(toolResults, executedActions),
         proposedActions,
         executedActions,
         metadata: {

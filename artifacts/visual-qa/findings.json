@@ -1,0 +1,32 @@
+[
+  {
+    "target": "chat-desktop-rtl",
+    "metrics": {
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "dir": "rtl",
+      "lang": "ar"
+    },
+    "errors": []
+  },
+  {
+    "target": "chat-mobile-rtl",
+    "metrics": {
+      "scrollWidth": 390,
+      "clientWidth": 390,
+      "dir": "rtl",
+      "lang": "ar"
+    },
+    "errors": []
+  },
+  {
+    "target": "dashboard-desktop-rtl",
+    "metrics": {
+      "scrollWidth": 1440,
+      "clientWidth": 1440,
+      "dir": "rtl",
+      "lang": "ar"
+    },
+    "errors": []
+  }
+]

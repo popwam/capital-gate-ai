@@ -77,12 +77,16 @@ export class CustomerLifecycleService {
       currency: search.currency,
       paymentPreference: search.installmentPreference,
       deliveryPreference: search.deliveryMaxYears == null ? undefined : `WITHIN_${search.deliveryMaxYears}_YEARS`,
+      recentResultIds: input.state.lastResultIds,
+      selectedUnitId: input.state.selectedUnitId,
+      selectedProjectId: input.state.selectedProjectId,
+      comparisonUnitIds: input.state.comparisonUnitIds,
       status: input.status ?? "OPEN" as PropertyRequirementStatus,
     };
     const previous = conversation?.activeRequirement;
-    const disjointLocations = Boolean(previous?.locations.length && search.locations.length && !previous.locations.some((item) => search.locations.includes(item)));
-    const disjointTypes = Boolean(previous?.propertyType && search.propertyTypes.length && !search.propertyTypes.includes(previous.propertyType));
-    const createNew = input.allowNew && Boolean(previous) && (disjointLocations || disjointTypes);
+    // `allowNew` is granted only for an explicit independent-requirement turn.
+    // Once granted, similarity must not collapse two customer briefs together.
+    const createNew = Boolean(input.allowNew && previous);
     const requirement = conversation?.activeRequirementId && !createNew
       ? await this.prisma.propertyRequirement.update({ where: { id: conversation.activeRequirementId }, data })
       : await this.prisma.propertyRequirement.create({ data });
@@ -92,6 +96,18 @@ export class CustomerLifecycleService {
 
   async setRequirementStatus(id: string, status: PropertyRequirementStatus) {
     return this.prisma.propertyRequirement.update({ where: { id }, data: { status } });
+  }
+
+  async updateRequirementContext(conversationId: string, requirementId: string, state: NadimState) {
+    return this.prisma.propertyRequirement.updateMany({
+      where: { id: requirementId, conversationId, status: { not: "CLOSED" } },
+      data: {
+        recentResultIds: state.lastResultIds,
+        selectedUnitId: state.selectedUnitId ?? null,
+        selectedProjectId: state.selectedProjectId ?? null,
+        comparisonUnitIds: state.comparisonUnitIds,
+      },
+    });
   }
 
   async activateRequirement(conversationId: string, requirementId: string) {

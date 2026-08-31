@@ -12,6 +12,7 @@ import { UnderstandingService } from "./brain/understanding.service";
 import { NadimUnderstanding } from "./domain/nadim-intent";
 import { conversationStage, NadimConversationContext, NadimRecentTurnContext } from "./domain/nadim-conversation-context";
 import { initialNadimState, NadimState } from "./domain/nadim-state";
+import { buildNadimUi } from "./domain/nadim-ui";
 import { NadimV2Controller } from "./nadim-v2.controller";
 import { NadimV2Service } from "./nadim-v2.service";
 import { NadimConversationService } from "./persistence/nadim-conversation.service";
@@ -127,6 +128,21 @@ test("6 budget modification preserves location and bedrooms", async () => {
   assert.deepEqual(second.search.locations, ["التجمع"]);
   assert.equal(second.search.bedrooms, 3);
   assert.equal(second.search.budgetMax, 10_000_000);
+});
+
+test("criteria changes invalidate stale result, selection, and comparison context", async () => {
+  const previous = state({
+    search: { locations: ["التجمع"], projects: [], developers: [], propertyTypes: ["Apartment"], bedrooms: 3, budgetMax: 10_000_000 },
+    lastResultIds: ["old-1", "old-2"], selectedUnitId: "old-2", selectedProjectId: "project-old", comparisonUnitIds: ["old-1", "old-2"],
+  });
+  const intent = await understand("خلي الميزانية 12 مليون", previous);
+  const next = stateEngine.apply(previous, intent, { channel: "WEB" });
+  assert.equal(next.search.budgetMax, 12_000_000);
+  assert.deepEqual(next.lastResultIds, []);
+  assert.deepEqual(next.comparisonUnitIds, []);
+  assert.equal(next.selectedUnitId, undefined);
+  assert.equal(next.selectedProjectId, undefined);
+  assert.equal(planner.plan(intent, next).steps[0]?.tool, "PROPERTY_SEARCH");
 });
 
 test("7 removing location changes only that constraint", async () => {
@@ -1039,4 +1055,34 @@ test("pending delete confirmation and multi-intent requirement plus follow-up pr
   assert.equal(combined.intent, "PROPERTY_SEARCH");
   assert.ok(combined.operations.some((operation) => operation.field === "propertyTypes"));
   assert.equal(combined.proposedActions?.some((action) => action.type === "CREATE_FOLLOWUP"), true);
+  const followUpAndShare = await understand("تابع معايا بعد نص ساعة وهاتلي رابط المحادثة");
+  assert.deepEqual(new Set(followUpAndShare.proposedActions?.map((action) => action.type)), new Set(["CREATE_FOLLOWUP", "CREATE_CONVERSATION_SHARE_LINK"]));
+});
+
+test("structured UI is derived only from verified tool and successful action results", () => {
+  const properties = [{ id: "u1", project: { name: "East Gardens" }, price: 7_900_000 }];
+  const ui = buildNadimUi(
+    [{ tool: "PROPERTY_SEARCH", ok: true, data: properties, latencyMs: 1 }, { tool: "GET_MEDIA", ok: false, errorCode: "FAILED", latencyMs: 1 }],
+    [{ type: "CREATE_CONVERSATION_SHARE_LINK", status: "SUCCEEDED", message: "https://example.test/c/token" }],
+  );
+  assert.deepEqual(ui.map((item) => item.type), ["PROPERTY_RESULTS", "SHARE_LINK"]);
+  assert.deepEqual((ui[0] as any).data.properties, properties);
+});
+
+test("saved requirement lists are answered from persisted customer context", async () => {
+  const current = state();
+  const answer = await composer.compose({
+    userMessage: "طلباتى إيه؟",
+    understanding: { intent: "CURRENT_SEARCH_QUERY", confidence: 1, operations: [], ordinalReferences: [], actionRequested: false },
+    state: current,
+    plan: { goal: "CURRENT_SEARCH_QUERY", steps: [] }, toolResults: [], proposedActions: [], executedActions: [],
+    conversationContext: { stage: "DISCOVERY", recentTurns: [], customerContext: { propertyRequirements: [
+      { propertyType: "Apartment", bedrooms: 3, locations: ["التجمع"], budgetMax: 12_000_000, currency: "EGP" },
+      { propertyType: "Villa", locations: ["زايد"], budgetMax: 25_000_000, currency: "EGP" },
+    ] } },
+  });
+  assert.match(answer.reply, /1\. شقة/u);
+  assert.match(answer.reply, /2\. فيلا/u);
+  assert.match(answer.reply, /12,000,000/u);
+  assert.match(answer.reply, /25,000,000/u);
 });

@@ -129,28 +129,42 @@ export class ResponseComposerService {
   }
 
   private requirementHistoryAnswer(input: CompositionInput) {
+    const asksForAll = /(?:طلبات[يى]\s*(?:إيه|ايه|اي|ما\s+هي)|إيه\s+طلبات[يى]|what\s+are\s+my\s+(?:property\s+)?requirements|list\s+my\s+(?:property\s+)?requirements)/iu.test(input.userMessage);
+    if (asksForAll) {
+      const requirements = (input.conversationContext?.customerContext?.propertyRequirements ?? []) as Array<Record<string, any>>;
+      if (!requirements.length) return input.state.languageStyle.preferredResponseStyle === "EN_US" ? "You don’t have a saved property requirement yet." : "لسه مفيش طلب عقاري محفوظ عندك.";
+      const lines = requirements.map((requirement, index) => `${index + 1}. ${this.requirementDescription(requirement)}`);
+      return input.state.languageStyle.preferredResponseStyle === "EN_US"
+        ? `You have ${requirements.length} saved ${requirements.length === 1 ? "requirement" : "requirements"}:\n${lines.join("\n")}`
+        : `عندك ${requirements.length === 1 ? "طلب واحد" : `طلبات عددهم ${requirements.length}`} دلوقتي:\n${lines.join("\n")}`;
+    }
     const match = input.userMessage.match(/(?:طلبي|الطلب)\s+(الأول|الاول|التاني|الثاني|first|second)/iu);
     if (!match) return undefined;
     const requirements = (input.conversationContext?.customerContext?.propertyRequirements ?? []) as Array<Record<string, any>>;
     const index = /(?:التاني|الثاني|second)/iu.test(match[1]) ? 1 : 0;
     const requirement = requirements[index];
     if (!requirement) return this.responseStyle.clarification(this.responseStyle.style(input.state), "REQUIREMENT_REFERENCE_NOT_FOUND");
-    const details = [
-      requirement.propertyType,
-      requirement.bedrooms != null ? `${requirement.bedrooms} غرف` : undefined,
-      ...(Array.isArray(requirement.locations) ? requirement.locations : []),
-      requirement.budgetMax != null ? `لحد ${Number(requirement.budgetMax).toLocaleString("en-US")} ${requirement.currency ?? ""}` : undefined,
-    ].filter(Boolean).join(" · ");
+    const details = this.requirementDescription(requirement);
     return input.state.languageStyle.preferredResponseStyle === "EN_US"
       ? `Your ${index === 0 ? "first" : "second"} requirement was: ${details}.`
       : `طلبك ${index === 0 ? "الأول" : "التاني"} كان: ${details}.`;
   }
 
+  private requirementDescription(requirement: Record<string, any>) {
+    const type = requirement.propertyType === "Apartment" ? "شقة" : requirement.propertyType === "Villa" ? "فيلا" : requirement.propertyType;
+    return [
+      type,
+      requirement.bedrooms != null ? `${requirement.bedrooms} غرف` : undefined,
+      ...(Array.isArray(requirement.locations) ? requirement.locations : []),
+      requirement.budgetMax != null ? `لحد ${Number(requirement.budgetMax).toLocaleString("en-US")} ${requirement.currency ?? ""}` : undefined,
+    ].filter(Boolean).join(" · ");
+  }
+
   private deterministic(input: CompositionInput) {
     const style = this.responseStyle.style(input.state);
     if (input.plan.clarification) return this.responseStyle.clarification(style, input.plan.clarification);
-    if (input.executedActions.length) return this.responseStyle.actionResult(style, input.executedActions[0]);
-    if (input.proposedActions.length) return this.responseStyle.proposedAction(style, input.proposedActions[0]);
+    if (input.executedActions.length) return input.executedActions.map((action) => this.responseStyle.actionResult(style, action)).join("\n");
+    if (input.proposedActions.length) return input.proposedActions.map((action) => this.responseStyle.proposedAction(style, action)).join("\n");
     if (input.understanding.intent === "GREETING") return this.responseStyle.greeting(style, input.state.revision <= 1, input.userMessage);
     if (input.understanding.intent === "ASSISTANT_IDENTITY") return this.responseStyle.assistantIdentity(style);
     if (input.understanding.intent === "ASSISTANT_NATURE") return this.responseStyle.assistantNature(style, input.state.languageStyle.regionalVariant);

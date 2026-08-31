@@ -102,6 +102,27 @@ test("a disjoint property brief creates a second requirement instead of overwrit
   assert.equal(result.id, "r2");
 });
 
+test("an explicitly new brief remains independent even when it resembles the active requirement", async () => {
+  let created = false;
+  const prisma: any = {
+    nadimConversation: {
+      findFirst: async () => ({ id: "c1", customerId: "customer" }),
+      update: async () => ({}),
+      findUnique: async () => ({ activeRequirementId: "r1", activeRequirement: { id: "r1", locations: ["New Cairo"], propertyType: "Apartment" } }),
+    },
+    propertyRequirement: {
+      create: async ({ data }: any) => { created = true; return { id: "r2", ...data }; },
+      update: async () => { throw new Error("an explicit new request must not overwrite the active requirement"); },
+    },
+  };
+  const service = new CustomerLifecycleService(prisma);
+  const state = initialNadimState({ channel: "WEB", locale: "en-US" });
+  state.search = { ...state.search, locations: ["New Cairo"], propertyTypes: ["Apartment"], bedrooms: 2 };
+  const result = await service.saveRequirement({ conversationId: "c1", channel: "WEB", state, allowNew: true });
+  assert.equal(created, true);
+  assert.equal(result.id, "r2");
+});
+
 test("a shared MEMBER can leave its web binding without deleting the owner's conversation", async () => {
   const operations: string[] = [];
   const prisma: any = {

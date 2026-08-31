@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowUp, Check, ChevronDown, Clock3, FileText,
-  MapPin, Menu, MessageSquareText,
+  ArrowUp, Bath, BedDouble, CalendarDays, Check, ChevronDown, Clock3, CreditCard, ExternalLink, FileText,
+  GitCompareArrows, ImageOff, Images, MapPin, Maximize2, Menu, MessageSquareText,
   MoreHorizontal, Plus, Search, Share2, ShieldCheck, Smartphone, Trash2, X
 } from "lucide-react";
 import { ApiMessage, conversationsApi, nadimWebApi } from "@/lib/api";
@@ -251,10 +251,15 @@ function MessageView({ message, onAction, isLast, isArabic }: { message:Message;
   const assistant = message.role === "assistant";
   const human = message.kind === "human_message" || message.payload?.author === "HUMAN";
   const actions = Array.isArray(message.payload?.uiActions) ? message.payload.uiActions : [];
-  const cards = actions.find((action:any) => action.type === "PROPERTY_CARDS")?.payload?.properties ?? [];
-  const photos = actions.find((action:any) => action.type === "PROJECT_PHOTOS")?.payload?.media ?? [];
+  const structuredUi = Array.isArray(message.payload?.ui) ? message.payload.ui : Array.isArray(message.payload?.metadata?.ui) ? message.payload.metadata.ui : [];
+  const cards = structuredUi.find((item:any) => item.type === "PROPERTY_RESULTS")?.data?.properties ?? actions.find((action:any) => action.type === "PROPERTY_CARDS")?.payload?.properties ?? [];
+  const comparison = structuredUi.find((item:any) => item.type === "PROPERTY_COMPARISON")?.data?.properties ?? [];
+  const mediaPayload = structuredUi.find((item:any) => item.type === "MEDIA")?.data;
+  const photos = mediaPayload?.media ?? actions.find((action:any) => action.type === "PROJECT_PHOTOS")?.payload?.media ?? [];
   const brochures = actions.find((action:any) => action.type === "PROJECT_BROCHURE")?.payload?.documents ?? [];
-  const location = actions.find((action:any) => action.type === "PROJECT_LOCATION")?.payload?.map;
+  const location = mediaPayload?.location ?? actions.find((action:any) => action.type === "PROJECT_LOCATION")?.payload?.map;
+  const shareLink = structuredUi.find((item:any) => item.type === "SHARE_LINK" || item.type === "WHATSAPP_LINK");
+  const paymentPlans = structuredUi.find((item:any) => item.type === "PAYMENT_PLANS")?.data?.plans ?? [];
   const distance = actions.find((action:any) => action.type === "DISTANCE_RESULT")?.payload;
   const contactAction = actions.find((action:any) => action.type === "CONTACT_REQUEST");
   const paymentAction = actions.find((action:any) => action.type === "PAYMENT_CHOICES");
@@ -265,9 +270,12 @@ function MessageView({ message, onAction, isLast, isArabic }: { message:Message;
     <div className={assistant ? "max-w-[94%] sm:max-w-[86%]" : "max-w-[88%] sm:max-w-[78%]"}>
       <div dir={textDirection(message.text)} className={assistant ? `chat-copy message-assistant pt-0.5 text-start text-[15px] leading-[1.85] sm:text-[16px] ${human ? "border-s-2 border-amber-600 ps-3" : ""}` : "chat-copy message-user rounded-[10px] px-3.5 py-2.5 text-start text-[14px] leading-[1.75] sm:text-[15px]"}><RichChatText text={message.text}/></div>
       {!!cards.length && <PropertyResults properties={cards} onAction={onAction} isArabic={isArabic}/>}
+      {!!comparison.length && <PropertyComparison properties={comparison} isArabic={isArabic}/>}
       {!!photos.length && <MediaGallery media={photos}/>}
       {!!brochures.length && <Documents documents={brochures}/>}
       {!!location && <MapResult map={location}/>}
+      {!!shareLink?.data?.url && <SecureLink url={shareLink.data.url} whatsapp={shareLink.type === "WHATSAPP_LINK"} isArabic={isArabic}/>}
+      {!!paymentPlans.length && <PaymentPlanList plans={paymentPlans} isArabic={isArabic}/>}
       {!!distance && <DistanceResult result={distance}/>}
       {!!paymentAction && <PaymentChoices action={paymentAction.payload} onAction={onAction} isArabic={isArabic}/>}
       {!!closedAction && <ConversationClosedNotice isArabic={isArabic}/>}
@@ -296,23 +304,53 @@ function PropertyResults({ properties, onAction, isArabic }: {properties:any[];o
     return [duration, dp ? (isArabic ? `مقدم ${dp}` : `DP ${dp}`) : null].filter(Boolean).join(" · ");
   };
 
-  return <div className="scrollbar-none mt-4 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2 pe-2">{properties.slice(0,5).map((property)=>{
+  return <div className="scrollbar-none mt-4 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-3 pe-2">{properties.slice(0,5).map((property,index)=>{
     const plan = paymentLabel(property);
-    return <div key={property.id} className="w-[min(340px,86vw)] shrink-0 snap-start rounded-xl border border-[var(--border-default)] bg-white p-4" dir={isArabic ? "rtl" : "ltr"}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0"><h3 className="truncate text-[15px] font-bold" dir="auto">{property.project?.name ?? (isArabic ? "مشروع موثق" : "Verified project")}</h3><p className="mt-1 flex items-center gap-1 text-[12px] text-[#6d7873]" dir="auto"><MapPin size={12}/> {property.project?.location?.name ?? (isArabic ? "الموقع غير متاح" : "Location unavailable")}</p></div>
-        <span className="shrink-0 rounded-md bg-[#e9f3ee] px-2 py-1 text-[10px] font-bold text-[#2c6a55]">{isArabic ? "موثقة" : "Verified"}</span>
+    const image = Array.isArray(property.media) ? property.media.find((item:any)=>item?.url && (!item.type || ["IMAGE","PHOTO","EXTERIOR","INTERIOR"].includes(item.type))) : null;
+    const label = humanPropertyLabel(property, isArabic);
+    const delivery = property.deliveryDate ? new Intl.DateTimeFormat(isArabic ? "ar-EG" : "en", { year:"numeric", month:"short" }).format(new Date(property.deliveryDate)) : null;
+    return <article key={property.id} className="property-card-enter w-[min(328px,88vw)] shrink-0 snap-start overflow-hidden rounded-2xl border border-[var(--border-default)] bg-white shadow-[0_6px_24px_rgba(27,48,40,.06)]" dir={isArabic ? "rtl" : "ltr"}>
+      <div className="relative aspect-[16/9] overflow-hidden bg-[#eef1ed]">{image?<img src={image.url} alt={image.altText || property.project?.name || (isArabic?"صورة عقار موثقة":"Verified property image")} className="h-full w-full object-cover"/>:<div className="grid h-full place-items-center text-[#8a9690]"><div className="text-center"><ImageOff className="mx-auto" size={25}/><span className="mt-2 block text-[11px]">{isArabic?"لا توجد صورة موثقة":"No verified image"}</span></div></div>}<span className="absolute end-3 top-3 rounded-lg bg-white/95 px-2 py-1 text-[10px] font-extrabold text-[#24624f] shadow-sm">{property.status ?? (isArabic?"موثقة":"Verified")}</span></div>
+      <div className="p-4">
+        <p className="text-[10px] font-bold text-[var(--ink-tertiary)]">{isArabic?`الاختيار ${index+1}`:`Option ${index+1}`}</p>
+        <h3 className="mt-1 truncate text-[16px] font-extrabold" dir="auto">{property.project?.name ?? (isArabic ? "مشروع موثق" : "Verified project")}</h3>
+        <p className="mt-1 flex items-center gap-1 text-[11px] text-[#68766f]" dir="auto"><MapPin size={12}/> {property.project?.location?.name ?? (isArabic ? "الموقع غير متاح" : "Location unavailable")}</p>
+        <p className="mt-3 text-[19px] font-black tracking-[-.03em] text-[#16845e]" dir="ltr">{money(property.price,property.currency)}</p>
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 border-y border-[var(--border-subtle)] py-3 text-[11px] text-[#45544e]">
+          <span className="inline-flex items-center gap-1"><BedDouble size={14}/>{property.bedrooms ?? "—"}</span><span className="inline-flex items-center gap-1"><Bath size={14}/>{property.bathrooms ?? "—"}</span><span className="inline-flex items-center gap-1"><Maximize2 size={14}/>{property.builtUpArea != null ? `${property.builtUpArea} ${isArabic?"م²":"m²"}` : "—"}</span>{delivery&&<span className="inline-flex items-center gap-1"><CalendarDays size={14}/>{delivery}</span>}
+        </div>
+        {plan&&<p className="mt-3 line-clamp-2 text-[11px] leading-5 text-[#5d6b65]">{plan}</p>}
+        <div className="mt-3 grid grid-cols-2 gap-1.5">
+          <button onClick={() => onAction(isArabic ? `عاوز تفاصيل الوحدة ${property.externalUnitId}` : `Show details for unit ${property.externalUnitId}`, isArabic ? `تفاصيل ${label}` : `Details for ${label}`)} className="min-h-11 rounded-lg bg-[#edf4f0] px-2 text-[11px] font-bold text-[#245f50]">{isArabic?"عرض التفاصيل":"View details"}</button>
+          <button onClick={() => onAction(isArabic ? `قارن الوحدة ${property.externalUnitId} مع الاختيارات المعروضة` : `Compare unit ${property.externalUnitId} with the shown options`)} className="min-h-11 rounded-lg border border-[var(--border-default)] px-2 text-[11px] font-bold"><GitCompareArrows className="me-1 inline" size={13}/>{isArabic?"مقارنة":"Compare"}</button>
+          <button onClick={() => onAction(isArabic ? `هات صور الوحدة ${property.externalUnitId}` : `Show photos for unit ${property.externalUnitId}`)} className="min-h-11 rounded-lg border border-[var(--border-default)] px-2 text-[11px] font-bold"><Images className="me-1 inline" size={13}/>{isArabic?"الصور":"Photos"}</button>
+          <button onClick={() => onAction(isArabic ? `نظام دفع الوحدة ${property.externalUnitId}` : `Payment plan for unit ${property.externalUnitId}`)} className="min-h-11 rounded-lg border border-[var(--border-default)] px-2 text-[11px] font-bold"><CreditCard className="me-1 inline" size={13}/>{isArabic?"نظام الدفع":"Payment plan"}</button>
+        </div>
       </div>
-      <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-y border-[var(--border-subtle)] py-3 text-[12px]">
-        <div><span className="block text-[10px] text-[var(--ink-tertiary)]">{isArabic ? "النوع" : "Type"}</span><b className="mt-0.5 block">{property.unitType ?? "—"}</b></div>
-        <div><span className="block text-[10px] text-[var(--ink-tertiary)]">{isArabic ? "السعر" : "Price"}</span><b className="mt-0.5 block">{money(property.price,property.currency)}</b></div>
-        <div><span className="block text-[10px] text-[var(--ink-tertiary)]">{isArabic ? "المساحة" : "Area"}</span><b className="mt-0.5 block">{property.builtUpArea != null ? `${property.builtUpArea} م²` : "—"}</b></div>
-        <div><span className="block text-[10px] text-[var(--ink-tertiary)]">{isArabic ? "السداد" : "Payment"}</span><b className="mt-0.5 block line-clamp-2">{plan ?? "—"}</b></div>
-      </div>
-      <button onClick={() => { const label = humanPropertyLabel(property, isArabic); onAction(isArabic ? `عاوز تفاصيل الوحدة ${property.externalUnitId}` : `Show details for unit ${property.externalUnitId}`, isArabic ? `تفاصيل ${label}` : `Details for ${label}`); }} className="mt-3 min-h-10 rounded-lg px-2 text-[12px] font-bold text-[var(--accent)] hover:bg-[var(--surface-inset)]">{isArabic ? "تفاصيل الوحدة" : "Unit details"}</button>
-    </div>;
+    </article>;
   })}</div>;
 }
+
+function PropertyComparison({properties,isArabic}:{properties:any[];isArabic:boolean}) {
+  if(properties.length<2)return null;
+  const money=(value:any,currency="EGP")=>value==null?"—":`${new Intl.NumberFormat("en",{notation:"compact",maximumFractionDigits:2}).format(Number(value))} ${currency}`;
+  const minPrice=Math.min(...properties.map(p=>Number(p.price)).filter(Number.isFinite));
+  const maxArea=Math.max(...properties.map(p=>Number(p.builtUpArea)).filter(Number.isFinite));
+  const maxBath=Math.max(...properties.map(p=>Number(p.bathrooms)).filter(Number.isFinite));
+  const cells=(p:any)=>[
+    p.project?.name??"—",p.builtUpArea!=null?`${p.builtUpArea} ${isArabic?"م²":"m²"}`:"—",p.bedrooms??"—",p.bathrooms??"—",money(p.price,p.currency),p.deliveryDate?new Intl.DateTimeFormat(isArabic?"ar-EG":"en",{year:"numeric",month:"short"}).format(new Date(p.deliveryDate)):"—"
+  ];
+  const labels=isArabic?["المشروع","المساحة","الغرف","الحمامات","السعر","التسليم"]:["Project","Area","Beds","Baths","Price","Delivery"];
+  const highlight=(p:any,i:number)=>i===1&&Number(p.builtUpArea)===maxArea||i===3&&Number(p.bathrooms)===maxBath||i===4&&Number(p.price)===minPrice;
+  return <section className="mt-4 overflow-hidden rounded-2xl border border-[var(--border-default)] bg-white shadow-[0_6px_24px_rgba(27,48,40,.05)]" aria-label={isArabic?"مقارنة العقارات":"Property comparison"}>
+    <div className="hidden overflow-x-auto sm:block"><table className="w-full min-w-[680px] border-collapse text-[12px]"><thead className="bg-[#f3f7f4] text-[#315e50]"><tr>{labels.map(label=><th key={label} className="border-b border-e border-[var(--border-default)] px-3 py-3 text-start font-extrabold last:border-e-0">{label}</th>)}</tr></thead><tbody>{properties.map(p=><tr key={p.id}>{cells(p).map((cell,i)=><td key={i} className={`border-b border-e border-[var(--border-subtle)] px-3 py-3 last:border-e-0 ${highlight(p,i)?"bg-emerald-50 font-extrabold text-emerald-800":""}`}>{cell}</td>)}</tr>)}</tbody></table></div>
+    <div className="divide-y sm:hidden">{properties.map((p,index)=><article key={p.id} className="p-4"><p className="text-[10px] font-bold text-[#738079]">{isArabic?`الاختيار ${index+1}`:`Option ${index+1}`}</p><h4 className="mt-1 font-extrabold">{p.project?.name??"—"}</h4><dl className="mt-3 grid grid-cols-2 gap-2 text-[11px]">{labels.slice(1).map((label,i)=><div key={label} className="rounded-lg bg-[#f7f8f5] p-2"><dt className="text-[#718079]">{label}</dt><dd className={`mt-1 font-bold ${highlight(p,i+1)?"text-emerald-700":""}`}>{cells(p)[i+1]}</dd></div>)}</dl></article>)}</div>
+  </section>;
+}
+
+function SecureLink({url,whatsapp,isArabic}:{url:string;whatsapp:boolean;isArabic:boolean}) { return <a href={url} target="_blank" rel="noreferrer" className="mt-3 flex min-h-12 items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 text-[12px] font-bold text-emerald-900"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white">{whatsapp?<Smartphone size={15}/>:<Share2 size={15}/>}</span><span className="min-w-0 flex-1">{whatsapp?(isArabic?"كمّل على واتساب":"Continue on WhatsApp"):(isArabic?"افتح رابط المحادثة الآمن":"Open secure conversation link")}</span><ExternalLink size={14}/></a>; }
+
+function PaymentPlanList({plans,isArabic}:{plans:any[];isArabic:boolean}) { return <section className="mt-3 rounded-2xl border border-[var(--border-default)] bg-white p-3" aria-label={isArabic?"خطط السداد":"Payment plans"}><h4 className="text-[12px] font-extrabold">{isArabic?"خطط السداد الموثقة":"Verified payment plans"}</h4><div className="mt-2 grid gap-2 sm:grid-cols-2">{plans.slice(0,4).map((plan,index)=><div key={plan.id??index} className="rounded-xl bg-[#f5f7f4] p-3 text-[11px]"><b className="block" dir="auto">{plan.name??(isArabic?`الخطة ${index+1}`:`Plan ${index+1}`)}</b><p className="mt-1 text-[#64716b]">{[plan.durationMonths?`${plan.durationMonths} ${isArabic?"شهر":"months"}`:null,plan.downPaymentPercent!=null?`${isArabic?"مقدم":"DP"} ${plan.downPaymentPercent}%`:null,plan.installmentAmount!=null?`${new Intl.NumberFormat("en").format(Number(plan.installmentAmount))} ${plan.currency??"EGP"}`:null].filter(Boolean).join(" · ")}</p></div>)}</div></section>; }
 
 function humanPropertyLabel(property:any,isArabic:boolean) {
   const area=property?.builtUpArea!=null?`${Number(property.builtUpArea)} ${isArabic?"م²":"m²"}`:null;
@@ -343,7 +381,7 @@ function ConversationClosedNotice({isArabic}:{isArabic:boolean}) { return <div c
 
 function MediaGallery({media}:{media:any[]}) { if(!media.length) return <EmptyAttachment label="No approved project images are available yet."/>; return <div className="mt-4 grid grid-cols-2 gap-2 rounded-[20px] border border-[#dcddd7] bg-white p-2" dir="ltr">{media.slice(0,6).map((item,index)=><a key={item.id} href={item.url} target="_blank" rel="noreferrer" className={`${index===0?"col-span-2 aspect-[16/9]":"aspect-square"} relative overflow-hidden rounded-[14px]`}><img src={item.url} alt={item.altText || "Project image"} className="h-full w-full object-cover"/></a>)}</div>; }
 function Documents({documents}:{documents:any[]}) { if(!documents.length) return <EmptyAttachment label="No approved brochure is available yet."/>; return <div className="mt-3 space-y-2">{documents.map(item=><a key={item.id} href={item.url} target="_blank" rel="noreferrer" className="flex w-full items-center gap-3 rounded-2xl border border-[#dcddd7] bg-white p-4 text-start shadow-sm" dir="ltr"><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#f7ded7] text-coral"><FileText size={19}/></div><div className="min-w-0 flex-1"><p className="truncate text-[11px] font-bold" dir="auto">{item.name}</p><p className="mt-1 text-[11px] text-[#89938f]">{item.mimeType} · Verified project document</p></div><ArrowUp className="rotate-45 text-[#73817a]" size={16}/></a>)}</div>; }
-function MapResult({map}:{map:any}) { if(!map) return <EmptyAttachment label="Verified map coordinates are not available yet."/>; return <a href={map.url} target="_blank" rel="noreferrer" className="mt-3 flex items-center gap-3 rounded-2xl border border-[#dcddd7] bg-white p-4"><div className="grid h-10 w-10 place-items-center rounded-xl bg-[#e2f0e9] text-forest"><MapPin size={18}/></div><div className="flex-1"><p className="text-[12px] font-bold">Open verified project location</p><p className="mt-1 text-[11px] text-[#89938f]">{String(map.latitude)}, {String(map.longitude)}</p></div><ArrowUp className="rotate-45" size={15}/></a>; }
+function MapResult({map}:{map:any}) { if(!map) return <EmptyAttachment label="Verified map coordinates are not available yet."/>; const href=map.url??(map.latitude!=null&&map.longitude!=null?`https://www.google.com/maps?q=${encodeURIComponent(`${map.latitude},${map.longitude}`)}`:null); if(!href)return <EmptyAttachment label="Verified map coordinates are not available yet."/>; return <a href={href} target="_blank" rel="noreferrer" className="mt-3 flex items-center gap-3 rounded-2xl border border-[#dcddd7] bg-white p-4"><div className="grid h-10 w-10 place-items-center rounded-xl bg-[#e2f0e9] text-forest"><MapPin size={18}/></div><div className="flex-1"><p className="text-[12px] font-bold">Open verified project location</p><p className="mt-1 text-[11px] text-[#89938f]">{String(map.latitude)}, {String(map.longitude)}</p></div><ArrowUp className="rotate-45" size={15}/></a>; }
 function DistanceResult({result}:{result:any}) {
   const route=result?.route; if(!route||route.source==="UNAVAILABLE") return null;
   const km=route.distanceKm ?? (route.routes?.[0]?.distanceMeters != null ? Number(route.routes[0].distanceMeters)/1000 : null);

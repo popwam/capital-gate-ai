@@ -1,6 +1,7 @@
 import type { ExecutedAction, ProposedAction } from "./nadim-action";
 import type { NadimState } from "./nadim-state";
 import type { NadimConversationMode } from "./nadim-action";
+import type { NadimUiPayload } from "./nadim-ui";
 
 export type NadimTurnResult = {
   ok: true;
@@ -17,6 +18,7 @@ export type NadimTurnResult = {
   };
   state: NadimState;
   results: unknown[];
+  ui?: NadimUiPayload[];
   proposedActions: ProposedAction[];
   executedActions: ExecutedAction[];
   metadata: {

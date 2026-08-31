@@ -34,6 +34,7 @@ export type NadimWebTurnResult = {
   mode: "AI" | "HUMAN" | "PAUSED";
   deleted?: boolean;
   state?: { languageStyle?: { preferredResponseStyle?: string } };
+  ui?: unknown[];
 };
 
 type ServerEnvironment = Record<string, string | undefined>;
@@ -48,6 +49,7 @@ type NadimUpstreamResult = {
   suppressReply?: unknown;
   mode?: unknown;
   deleted?: unknown;
+  ui?: unknown;
 };
 const rateWindows = new Map<string, RateWindow>();
 
@@ -147,12 +149,12 @@ function safeUpstreamError(status: number, body: unknown, requestId: string, sta
   return new NadimWebAdapterError(status, message, code, requestId, stage);
 }
 
-function synthesizedMessage(input: NadimWebTurnInput, reply: string) {
+function synthesizedMessage(input: NadimWebTurnInput, reply: string, ui?: unknown) {
   return {
     id: `nadim-${createHash("sha256").update(input.eventId).digest("hex").slice(0, 24)}`,
     role: "ASSISTANT" as const,
     content: reply,
-    toolPayload: { historyPersisted: false },
+    toolPayload: { historyPersisted: false, ...(Array.isArray(ui) ? { ui } : {}) },
     createdAt: new Date().toISOString(),
   };
 }
@@ -238,7 +240,7 @@ export async function forwardNadimWebTurn(
   const suppressReply = result.suppressReply === true;
   const mode = result.mode === "HUMAN" || result.mode === "PAUSED" ? result.mode : "AI";
   if (result.deleted === true) {
-    return { conversationId: result.conversationId, reply: result.reply, message: null, state: result.state, suppressReply: false, mode, deleted: true };
+    return { conversationId: result.conversationId, reply: result.reply, message: null, state: result.state, suppressReply: false, mode, deleted: true, ui: Array.isArray(result.ui) ? result.ui : undefined };
   }
 
   const persistUrl = `${apiUrl}/v1/internal/web-chat/persist`;
@@ -257,6 +259,7 @@ export async function forwardNadimWebTurn(
           languageStyle: result.state?.languageStyle,
           brainVersion: result.version,
           replayed: result.replayed,
+          ...(Array.isArray(result.ui) ? { ui: result.ui } : {}),
         },
       }),
       cache: "no-store",
@@ -264,16 +267,17 @@ export async function forwardNadimWebTurn(
     });
     const message = await persisted.json();
     if (!persisted.ok || !message) throw safeUpstreamError(persisted.status, message, persisted.headers.get("x-request-id") ?? requestId, "conversation_persist");
-    return { conversationId: result.conversationId, reply: result.reply, message: suppressReply ? null : message, state: result.state, suppressReply, mode };
+    return { conversationId: result.conversationId, reply: result.reply, message: suppressReply ? null : message, state: result.state, suppressReply, mode, ui: Array.isArray(result.ui) ? result.ui : undefined };
   } catch (error) {
     logNadimAdapterFailure(error, { stage: "conversation_persist", requestId, conversationId: result.conversationId, upstreamUrl: persistUrl });
     return {
       conversationId: result.conversationId,
       reply: result.reply,
-      message: suppressReply ? null : synthesizedMessage(input, result.reply),
+      message: suppressReply ? null : synthesizedMessage(input, result.reply, result.ui),
       state: result.state,
       suppressReply,
       mode,
+      ui: Array.isArray(result.ui) ? result.ui : undefined,
     };
   }
 }

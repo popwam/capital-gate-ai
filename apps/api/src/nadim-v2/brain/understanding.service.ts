@@ -410,7 +410,7 @@ export class UnderstandingService {
           confidence: decision.confidence,
           locale: decision.locale ?? undefined,
           operations,
-          ordinalReferences: [],
+          ordinalReferences: deterministic.ordinalReferences,
           unitReference: this.referenceArgument(decision, "unitReference"),
           projectReference: this.referenceArgument(decision, "projectReference"),
           actionRequested: deterministic.actionRequested,

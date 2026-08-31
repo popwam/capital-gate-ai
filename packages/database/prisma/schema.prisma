@@ -1075,6 +1075,10 @@ model PropertyRequirement {
   currency               String?
   paymentPreference      String?
   deliveryPreference     String?
+  recentResultIds        String[]                  @default([])
+  selectedUnitId         String?
+  selectedProjectId      String?
+  comparisonUnitIds      String[]                  @default([])
   notes                  String?
   status                 PropertyRequirementStatus @default(OPEN)
   activeForConversations NadimConversation[]       @relation("ActiveRequirement")
