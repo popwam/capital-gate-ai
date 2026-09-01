@@ -37,9 +37,17 @@ function fixture(options: { aiFails?: boolean; storageFails?: boolean; remembere
   let paymentPlansCreated = 0;
   let record: any;
   let storedBuffer: Buffer | undefined;
+  const projects = [
+    { id: "project-1", name: "Rai Valleys", canonicalName: "Rai Valleys", nameAr: null, nameEn: "Rai Valleys", developerId: "developer-1", locationId: "location-1", developer: { name: "Developer One", slug: "developer-one" }, location: { name: "New Cairo" }, phases: [{ id: "phase-1", code: "P1", name: "Phase 1", nameAr: "المرحلة الأولى", nameEn: "Phase 1", sortOrder: 0 }] },
+    { id: "project-2", name: "Kinda", canonicalName: "Kinda res.", nameAr: null, nameEn: "Kinda", developerId: "developer-2", locationId: "location-2", developer: { name: "Developer Two", slug: "developer-two" }, location: { name: "New Capital" }, phases: [{ id: "phase-2", code: "P2", name: "Phase 2", nameAr: "المرحلة الثانية", nameEn: "Phase 2", sortOrder: 0 }] },
+    { id: "project-3", name: "The Butterfly", canonicalName: "The Butterfly", nameAr: null, nameEn: "The Butterfly", developerId: "developer-3", locationId: "location-3", developer: { name: "Developer Three", slug: "developer-three" }, location: { name: "Mostakbal City" }, phases: [{ id: "phase-3", code: "P3", name: "Phase 3", nameAr: "المرحلة الثالثة", nameEn: "Phase 3", sortOrder: 0 }] },
+  ];
   const prisma: any = {
-    project: { findUnique: async ({where}:any={where:{id:"project-1"}}) => ({ id: where.id, developerId: where.id==="project-2"?"developer-2":"developer-1", locationId: where.id==="project-2"?"location-2":"location-1", developer: { slug: where.id==="project-2"?"developer-two":"developer-one" } }) },
-    projectPhase: { findMany: async () => [{ id: "phase-1", code: "PHASE-1", name: "Phase 1", nameAr: "المرحلة الأولى", nameEn: "Phase 1" }] },
+    project: {
+      findMany: async () => projects,
+      findUnique: async ({where}:any={where:{id:"project-1"}}) => projects.find(project=>project.id===where.id) ?? null,
+    },
+    projectPhase: { findMany: async ({where}:any={}) => (projects.find(project=>project.id===where?.projectId)?.phases ?? projects[0].phases), findFirst: async ({where}:any) => projects.flatMap(project=>project.phases).find(phase=>phase.id===where.id) ?? null },
     projectPhaseAlias: { findMany: async () => [] },
     developer: { findUnique: async ({where}:any={where:{id:"developer-1"}}) => ({ id: where.id, slug: where.id==="developer-2"?"developer-two":"developer-one" }) },
     location: { findUnique: async () => ({ id: "location-1" }) },
@@ -559,4 +567,76 @@ test("canonical readiness cannot report NEEDS_INPUT without an explicit blocker"
   assert.equal(readiness.canPreview, true);
   assert.equal(readiness.status, "READY");
   assert.equal(readiness.blockingReasons.length, 0);
+});
+
+test("production availability report resolves row-level projects, composite money and explicit status atomically", async () => {
+  const f = fixture();
+  f.units.push({
+    id: "existing-rai-unit",
+    developerId: "developer-1",
+    projectId: "project-1",
+    externalUnitId: "Rai Valleys - 88 - 137 - D",
+    price: "17000000",
+    currency: "EGP",
+    sourceMetadata: { verifiedSalesNote: "Keep this richer existing metadata" },
+    paymentPlans: [],
+    offers: [],
+  });
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([
+    { "Unit No.": "D", Building: "137", BUA: 206, "Garden Area": 63.9, "Roof Area": 14.9, Floors: "V", "No. of Bedrooms": 5, "Unit Name": "Rai Valleys - 88 - 137 - D", Project: "Rai Valleys", "Usage Types": "Villa", "Nominal Prices": "EGP 17,193,457.990000" },
+    { "Unit No.": "01", Building: "Kinda - 75 - MT05", BUA: 392.3, "Garden Area": 0, "Roof Area": "", Floors: "V", "No. of Bedrooms": 5, "Unit Name": "Kinda - 75 - MT05 - 01", Project: "Kinda res.", "Usage Types": "Villa", "Nominal Prices": "EGP 53,028,424.000000" },
+    { "Unit No.": "01", Building: "504", BUA: 240, "Garden Area": 220, "Roof Area": 39.5, Floors: "V", "No. of Bedrooms": 5, "Unit Name": "The Butterfly - 12 - 504 - 01", Project: "The Butterfly", "Usage Types": "Villa", "Nominal Prices": "EGP 35,880,479.720000" },
+  ]), "Availability");
+  let result: any = await f.service.analyze(file(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }), "availability.xlsx"), {});
+  const sheet = result.sheets[0];
+  assert.equal(sheet.mappings["Unit Name"], "externalUnitId");
+  assert.equal(sheet.mappings["Unit No."], "unitNumber");
+  assert.equal(sheet.mappings.Project, "project");
+  assert.equal(sheet.mappings["Nominal Prices"], "priceWithCurrency");
+  assert.equal(sheet.mappings.Floors, "__METADATA__");
+  assert.ok(result.issues.some((issue: any) => issue.field.endsWith(":projectValues")));
+  assert.ok(result.issues.some((issue: any) => issue.field.endsWith(":defaultStatus")));
+
+  result = await f.service.mapProjectValue(result.id, sheet.id, "Rai Valleys", "project-1", "phase-1");
+  result = await f.service.mapProjectValue(result.id, sheet.id, "Kinda res.", "project-2", "phase-2");
+  result = await f.service.mapProjectValue(result.id, sheet.id, "The Butterfly", "project-3", "phase-3");
+  result = await f.service.updateImportSheet(result.id, sheet.id, { defaultStatus: "AVAILABLE" });
+  assert.equal(result.workflow.canPreview, true);
+
+  result = await f.service.preview(result.id);
+  assert.equal(result.preview.distinctProjects, 3);
+  assert.equal(result.preview.readyRows, 3);
+  assert.equal(result.preview.sheets[0].appliedDefaultStatus, "AVAILABLE");
+  const confirmed: any = await f.service.confirm(result.id);
+  assert.equal(confirmed.result.created, 2);
+  assert.equal(confirmed.result.updated, 1);
+  assert.deepEqual(f.units.map((unit: any) => unit.projectId), ["project-1", "project-2", "project-3"]);
+  assert.equal(f.units[0].externalUnitId, "Rai Valleys - 88 - 137 - D");
+  assert.equal(String(f.units[0].price), "17193457.99");
+  assert.equal(f.units[1].gardenArea, 0);
+  assert.equal(f.units[1].roofArea, undefined);
+  assert.equal(f.units[0].bathrooms, undefined);
+  assert.equal(f.units[0].sourceMetadata.unitNumber, "D");
+  assert.equal(f.units[0].sourceMetadata.Floors, "V");
+  assert.equal(f.units[0].sourceMetadata.verifiedSalesNote, "Keep this richer existing metadata");
+});
+
+test("mixed-project identity blocks duplicates only inside the same resolved project", async () => {
+  const f = fixture();
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([
+    { "Unit Name": "SHARED-01", Project: "Rai Valleys", "Usage Types": "Villa", "Nominal Prices": "EGP 10,000,000" },
+    { "Unit Name": "SHARED-01", Project: "Rai Valleys", "Usage Types": "Villa", "Nominal Prices": "EGP 10,000,000" },
+    { "Unit Name": "SHARED-01", Project: "Kinda res.", "Usage Types": "Villa", "Nominal Prices": "EGP 11,000,000" },
+  ]), "Availability");
+  let result: any = await f.service.analyze(file(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }), "duplicates.xlsx"), {});
+  const sheet = result.sheets[0];
+  result = await f.service.mapProjectValue(result.id, sheet.id, "Rai Valleys", "project-1", "phase-1");
+  result = await f.service.mapProjectValue(result.id, sheet.id, "Kinda res.", "project-2", "phase-2");
+  result = await f.service.updateImportSheet(result.id, sheet.id, { defaultStatus: "AVAILABLE" });
+  result = await f.service.preview(result.id);
+  assert.equal(result.preview.sheets[0].duplicateIdentities, 1);
+  assert.equal(result.preview.canConfirm, false);
+  assert.equal(result.workflow.canConfirm, false);
 });

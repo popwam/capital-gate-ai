@@ -1,6 +1,6 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
-import { CANONICAL_FIELDS, CORE_UNIT_CANONICAL_VALUES, METADATA_CANONICAL_VALUES, customMetadataLabel, isCustomMetadataField, normalizeFinishing, parseDeliveryDurationYears, parseImportDate, parsePaymentPlanComponentHeader, parsePaymentPlanHeader, refineCanonicalFieldBySamples } from "./import-contract";
+import { CANONICAL_FIELDS, CANONICAL_FIELD_MAP, CORE_UNIT_CANONICAL_VALUES, METADATA_CANONICAL_VALUES, customMetadataLabel, isCustomMetadataField, normalizeFinishing, parseDeliveryDurationYears, parseImportDate, parseImportMoney, parsePaymentPlanComponentHeader, parsePaymentPlanHeader, refineCanonicalFieldBySamples } from "./import-contract";
 
 test("payment-plan columns parse years, months, decimals, Arabic and arbitrary durations", () => {
   assert.equal(parsePaymentPlanHeader("Properties Unit Price 8 Y")?.durationMonths, 96);
@@ -57,4 +57,22 @@ test("custom import fields can be typed instead of selected from the taxonomy", 
   assert.equal(isCustomMetadataField("META:Owner mobile"), true);
   assert.equal(customMetadataLabel("META:Owner mobile"), "Owner mobile");
   assert.equal(isCustomMetadataField("Owner mobile"), false);
+});
+
+test("combined money parser preserves exact decimal scale without floating-point conversion", () => {
+  assert.deepEqual(parseImportMoney("EGP 17,193,457.990000"), { ok: true, amount: "17193457.99", currency: "EGP" });
+  assert.deepEqual(parseImportMoney("53,028,424.000000 EGP"), { ok: true, amount: "53028424", currency: "EGP" });
+  assert.equal(parseImportMoney("17,000,000").ok, false);
+  assert.deepEqual(parseImportMoney("XYZ 17,000,000"), { ok: false, code: "UNSUPPORTED_CURRENCY" });
+  assert.deepEqual(parseImportMoney("EGP 10.123"), { ok: false, code: "TOO_MANY_DECIMALS" });
+});
+
+test("project and combined money are resolver/composite fields, not Unit columns", () => {
+  assert.equal(CANONICAL_FIELD_MAP.get("project")?.storage, "CONTEXT");
+  assert.equal(CANONICAL_FIELD_MAP.get("priceWithCurrency")?.storage, "COMPOSITE");
+  assert.equal(CORE_UNIT_CANONICAL_VALUES.includes("project"), false);
+  assert.equal(CANONICAL_FIELD_MAP.get("greaseTrap")?.type, "BOOLEAN");
+  assert.equal(CANONICAL_FIELD_MAP.get("greaseTrap")?.storage, "METADATA");
+  assert.equal(CANONICAL_FIELD_MAP.get("dockLeveler")?.type, "BOOLEAN");
+  assert.equal(CANONICAL_FIELD_MAP.get("dockLeveler")?.storage, "METADATA");
 });

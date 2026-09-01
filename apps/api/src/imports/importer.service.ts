@@ -46,6 +46,7 @@ import {
   normalizeFinishing,
   normalizeUnitType,
   PaymentPlanValueType,
+  parseImportMoney,
 } from "./import-contract";
 
 const IMPORT_PREVIEW_ENGINE_VERSION = 3;
@@ -59,6 +60,10 @@ const CRITICAL_MAPPINGS = new Set([
   "downPayment", "installmentYears", "installmentAmount",
 ]);
 const KNOWN: Record<string, string> = {
+  "unit name": "externalUnitId",
+  "unit: unit no.": "unitNumber",
+  "unit: unit no": "unitNumber",
+  "unit no.": "unitNumber",
   "unit no": "externalUnitId",
   "properties unit no.": "externalUnitId",
   "unit number": "externalUnitId",
@@ -70,9 +75,12 @@ const KNOWN: Record<string, string> = {
   "رقم الوحدة": "externalUnitId",
   type: "unitType",
   "unit type": "unitType",
+  "usage types": "unitType",
   "property type": "unitType",
   subtype: "unitSubType",
   bedrooms: "bedrooms",
+  "no. of bedrooms": "bedrooms",
+  "no of bedrooms": "bedrooms",
   beds: "bedrooms",
   br: "bedrooms",
   bathrooms: "bathrooms",
@@ -88,7 +96,9 @@ const KNOWN: Record<string, string> = {
   area: "builtUpArea",
   "land area": "landArea",
   garden: "gardenArea",
+  "garden area": "gardenArea",
   roof: "roofArea",
+  "roof area": "roofArea",
   terrace: "terraceArea",
   المساحة: "builtUpArea",
   "المساحة المبنية": "builtUpArea",
@@ -99,6 +109,8 @@ const KNOWN: Record<string, string> = {
   "standard price": "price",
   "properties standard unit price": "price",
   "total price": "price",
+  "nominal price": "priceWithCurrency",
+  "nominal prices": "priceWithCurrency",
   currency: "currency",
   status: "status",
   availability: "status",
@@ -121,6 +133,7 @@ const KNOWN: Record<string, string> = {
   discount: "discount",
   offer: "offerText",
   phase: "phase",
+  project: "project",
   cluster: "cluster",
   building: "building",
   floor: "floor",
@@ -160,6 +173,16 @@ type Analysis = {
   fileKey?: string;
 };
 type ImportContext = { requestId?: string; adminUserId?: string };
+type ProjectGroupContext = {
+  sourceValue: string;
+  projectId: string;
+  phaseId: string;
+  confirmedAt: string;
+};
+type SheetImportConfig = {
+  projectGroups?: Record<string, ProjectGroupContext>;
+  defaultStatus?: { value: (typeof AVAILABILITY_TYPES)[number]; confirmed: true; confirmedAt: string };
+};
 type ImportWorkflowStage =
   | "UPLOAD"
   | "ANALYZE"
@@ -213,19 +236,48 @@ export class ImporterService {
       .replace(/[^a-z0-9\u0600-\u06ff]+/giu, "")
       .trim();
   }
+  private normalizeProjectValue(v: string) {
+    return v.normalize("NFKC").toLowerCase().trim().replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  }
   private json<T>(value: T): any {
     return JSON.parse(JSON.stringify(value));
+  }
+
+  private sheetConfig(sheet: { mappingSources?: unknown }): SheetImportConfig {
+    const sources = (sheet.mappingSources ?? {}) as Record<string, unknown>;
+    const config = sources.__sheetConfig;
+    return config && typeof config === "object" ? (config as SheetImportConfig) : {};
+  }
+
+  private withSheetConfig(sheet: { mappingSources?: unknown }, config: SheetImportConfig) {
+    return this.json({ ...((sheet.mappingSources ?? {}) as Record<string, unknown>), __sheetConfig: config });
+  }
+
+  private projectSourceColumn(sheet: any) {
+    return Object.entries((sheet.mappings ?? {}) as Record<string, string>).find(([, target]) => target === "project")?.[0];
   }
 
   private deterministicSheetMappings(table: DetectedTable, remembered: Array<{ normalizedColumn: string; canonicalField: string }> = []) {
     const mappings: Record<string, string> = {};
     const sources: Record<string, string> = {};
+    const hasPreferredUnitName = table.columns.some((column) => this.normalize(column.originalHeader) === "unit name");
     for (const column of table.columns) {
+      const normalizedHeader = this.normalize(column.originalHeader);
+      if (hasPreferredUnitName && ["unit no", "unit no."].includes(normalizedHeader)) {
+        mappings[column.key] = "unitNumber";
+        sources[column.key] = "KNOWN_RULE_CONTEXTUAL_IDENTITY";
+        continue;
+      }
+      if (normalizedHeader === "floors") {
+        mappings[column.key] = "__METADATA__";
+        sources[column.key] = "LOW_CONFIDENCE_METADATA";
+        continue;
+      }
       const detected = column.semanticField
         ? { field: column.semanticField, confidence: column.confidence }
         : detectSemanticColumn(column.originalHeader);
-      const prior = remembered.find((mapping) => mapping.normalizedColumn === this.normalize(column.originalHeader));
-      const detectedCanonical = KNOWN[this.normalize(column.originalHeader)] ?? detected?.field;
+      const prior = remembered.find((mapping) => mapping.normalizedColumn === normalizedHeader);
+      const detectedCanonical = KNOWN[normalizedHeader] ?? detected?.field;
       const canonical = prior?.canonicalField ?? (detectedCanonical ? refineCanonicalFieldBySamples(detectedCanonical, column.samples ?? []) : undefined);
       if (!canonical) continue;
       if (["downPayment", "installmentYears", "installmentAmount"].includes(canonical)) {
@@ -258,11 +310,20 @@ export class ImporterService {
     const required = (field: string, message: string, inputType: string, options?: unknown) =>
       issues.push({ importId: sheet.importId, severity: IssueSeverity.BLOCKING, field: this.sheetIssueField(sheet.id, field), message, inputType, options: options == null ? undefined : this.json(options), required: true });
     if (!sheet.headerRow || !columns.length) required("header", "اختر صف العناوين الصحيح لهذا الجدول.", "WORKBOOK_TABLE_SELECT");
-    if (!sheet.projectId) required("projectId", "اختر المشروع الخاص بهذا الجدول.", "PROJECT_SELECT", { allowCreate: true });
-    if (!sheet.developerId) required("developerId", "اختر المطور الخاص بهذا الجدول.", "DEVELOPER_SELECT", { allowCreate: true });
-    if (!sheet.locationId) required("locationId", "اختر موقع المشروع الخاص بهذا الجدول.", "LOCATION_SELECT", { allowCreate: true });
+    const projectColumn = this.projectSourceColumn(sheet);
+    if (projectColumn && sheet.headerRow && columns.length) {
+      const projectReview = await this.projectValuesForSheetRecord(sheet).catch(() => null);
+      if (!projectReview?.uniqueCount) required("projectValues", "عمود المشروع لا يحتوي على قيم يمكن حلها.", "PROJECT_VALUE_MAPPING", projectReview);
+      else if (projectReview.unresolvedCount) required("projectValues", `اربط ${projectReview.unresolvedCount} ${projectReview.unresolvedCount === 1 ? "قيمة مشروع" : "قيم مشاريع"} بمشروع ومرحلة مؤكدين.`, "PROJECT_VALUE_MAPPING", projectReview);
+    } else {
+      if (!sheet.projectId) required("projectId", "اختر المشروع الخاص بهذا الجدول، أو اربط عمود Project بحقل المشروع.", "PROJECT_SELECT", { allowCreate: true });
+      if (!sheet.developerId) required("developerId", "اختر المطور الخاص بهذا الجدول.", "DEVELOPER_SELECT", { allowCreate: true });
+      if (!sheet.locationId) required("locationId", "اختر موقع المشروع الخاص بهذا الجدول.", "LOCATION_SELECT", { allowCreate: true });
+    }
     const phaseColumn = Object.entries(mappings).find(([, target]) => target === "phase")?.[0];
-    if (!phaseColumn) {
+    if (projectColumn) {
+      // A mixed-project table resolves phase explicitly inside every project group.
+    } else if (!phaseColumn) {
       if (!sheet.phaseId) required("phaseId", "اختر مرحلة واحدة لهذا الجدول، أو اربط عمود المراحل من الملف بحقل «المرحلة».", "PHASE_SELECT", { allowCreate: true });
     } else if (sheet.projectId && sheet.headerRow && columns.length) {
       const phaseReview = await this.phaseValuesForSheetRecord(sheet).catch(() => null);
@@ -272,7 +333,11 @@ export class ImporterService {
         required("phaseValues", `اربط ${phaseReview.unmatchedCount} ${phaseReview.unmatchedCount === 1 ? "قيمة مرحلة" : "قيم مراحل"} بالمراحل المسجلة. القرار يتم مرة واحدة لكل قيمة وليس لكل صف.`, "PHASE_VALUE_MAPPING", phaseReview);
       }
     }
-    if (!sheet.defaultCurrency && !Object.values(mappings).includes("currency")) required("currency", "حدد عملة أسعار هذا الجدول.", "CURRENCY_SELECT", SUPPORTED_CURRENCIES);
+    if (!sheet.defaultCurrency && !Object.values(mappings).includes("currency") && !Object.values(mappings).includes("priceWithCurrency")) required("currency", "حدد عملة أسعار هذا الجدول.", "CURRENCY_SELECT", SUPPORTED_CURRENCIES);
+    const config = this.sheetConfig(sheet);
+    const requiresExplicitAvailability = Object.values(mappings).some((value) => value === "priceWithCurrency" || value === "project");
+    if (requiresExplicitAvailability && !Object.values(mappings).includes("status") && config.defaultStatus?.confirmed !== true)
+      required("defaultStatus", "التقرير لا يحتوي على حالة للوحدة. أكّد الحالة الافتراضية الظاهرة في المعاينة قبل المتابعة.", "AVAILABILITY_DEFAULT", AVAILABILITY_TYPES);
     if (!Object.values(mappings).includes("externalUnitId")) required("mapping:externalUnitId", "اختر عمود كود الوحدة.", "CANONICAL_FIELD_SELECT", { sourceHeaders: columns.map((column) => column.key), detectedColumns: columns });
     for (const column of columns) {
       if (mappings[column.key]) continue;
@@ -348,6 +413,7 @@ export class ImporterService {
       phaseId: string | null;
       defaultCurrency: string | null;
       mappings: unknown;
+      mappingSources?: unknown;
       mappingVersion: number;
       previewMappingVersion: number | null;
     }>;
@@ -391,13 +457,17 @@ export class ImporterService {
     const missingContext: string[] = [];
     for (const sheet of selectedSheets as any[]) {
       const values = Object.values((sheet.mappings ?? {}) as Record<string, string>);
+      const mixedProject = values.includes("project");
+      const config = this.sheetConfig(sheet);
       if (!values.includes("externalUnitId")) missingCriticalMappings.push(`${sheet.sheetName}:externalUnitId`);
       if (!sheet.headerRow) missingContext.push(`${sheet.sheetName}:headerRow`);
-      if (!sheet.projectId) missingContext.push(`${sheet.sheetName}:projectId`);
-      if (!sheet.developerId) missingContext.push(`${sheet.sheetName}:developerId`);
-      if (!sheet.locationId) missingContext.push(`${sheet.sheetName}:locationId`);
-      if (!sheet.phaseId && !values.includes("phase")) missingContext.push(`${sheet.sheetName}:phase`);
-      if (!sheet.defaultCurrency && !values.includes("currency")) missingContext.push(`${sheet.sheetName}:currency`);
+      if (!mixedProject && !sheet.projectId) missingContext.push(`${sheet.sheetName}:projectId`);
+      if (!mixedProject && !sheet.developerId) missingContext.push(`${sheet.sheetName}:developerId`);
+      if (!mixedProject && !sheet.locationId) missingContext.push(`${sheet.sheetName}:locationId`);
+      if (!mixedProject && !sheet.phaseId && !values.includes("phase")) missingContext.push(`${sheet.sheetName}:phase`);
+      if (!sheet.defaultCurrency && !values.includes("currency") && !values.includes("priceWithCurrency")) missingContext.push(`${sheet.sheetName}:currency`);
+      const requiresExplicitAvailability = values.includes("priceWithCurrency") || values.includes("project");
+      if (requiresExplicitAvailability && !values.includes("status") && config.defaultStatus?.confirmed !== true) missingContext.push(`${sheet.sheetName}:status`);
     }
     if (item.sheets?.length && selectedSheets.length === 0) missingContext.push("workbook:selectedSheet");
     if (!item.sheets?.length) {
@@ -410,14 +480,16 @@ export class ImporterService {
     }
     const sheetsValid = selectedSheets.length > 0 && selectedSheets.every((sheet) => {
       const sheetMappings = (sheet.mappings ?? {}) as Record<string, string>;
+      const values = Object.values(sheetMappings);
+      const mixedProject = values.includes("project");
+      const config = this.sheetConfig(sheet);
       return Boolean(
         sheet.headerRow &&
-        sheet.projectId &&
-        sheet.developerId &&
-        sheet.locationId &&
-        (sheet.phaseId || Object.values(sheetMappings).includes("phase")) &&
-        (sheet.defaultCurrency || Object.values(sheetMappings).includes("currency")) &&
-        Object.values(sheetMappings).includes("externalUnitId"),
+        (mixedProject || (sheet.projectId && sheet.developerId && sheet.locationId)) &&
+        (mixedProject || sheet.phaseId || values.includes("phase")) &&
+        (sheet.defaultCurrency || values.includes("currency") || values.includes("priceWithCurrency")) &&
+        (!(values.includes("priceWithCurrency") || values.includes("project")) || values.includes("status") || config.defaultStatus?.confirmed === true) &&
+        values.includes("externalUnitId"),
       );
     });
     const canPreview = unresolvedBlockingCount === 0 && missingCriticalMappings.length === 0 && missingContext.length === 0 && (item.sheets?.length ? sheetsValid : contextValid);
@@ -1081,6 +1153,8 @@ export class ImporterService {
     if ((await this.prisma.dataImport.findUniqueOrThrow({ where: { id: importId }, select: { status: true } })).status === ImportStatus.COMPLETED)
       throw new BadRequestException("Use the correction workflow for a confirmed import.");
     const data: Prisma.ImportSheetUncheckedUpdateInput = {};
+    let config = this.sheetConfig(sheet);
+    let configChanged = false;
     let projectLocationBackfill: { projectId: string; locationId: string } | null = null;
     if (body.action != null) {
       if (!["IMPORT", "IGNORE"].includes(String(body.action))) throw new BadRequestException("Invalid sheet action");
@@ -1134,6 +1208,15 @@ export class ImporterService {
       const value = typeof body.defaultIsResale === "boolean" ? body.defaultIsResale : String(body.defaultIsResale).toLowerCase() === "true";
       data.defaultIsResale = value;
     }
+    if (body.defaultStatus !== undefined) {
+      if (!body.defaultStatus) config = { ...config, defaultStatus: undefined };
+      else {
+        const status = String(body.defaultStatus).toUpperCase();
+        if (!AVAILABILITY_TYPES.includes(status as any)) throw new BadRequestException("اختر حالة إتاحة مدعومة.");
+        config = { ...config, defaultStatus: { value: status as (typeof AVAILABILITY_TYPES)[number], confirmed: true, confirmedAt: new Date().toISOString() } };
+      }
+      configChanged = true;
+    }
     if (body.headerRow != null) {
       const headerRow = Number(body.headerRow);
       if (!Number.isInteger(headerRow) || headerRow < 1) throw new BadRequestException("اختر صف عناوين صحيحاً.");
@@ -1154,10 +1237,11 @@ export class ImporterService {
         rowsDetected: table.dataRowCount,
         columns: this.json(table.columns),
         mappings: this.json(deterministic.mappings),
-        mappingSources: this.json(deterministic.sources),
+        mappingSources: this.json({ ...deterministic.sources, __sheetConfig: config }),
         sourcePreview: this.json(table.previewRows),
       });
     }
+    if (configChanged && data.mappingSources == null) data.mappingSources = this.withSheetConfig(sheet, config);
     data.mappingVersion = { increment: 1 };
     data.previewMappingVersion = null;
     data.normalizedPreview = Prisma.DbNull;
@@ -1190,8 +1274,10 @@ export class ImporterService {
     if (!columns.some((column) => column.key === sourceColumn)) throw new BadRequestException("اختر عموداً موجوداً في الجدول.");
     const target = canonicalField === "METADATA" ? "__METADATA__" : canonicalField === "IGNORE" ? "__IGNORE__" : canonicalField;
     if (!["__METADATA__", "__IGNORE__"].includes(target) && !supportedMappingTarget(target)) throw new BadRequestException("اختر معنى مدعوماً للعمود أو احفظه كمعلومة مخصصة.");
+    const previousTarget = ((sheet.mappings ?? {}) as Record<string, string>)[sourceColumn];
     const mappings = { ...((sheet.mappings ?? {}) as Record<string, string>), [sourceColumn]: target };
-    const sources = { ...((sheet.mappingSources ?? {}) as Record<string, string>), [sourceColumn]: "ADMIN_APPROVED" };
+    const sources: Record<string, unknown> = { ...((sheet.mappingSources ?? {}) as Record<string, unknown>), [sourceColumn]: "ADMIN_APPROVED" };
+    if (target === "project" || previousTarget === "project") sources.__sheetConfig = { ...this.sheetConfig(sheet), projectGroups: {} };
     await this.prisma.importSheet.update({
       where: { id: sheetId },
       data: { mappings: this.json(mappings), mappingSources: this.json(sources), ...(target === "phase" ? { phaseId: null } : {}), mappingVersion: { increment: 1 }, previewMappingVersion: null, normalizedPreview: Prisma.DbNull },
@@ -1211,8 +1297,8 @@ export class ImporterService {
     if (!["__METADATA__", "__IGNORE__"].includes(target) && !supportedMappingTarget(target)) throw new BadRequestException("اختر معنى مدعوماً.");
     const oldMappings = (sheet.mappings ?? {}) as Record<string, string>;
     const previousTarget = oldMappings[sourceColumn];
-    const metadataTarget = (value?: string) => Boolean(value && (value === "__METADATA__" || isCustomMetadataField(value) || CANONICAL_FIELD_MAP.get(value)?.storage === "METADATA"));
-    if (metadataTarget(previousTarget) || metadataTarget(target)) throw new BadRequestException("تصحيح حقول metadata بعد اعتماد الدفعة يتم عبر استيراد تحديث جديد حتى نحافظ على provenance وsourceMetadata بدون فقد بيانات.");
+    const nonUnitTarget = (value?: string) => Boolean(value && (value === "__METADATA__" || isCustomMetadataField(value) || CANONICAL_FIELD_MAP.get(value)?.storage !== "UNIT"));
+    if (nonUnitTarget(previousTarget) || nonUnitTarget(target)) throw new BadRequestException("تصحيح حقول metadata أو سياق المشروع أو الأعمدة المركبة بعد اعتماد الدفعة يتم عبر استيراد تحديث جديد حتى نحافظ على الهوية وprovenance بدون فقد بيانات.");
     if (previousTarget === "externalUnitId" || target === "externalUnitId") throw new BadRequestException("تصحيح كود الهوية يحتاج استيراد تحديث جديداً لتجنب دمج وحدات مختلفة.");
     const proposedMappings = { ...oldMappings, [sourceColumn]: target };
     return this.prisma.importCorrection.create({ data: { importId, importSheetId: sheetId, createdByAdminId: adminUserId, oldMappings: this.json(oldMappings), proposedMappings: this.json(proposedMappings) } });
@@ -1506,6 +1592,94 @@ export class ImporterService {
     };
   }
 
+  private async projectValuesForSheetRecord(sheet: any) {
+    const sourceColumn = this.projectSourceColumn(sheet);
+    if (!sourceColumn) return { mode: "SINGLE", sourceColumn: null, sourceHeader: null, totalRows: sheet.rowsDetected ?? 0, uniqueCount: 0, resolvedCount: 0, unresolvedCount: 0, values: [] as any[] };
+    const item = await this.prisma.dataImport.findUniqueOrThrow({ where: { id: sheet.importId }, select: { analysis: true, fileName: true } });
+    const analysis = item.analysis as unknown as Analysis;
+    if (!analysis.fileKey) throw new BadRequestException("Source workbook is unavailable.");
+    const workbook = readImportWorkbook(await this.storage.get(analysis.fileKey), analysis.workbookAnalysis.workbookName || item.fileName);
+    const rows = recordsForTable(workbook, this.persistedTable(sheet));
+    const counts = new Map<string, { sourceValue: string; count: number }>();
+    for (const row of rows) {
+      const raw = String(row[sourceColumn] ?? "").trim();
+      if (!raw) continue;
+      const normalized = this.normalizeProjectValue(raw);
+      const current = counts.get(normalized);
+      if (current) current.count += 1;
+      else counts.set(normalized, { sourceValue: raw, count: 1 });
+    }
+    const projects = await this.prisma.project.findMany({
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, canonicalName: true, nameAr: true, nameEn: true, developerId: true, locationId: true, developer: { select: { name: true } }, location: { select: { name: true } }, phases: { orderBy: [{ sortOrder: "asc" }, { name: "asc" }], select: { id: true, name: true, code: true } } },
+    });
+    const config = this.sheetConfig(sheet);
+    const values = [...counts.entries()].map(([normalizedValue, source]) => {
+      const stored = config.projectGroups?.[normalizedValue];
+      const project = stored ? projects.find((candidate) => candidate.id === stored.projectId) : undefined;
+      const phase = project && stored ? project.phases.find((candidate) => candidate.id === stored.phaseId) : undefined;
+      const resolved = Boolean(project?.developerId && project?.locationId && phase);
+      const exactCandidates = projects.filter((candidate) => [candidate.name, candidate.canonicalName, candidate.nameAr, candidate.nameEn].filter(Boolean).some((name) => this.normalizeProjectValue(String(name)) === normalizedValue));
+      return {
+        normalizedValue,
+        sourceValue: source.sourceValue,
+        count: source.count,
+        resolved,
+        projectId: resolved ? project!.id : null,
+        projectName: resolved ? project!.name : null,
+        developerId: resolved ? project!.developerId : null,
+        developerName: resolved ? project!.developer.name : null,
+        locationId: resolved ? project!.locationId : null,
+        locationName: resolved ? project!.location?.name ?? null : null,
+        phaseId: resolved ? phase!.id : null,
+        phaseName: resolved ? phase!.name : null,
+        suggestedProjectId: exactCandidates.length === 1 ? exactCandidates[0].id : null,
+        ambiguousCandidateCount: exactCandidates.length,
+      };
+    }).sort((a, b) => b.count - a.count || a.sourceValue.localeCompare(b.sourceValue));
+    const column = ((sheet.columns ?? []) as Array<{ key: string; originalHeader: string }>).find((item) => item.key === sourceColumn);
+    return {
+      mode: "COLUMN",
+      sourceColumn,
+      sourceHeader: column?.originalHeader ?? sourceColumn,
+      totalRows: rows.length,
+      uniqueCount: values.length,
+      resolvedCount: values.filter((value) => value.resolved).length,
+      unresolvedCount: values.filter((value) => !value.resolved).length,
+      values,
+      projects: projects.map((project) => ({ id: project.id, name: project.name, developerId: project.developerId, developerName: project.developer.name, locationId: project.locationId, locationName: project.location?.name ?? null, phases: project.phases })),
+    };
+  }
+
+  async getProjectValues(importId: string, sheetId: string) {
+    const sheet = await this.prisma.importSheet.findFirst({ where: { id: sheetId, importId } });
+    if (!sheet) throw new NotFoundException("Import sheet not found");
+    return this.projectValuesForSheetRecord(sheet);
+  }
+
+  async mapProjectValue(importId: string, sheetId: string, sourceValue: string, projectId: string, phaseId: string) {
+    const sheet = await this.prisma.importSheet.findFirst({ where: { id: sheetId, importId } });
+    if (!sheet) throw new NotFoundException("Import sheet not found");
+    if ((await this.prisma.dataImport.findUniqueOrThrow({ where: { id: importId }, select: { status: true } })).status === ImportStatus.COMPLETED)
+      throw new BadRequestException("Use a new import batch to change project-group context after confirmation.");
+    if (!this.projectSourceColumn(sheet)) throw new BadRequestException("اربط عمود Project بحقل المشروع أولاً.");
+    const value = String(sourceValue ?? "").trim();
+    if (!value) throw new BadRequestException("اختر قيمة مشروع من الملف.");
+    const project = await this.prisma.project.findUnique({ where: { id: String(projectId) }, select: { id: true, developerId: true, locationId: true, phases: { where: { id: String(phaseId) }, select: { id: true } } } });
+    if (!project) throw new BadRequestException("اختر مشروعاً موجوداً.");
+    if (!project.locationId) throw new BadRequestException("المشروع المختار لا يملك موقعاً مؤكداً.");
+    if (!project.phases.length) throw new BadRequestException("اختر مرحلة تابعة للمشروع المحدد.");
+    const normalizedValue = this.normalizeProjectValue(value);
+    const config = this.sheetConfig(sheet);
+    const nextConfig: SheetImportConfig = { ...config, projectGroups: { ...(config.projectGroups ?? {}), [normalizedValue]: { sourceValue: value, projectId: project.id, phaseId: project.phases[0].id, confirmedAt: new Date().toISOString() } } };
+    await this.prisma.$transaction([
+      this.prisma.importSheet.update({ where: { id: sheet.id }, data: { mappingSources: this.withSheetConfig(sheet, nextConfig), mappingVersion: { increment: 1 }, previewMappingVersion: null, normalizedPreview: Prisma.DbNull } }),
+      this.prisma.dataImport.update({ where: { id: importId }, data: { preview: Prisma.DbNull, status: ImportStatus.NEEDS_INPUT } }),
+    ]);
+    await this.rebuildSheetIssues(sheet.id);
+    return this.refreshImportReadiness(importId);
+  }
+
   private phaseSourceColumn(sheet: any) {
     return Object.entries((sheet.mappings ?? {}) as Record<string, string>).find(([, target]) => target === "phase")?.[0];
   }
@@ -1597,11 +1771,14 @@ export class ImporterService {
 
   private valuesForSheet(row: Record<string, unknown>, sheet: any) {
     const values: Record<string, unknown> = {};
+    const config = this.sheetConfig(sheet);
     if (sheet.defaultCurrency) values.currency = sheet.defaultCurrency;
     if (sheet.defaultUnitType) values.unitType = sheet.defaultUnitType;
     if (sheet.phaseId) values.phaseId = sheet.phaseId;
+    if (config.defaultStatus?.confirmed) values.status = config.defaultStatus.value;
     values.isResale = Boolean(sheet.defaultIsResale);
     const metadata: Record<string, unknown> = {};
+    if (config.defaultStatus?.confirmed) metadata._appliedDefaults = { status: config.defaultStatus.value, confirmedAt: config.defaultStatus.confirmedAt };
     for (const [source, target] of Object.entries((sheet.mappings ?? {}) as Record<string, string>)) {
       const raw = row[source];
       if (raw == null || raw === "" || target === "__IGNORE__") continue;
@@ -1618,6 +1795,15 @@ export class ImporterService {
         values.deliveryYears = durationYears ?? raw;
         continue;
       }
+      if (target === "priceWithCurrency") {
+        const money = parseImportMoney(raw);
+        metadata.priceWithCurrencySource = raw;
+        if (money.ok) {
+          values.price = money.amount;
+          values.currency = money.currency;
+        } else values.__moneyError = money.code;
+        continue;
+      }
       values[target] = raw;
     }
     return { values, metadata };
@@ -1626,11 +1812,17 @@ export class ImporterService {
   private sheetValueErrors(values: Record<string, unknown>) {
     const errors: Array<{ field: string; code: string }> = [];
     if (!String(values.externalUnitId ?? "").trim()) errors.push({ field: "externalUnitId", code: "MISSING_IDENTITY" });
-    for (const field of ["bedrooms", "bathrooms", "builtUpArea", "landArea", "gardenArea", "roofArea", "terraceArea", "price", "maintenance", "clubFees", "discount"])
-      if (values[field] != null && values[field] !== "" && this.number(values[field]) == null) errors.push({ field, code: "INVALID_NUMBER" });
+    for (const field of ["bedrooms", "bathrooms", "builtUpArea", "landArea", "gardenArea", "roofArea", "terraceArea", "price", "maintenance", "clubFees", "discount"]) {
+      const numeric = values[field] == null || values[field] === "" ? undefined : this.number(values[field]);
+      if (values[field] != null && values[field] !== "" && numeric == null) errors.push({ field, code: "INVALID_NUMBER" });
+      else if (numeric != null && numeric < 0) errors.push({ field, code: "NEGATIVE_NUMBER" });
+      else if (["bedrooms", "bathrooms"].includes(field) && numeric != null && !Number.isInteger(numeric)) errors.push({ field, code: "INVALID_INTEGER" });
+    }
+    if (values.__moneyError) errors.push({ field: "priceWithCurrency", code: String(values.__moneyError) });
     if (values.deliveryDate != null && values.deliveryDate !== "" && !parseImportDate(values.deliveryDate)) errors.push({ field: "deliveryDate", code: "INVALID_DATE" });
     if (values.deliveryYears != null && values.deliveryYears !== "" && parseDeliveryDurationYears(values.deliveryYears) == null && this.number(values.deliveryYears) == null) errors.push({ field: "deliveryYears", code: "INVALID_DURATION" });
     if (values.currency && !SUPPORTED_CURRENCIES.includes(String(values.currency).toUpperCase() as any)) errors.push({ field: "currency", code: "INVALID_CURRENCY" });
+    if (values.status != null && values.status !== "" && !this.status(values.status)) errors.push({ field: "status", code: "INVALID_STATUS" });
     return errors;
   }
 
@@ -1658,9 +1850,12 @@ export class ImporterService {
     const seen = new Set<string>();
     for (const sheet of selected) {
       const rows = recordsForTable(workbook, this.persistedTable(sheet));
+      const projectColumn = this.projectSourceColumn(sheet);
+      const projectReview = projectColumn ? await this.projectValuesForSheetRecord(sheet) : null;
+      const projectGroups = new Map((projectReview?.values ?? []).map((value: any) => [value.normalizedValue, value]));
       const [phases, phaseAliases] = await Promise.all([
-        this.prisma.projectPhase.findMany({ where: { projectId: sheet.projectId! }, select: { id: true, code: true, name: true, nameAr: true, nameEn: true } }),
-        this.prisma.projectPhaseAlias.findMany({ where: { projectId: sheet.projectId! }, select: { normalizedValue: true, phaseId: true } }),
+        projectColumn ? Promise.resolve([]) : this.prisma.projectPhase.findMany({ where: { projectId: sheet.projectId! }, select: { id: true, code: true, name: true, nameAr: true, nameEn: true } }),
+        projectColumn ? Promise.resolve([]) : this.prisma.projectPhaseAlias.findMany({ where: { projectId: sheet.projectId! }, select: { normalizedValue: true, phaseId: true } }),
       ]);
       const columns = (sheet.columns ?? []) as Array<{ key: string; originalHeader: string; samples?: unknown[] }>;
       const mappings = (sheet.mappings ?? {}) as Record<string, string>;
@@ -1672,28 +1867,55 @@ export class ImporterService {
       });
       const normalized = rows.map((row, index) => {
         const entry = this.valuesForSheet(row, sheet);
-        const resolved = this.resolveStructuredPhase(entry.values, phases, sheet.phaseId, phaseAliases);
-        if (resolved.phaseId) entry.values.phaseId = resolved.phaseId;
         const errors = this.sheetValueErrors(entry.values);
-        if (resolved.unmatched) errors.push({ field: "phase", code: "UNMATCHED_PHASE" });
-        return { ...entry, phaseUnmatched: resolved.unmatched, rowNumber: Number(sheet.headerRow ?? 1) + index + 1, errors };
+        let context: Record<string, any>;
+        if (projectColumn) {
+          const rawProject = String(entry.values.project ?? "").trim();
+          const group = projectGroups.get(this.normalizeProjectValue(rawProject)) as any;
+          if (!rawProject) errors.push({ field: "project", code: "MISSING_PROJECT" });
+          else if (!group?.resolved) errors.push({ field: "project", code: "UNRESOLVED_PROJECT" });
+          context = group?.resolved ? { projectId: group.projectId, projectName: group.projectName, developerId: group.developerId, locationId: group.locationId, phaseId: group.phaseId, phaseName: group.phaseName } : {};
+          if (context.phaseId) entry.values.phaseId = context.phaseId;
+        } else {
+          const resolved = this.resolveStructuredPhase(entry.values, phases, sheet.phaseId, phaseAliases);
+          if (resolved.phaseId) entry.values.phaseId = resolved.phaseId;
+          if (resolved.unmatched) errors.push({ field: "phase", code: "UNMATCHED_PHASE" });
+          context = { projectId: sheet.projectId, projectName: sheet.project?.name, developerId: sheet.developerId, locationId: sheet.locationId, phaseId: resolved.phaseId, phaseName: sheet.phase?.name };
+        }
+        return { ...entry, context, rowNumber: Number(sheet.headerRow ?? 1) + index + 1, errors };
       });
       const readyRows = normalized.filter(({ errors }) => errors.length === 0);
       const blockedRows = normalized.filter(({ errors }) => errors.length > 0);
       const validationSummary = this.summarizeSheetValidation(blockedRows);
       let duplicates = 0;
-      for (const { values } of readyRows) {
-        const key = `${sheet.projectId}:${String(values.externalUnitId).trim()}`;
+      for (const { values, context } of readyRows) {
+        const key = `${context.projectId}:${String(values.externalUnitId).trim()}`;
         if (seen.has(key)) duplicates++;
         seen.add(key);
       }
-      const identifiers = readyRows.map(({ values }) => String(values.externalUnitId).trim());
-      const existing = identifiers.length ? await this.prisma.unit.count({ where: { projectId: sheet.projectId!, developerId: sheet.developerId!, externalUnitId: { in: identifiers } } }) : 0;
+      let existing = 0;
+      for (const projectId of [...new Set(readyRows.map(({ context }) => String(context.projectId)))]) {
+        const groupRows = readyRows.filter(({ context }) => context.projectId === projectId);
+        const identifiers = groupRows.map(({ values }) => String(values.externalUnitId).trim());
+        const developerId = String(groupRows[0]?.context.developerId ?? "");
+        if (projectId && developerId && identifiers.length) existing += await this.prisma.unit.count({ where: { projectId, developerId, externalUnitId: { in: identifiers } } });
+      }
+      const config = this.sheetConfig(sheet);
+      const moneyParseErrors = validationSummary.filter((entry) => entry.field === "priceWithCurrency").reduce((sum, entry) => sum + entry.count, 0);
+      const unknownUnitTypes = normalized.filter(({ values }) => values.unitType != null && !UNIT_TYPES.includes(normalizeUnitType(values.unitType) as any)).length;
+      const ignoredMetadataColumns = columns.filter((column) => {
+        const target = mappings[column.key];
+        return target === "__METADATA__" || isCustomMetadataField(target) || CANONICAL_FIELD_MAP.get(target)?.storage === "METADATA";
+      }).map((column) => column.originalHeader);
       const summary = {
         sheetId: sheet.id,
         sheetName: sheet.sheetName,
         projectId: sheet.projectId,
         project: sheet.project?.name,
+        distinctProjects: projectReview?.uniqueCount ?? (sheet.projectId ? 1 : 0),
+        unresolvedProjects: projectReview?.unresolvedCount ?? 0,
+        projectGroups: projectReview?.values ?? [],
+        appliedDefaultStatus: config.defaultStatus?.confirmed ? config.defaultStatus.value : null,
         rowsFound: rows.length,
         sourceRows: rows.length,
         readyRows: readyRows.length,
@@ -1701,13 +1923,17 @@ export class ImporterService {
         valid: readyRows.length,
         invalidRows: blockedRows.length,
         duplicates,
+        duplicateIdentities: duplicates,
+        moneyParseErrors,
+        unknownUnitTypes,
+        ignoredMetadataColumns,
         newUnits: readyRows.length - existing,
         existingUnits: existing,
         validationSummary,
         mappingAdjustments,
         mappingVersion: sheet.mappingVersion,
         sourcePreview: sheet.sourcePreview,
-        normalizedRows: readyRows.slice(0, 10).map(({ values }) => { const { phaseId: _phaseId, ...visible } = values; return visible; }),
+        normalizedRows: readyRows.slice(0, 10).map(({ values, context }) => { const { phaseId: _phaseId, project: rawProject, __moneyError: _moneyError, ...visible } = values; return { ...visible, project: context.projectName ?? rawProject, phase: context.phaseName ?? null }; }),
       };
       summaries.push(summary);
       totalValid += readyRows.length;
@@ -1727,6 +1953,11 @@ export class ImporterService {
       invalidRows: totalInvalid,
       newUnits: totalNew,
       existingUnits: totalExisting,
+      distinctProjects: summaries.reduce((sum, sheet) => sum + Number(sheet.distinctProjects ?? 0), 0),
+      unresolvedProjects: summaries.reduce((sum, sheet) => sum + Number(sheet.unresolvedProjects ?? 0), 0),
+      duplicateIdentities: summaries.reduce((sum, sheet) => sum + Number(sheet.duplicateIdentities ?? 0), 0),
+      moneyParseErrors: summaries.reduce((sum, sheet) => sum + Number(sheet.moneyParseErrors ?? 0), 0),
+      unknownUnitTypes: summaries.reduce((sum, sheet) => sum + Number(sheet.unknownUnitTypes ?? 0), 0),
       paymentPlanCount: 0,
       blockingIssues: totalInvalid,
       canConfirm: totalInvalid === 0 && selected.length > 0,
@@ -1891,8 +2122,15 @@ export class ImporterService {
     const n = Number(source) * (negative ? -1 : 1);
     return Number.isFinite(n) ? n : undefined;
   }
+  private decimal(value: unknown) {
+    const number = this.number(value);
+    if (number == null) return undefined;
+    const source = String(value).trim().replace(/,/g, "");
+    return /^\+?\d+(?:\.\d+)?$/.test(source) ? source.replace(/^\+/, "") : String(number);
+  }
   private status(value: unknown) {
-    const s = String(value ?? "AVAILABLE").toUpperCase();
+    const s = String(value ?? "").trim().toUpperCase();
+    if (!s) return undefined;
     return /SOLD|مباع/u.test(s)
       ? UnitStatus.SOLD
       : /RESERV|محجوز/u.test(s)
@@ -1900,7 +2138,8 @@ export class ImporterService {
         : /UNAV|غير\s*متاح/u.test(s)
           ? UnitStatus.UNAVAILABLE
           : /CONTACT|تواصل/u.test(s) ? UnitStatus.CONTACT_SALES
-          : UnitStatus.AVAILABLE;
+          : /AVAILABLE|متاح/u.test(s) ? UnitStatus.AVAILABLE
+          : undefined;
   }
 
   private rowErrors(row: Record<string, unknown>, analysis: Analysis) {
@@ -1913,6 +2152,7 @@ export class ImporterService {
     if (values.deliveryYears != null && values.deliveryYears !== "" && parseDeliveryDurationYears(values.deliveryYears) == null && this.number(values.deliveryYears) == null) errors.push({ field: "deliveryYears", code: "INVALID_DURATION" });
     const currency = String(values.currency ?? analysis.defaultValues.currency ?? "").toUpperCase();
     if (!SUPPORTED_CURRENCIES.includes(currency as any)) errors.push({ field: "currency", code: "INVALID_CURRENCY" });
+    if (values.status != null && values.status !== "" && !this.status(values.status)) errors.push({ field: "status", code: "INVALID_STATUS" });
     for (const [sourceColumn, mapping] of Object.entries(analysis.paymentPlanMappings ?? {})) {
       if (!mapping.approved) errors.push({ field: sourceColumn, code: "PAYMENT_PLAN_NOT_APPROVED" });
       if (row[sourceColumn] != null && row[sourceColumn] !== "" && this.number(row[sourceColumn]) == null) errors.push({ field: sourceColumn, code: "INVALID_PAYMENT_VALUE" });
@@ -1998,7 +2238,7 @@ export class ImporterService {
       gardenArea: this.number(values.gardenArea),
       roofArea: this.number(values.roofArea),
       terraceArea: this.number(values.terraceArea),
-      price: this.number(values.price),
+      price: this.decimal(values.price),
       currency: text("currency"),
       isResale: values.isResale === true || String(values.isResale ?? "").toLowerCase() === "true",
       status: contactSales
@@ -2119,22 +2359,41 @@ export class ImporterService {
         for (const sheet of selected) {
           let sheetCreated = 0, sheetUpdated = 0;
           const rows = recordsForTable(workbook, this.persistedTable(sheet));
+          const projectColumn = this.projectSourceColumn(sheet);
+          const projectReview = projectColumn ? await this.projectValuesForSheetRecord(sheet) : null;
+          const projectGroups = new Map((projectReview?.values ?? []).map((value: any) => [value.normalizedValue, value]));
           const [phases, phaseAliases] = await Promise.all([
-            tx.projectPhase.findMany({ where: { projectId: sheet.projectId! }, select: { id: true, code: true, name: true, nameAr: true, nameEn: true } }),
-            tx.projectPhaseAlias.findMany({ where: { projectId: sheet.projectId! }, select: { normalizedValue: true, phaseId: true } }),
+            projectColumn ? Promise.resolve([]) : tx.projectPhase.findMany({ where: { projectId: sheet.projectId! }, select: { id: true, code: true, name: true, nameAr: true, nameEn: true } }),
+            projectColumn ? Promise.resolve([]) : tx.projectPhaseAlias.findMany({ where: { projectId: sheet.projectId! }, select: { normalizedValue: true, phaseId: true } }),
           ]);
           for (const [index, row] of rows.entries()) {
             const { values, metadata } = this.valuesForSheet(row, sheet);
-            const resolvedPhase = this.resolveStructuredPhase(values, phases, sheet.phaseId, phaseAliases);
-            if (resolvedPhase.phaseId) values.phaseId = resolvedPhase.phaseId;
+            let context: { projectId?: string; developerId?: string; locationId?: string; phaseId?: string; projectName?: string; phaseName?: string };
+            if (projectColumn) {
+              const group = projectGroups.get(this.normalizeProjectValue(String(values.project ?? ""))) as any;
+              context = group?.resolved ? { projectId: group.projectId, developerId: group.developerId, locationId: group.locationId, phaseId: group.phaseId, projectName: group.projectName, phaseName: group.phaseName } : {};
+            } else {
+              const resolvedPhase = this.resolveStructuredPhase(values, phases, sheet.phaseId, phaseAliases);
+              context = { projectId: sheet.projectId, developerId: sheet.developerId, locationId: sheet.locationId, phaseId: resolvedPhase.phaseId, projectName: sheet.project?.name, phaseName: sheet.phase?.name };
+            }
+            if (context.phaseId) values.phaseId = context.phaseId;
             const externalUnitId = String(values.externalUnitId ?? "").trim();
-            if (!externalUnitId || resolvedPhase.unmatched || !values.phaseId) { rejected++; continue; }
+            const rowValidation = this.sheetValueErrors(values);
+            if (!externalUnitId || !context.projectId || !context.developerId || !context.locationId || !context.phaseId || rowValidation.length)
+              throw new ImportHttpException(HttpStatus.UNPROCESSABLE_ENTITY, "IMPORT_ROW_VALIDATION_FAILED", `تعذر اعتماد الصف ${Number(sheet.headerRow ?? 1) + index + 1}. أنشئ معاينة جديدة وراجع سياق المشروع والقيم.`, "normalization", item.id);
             const existing = await tx.unit.findUnique({
-              where: { developerId_projectId_externalUnitId: { developerId: sheet.developerId!, projectId: sheet.projectId!, externalUnitId } },
+              where: { developerId_projectId_externalUnitId: { developerId: context.developerId, projectId: context.projectId, externalUnitId } },
               include: { paymentPlans: true, offers: true },
             });
             const updateData = this.unitData(values, false);
+            const existingSourceMetadata =
+              existing?.sourceMetadata &&
+              typeof existing.sourceMetadata === "object" &&
+              !Array.isArray(existing.sourceMetadata)
+                ? (existing.sourceMetadata as Record<string, unknown>)
+                : {};
             updateData.sourceMetadata = this.json({
+              ...existingSourceMetadata,
               ...metadata,
               _provenance: {
                 importId: item.id,
@@ -2144,13 +2403,15 @@ export class ImporterService {
                 row: (sheet.headerRow ?? 1) + index + 1,
                 mappingVersion: sheet.mappingVersion,
                 mappings: sheet.mappings,
+                sourceValues: Object.entries(sheet.mappings as Record<string, string>).filter(([source]) => row[source] != null && row[source] !== "").map(([sourceColumn, mappedCanonicalField]) => ({ sourceColumn, originalValue: row[sourceColumn], mappedCanonicalField })),
+                resolvedContext: { projectId: context.projectId, projectName: context.projectName, developerId: context.developerId, locationId: context.locationId, phaseId: context.phaseId, phaseName: context.phaseName },
               },
             });
             if (existing && !this.changedUnitFields(existing, updateData).length) { skipped++; continue; }
             const before = existing ? this.json({ unit: this.comparable(existing), paymentPlans: existing.paymentPlans, offers: existing.offers }) : undefined;
             const unit = existing
               ? await tx.unit.update({ where: { id: existing.id }, data: updateData })
-              : await tx.unit.create({ data: { ...updateData, externalUnitId, developerId: sheet.developerId!, projectId: sheet.projectId!, sourceImportId: item.id } as Prisma.UnitUncheckedCreateInput });
+              : await tx.unit.create({ data: { ...updateData, externalUnitId, developerId: context.developerId, projectId: context.projectId, sourceImportId: item.id } as Prisma.UnitUncheckedCreateInput });
             existing ? (updated++, sheetUpdated++) : (created++, sheetCreated++);
             if (updateData.price != null && (!existing?.price || existing.price.toString() !== String(updateData.price)))
               await tx.unitPriceHistory.create({ data: { unitId: unit.id, price: updateData.price as any, currency: String(updateData.currency || existing?.currency || sheet.defaultCurrency || "EGP"), importId: item.id } });
@@ -2160,8 +2421,8 @@ export class ImporterService {
           await tx.importSheet.update({ where: { id: sheet.id }, data: { rowsCreated: sheetCreated, rowsUpdated: sheetUpdated, importedAt: new Date() } });
           for (const [sourceColumn, canonicalField] of Object.entries(sheet.mappings as Record<string, string>)) {
             if (!INVENTORY_CANONICAL.includes(canonicalField)) continue;
-            const developer = await tx.developer.findUnique({ where: { id: sheet.developerId! }, select: { slug: true } });
-            const developerSlug = developer?.slug ?? `developer:${sheet.developerId}`;
+            const developer = sheet.developerId ? await tx.developer.findUnique({ where: { id: sheet.developerId }, select: { slug: true } }) : null;
+            const developerSlug = developer?.slug ?? (sheet.developerId ? `developer:${sheet.developerId}` : "__global__");
             await tx.importMapping.upsert({
               where: { developerSlug_normalizedColumn: { developerSlug, normalizedColumn: this.normalize(sourceColumn) } },
               create: { developerSlug, sourceColumn, normalizedColumn: this.normalize(sourceColumn), canonicalField, approved: true, confidence: 1 },

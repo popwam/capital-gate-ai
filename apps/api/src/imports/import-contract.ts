@@ -16,7 +16,11 @@ export const FINISHING_TYPES = [
 
 export const AVAILABILITY_TYPES = ["AVAILABLE", "RESERVED", "SOLD", "UNAVAILABLE", "CONTACT_SALES"] as const;
 export type PaymentPlanValueType = "TOTAL_PRICE" | "INSTALLMENT_AMOUNT" | "DOWN_PAYMENT_AMOUNT" | "DOWN_PAYMENT_PERCENT" | "MAINTENANCE_AMOUNT" | "MAINTENANCE_PERCENT";
-export type CanonicalStorage = "UNIT" | "METADATA";
+export type CanonicalStorage = "UNIT" | "METADATA" | "CONTEXT" | "COMPOSITE";
+
+export type ParsedImportMoney =
+  | { ok: true; amount: string; currency: (typeof SUPPORTED_CURRENCIES)[number] }
+  | { ok: false; code: "EMPTY" | "MISSING_CURRENCY" | "UNSUPPORTED_CURRENCY" | "INVALID_AMOUNT" | "NEGATIVE_AMOUNT" | "TOO_MANY_DECIMALS" };
 
 export type CanonicalField = {
   value: string;
@@ -41,6 +45,7 @@ export const CANONICAL_FIELDS: CanonicalField[] = [
   field("unitNumber", "الهوية والمرجع", "رقم الوحدة داخل المبنى", "Unit number", "TEXT", "METADATA"),
   field("plotNumber", "الهوية والمرجع", "رقم القطعة", "Plot number", "TEXT", "METADATA"),
   field("parcelNumber", "الهوية والمرجع", "رقم الحوض / القسيمة", "Parcel number", "TEXT", "METADATA"),
+  field("project", "الهيكل داخل المشروع", "المشروع من ملف متعدد المشاريع", "Project resolver", "PROJECT_RESOLVER", "CONTEXT", ["project", "project name", "المشروع"]),
   field("phase", "الهيكل داخل المشروع", "المرحلة", "Phase", "TEXT"),
   field("cluster", "الهيكل داخل المشروع", "المجموعة / الكلاستر", "Cluster", "TEXT"),
   field("zone", "الهيكل داخل المشروع", "المنطقة / الزون", "Zone", "TEXT", "METADATA"),
@@ -86,6 +91,7 @@ export const CANONICAL_FIELDS: CanonicalField[] = [
   field("ceilingHeight", "المساحات", "ارتفاع السقف", "Ceiling height", "NUMBER", "METADATA"),
 
   field("price", "السعر والقيمة", "السعر الرسمي", "Official price", "NUMBER"),
+  field("priceWithCurrency", "السعر والقيمة", "السعر والعملة في عمود واحد", "Money (amount + currency)", "MONEY", "COMPOSITE", ["nominal prices", "nominal price", "total price", "cash price"]),
   field("originalPrice", "السعر والقيمة", "السعر قبل الخصم", "Original price", "NUMBER", "METADATA"),
   field("pricePerSqm", "السعر والقيمة", "سعر المتر", "Price per sqm", "NUMBER", "METADATA"),
   field("currency", "السعر والقيمة", "العملة", "Currency", "CURRENCY_SELECT"),
@@ -240,14 +246,14 @@ export const CANONICAL_FIELDS: CanonicalField[] = [
   field("signageRights", "تجاري وإداري متقدم", "حقوق اللافتات", "Signage rights", "TEXT", "METADATA"),
   field("outdoorArea", "تجاري وإداري متقدم", "مساحة خارجية", "Outdoor area", "NUMBER", "METADATA"),
   field("kitchenExtraction", "تجاري وإداري متقدم", "تجهيز شفط للمطاعم", "Kitchen extraction", "BOOLEAN", "METADATA"),
-  field("greaseTrap", "تجاري وإداري متقدم", "Grease trap", "BOOLEAN", "METADATA"),
+  field("greaseTrap", "تجاري وإداري متقدم", "فاصل دهون", "Grease trap", "BOOLEAN", "METADATA"),
   field("officeGrade", "تجاري وإداري متقدم", "تصنيف المكتب", "Office grade", "TEXT", "METADATA"),
   field("retailCategory", "تجاري وإداري متقدم", "تصنيف الريتيل", "Retail category", "TEXT", "METADATA"),
   field("medicalLicenseEligible", "تجاري وإداري متقدم", "صالح لترخيص طبي", "Medical license eligible", "BOOLEAN", "METADATA"),
 
   field("warehouseClearHeight", "صناعي ولوجستي", "الارتفاع الصافي للمخزن", "Warehouse clear height", "NUMBER", "METADATA"),
   field("loadingBays", "صناعي ولوجستي", "عدد بوابات التحميل", "Loading bays", "NUMBER", "METADATA"),
-  field("dockLeveler", "صناعي ولوجستي", "Dock leveler", "BOOLEAN", "METADATA"),
+  field("dockLeveler", "صناعي ولوجستي", "منصة تسوية رصيف التحميل", "Dock leveler", "BOOLEAN", "METADATA"),
   field("yardArea", "صناعي ولوجستي", "مساحة الساحة", "Yard area", "NUMBER", "METADATA"),
   field("industrialPower", "صناعي ولوجستي", "قدرة كهرباء صناعية", "Industrial power", "TEXT", "METADATA"),
   field("craneCapacity", "صناعي ولوجستي", "حمولة الونش", "Crane capacity", "NUMBER", "METADATA"),
@@ -265,7 +271,7 @@ export const CANONICAL_FIELDS: CanonicalField[] = [
 export const CANONICAL_VALUES = CANONICAL_FIELDS.map((item) => item.value);
 export const CANONICAL_FIELD_MAP = new Map(CANONICAL_FIELDS.map((item) => [item.value, item]));
 export const METADATA_CANONICAL_VALUES = CANONICAL_FIELDS.filter((item) => item.storage === "METADATA").map((item) => item.value);
-export const CORE_UNIT_CANONICAL_VALUES = CANONICAL_FIELDS.filter((item) => item.storage !== "METADATA").map((item) => item.value);
+export const CORE_UNIT_CANONICAL_VALUES = CANONICAL_FIELDS.filter((item) => item.storage === "UNIT").map((item) => item.value);
 
 export function isCustomMetadataField(value: string) {
   return /^META:[^\r\n]{1,120}$/u.test(value);
@@ -273,6 +279,42 @@ export function isCustomMetadataField(value: string) {
 
 export function customMetadataLabel(value: string) {
   return isCustomMetadataField(value) ? value.slice(5).trim() : undefined;
+}
+
+const currencyAliases: Array<[RegExp, (typeof SUPPORTED_CURRENCIES)[number]]> = [
+  [/\bEGP\b|ج\s*\.?\s*م|جنيه(?:\s+مصري)?/iu, "EGP"],
+  [/\bUSD\b|US\$|\$/iu, "USD"],
+  [/\bEUR\b|€/iu, "EUR"],
+  [/\bAED\b|د\s*\.?\s*إ|درهم(?:\s+إماراتي)?/iu, "AED"],
+  [/\bSAR\b|ر\s*\.?\s*س|ريال(?:\s+سعودي)?/iu, "SAR"],
+  [/\bGBP\b|£/iu, "GBP"],
+  [/\bQAR\b|ر\s*\.?\s*ق/iu, "QAR"],
+  [/\bKWD\b|د\s*\.?\s*ك/iu, "KWD"],
+  [/\bBHD\b|د\s*\.?\s*ب/iu, "BHD"],
+  [/\bOMR\b|ر\s*\.?\s*ع/iu, "OMR"],
+];
+
+/** Parses one source cell into an exact DB-safe decimal string and a verified currency. */
+export function parseImportMoney(value: unknown): ParsedImportMoney {
+  if (value == null || String(value).trim() === "") return { ok: false, code: "EMPTY" };
+  const raw = String(value).normalize("NFKC").trim();
+  const explicitCode = raw.match(/\b[A-Z]{3}\b/iu)?.[0]?.toUpperCase();
+  if (explicitCode && !SUPPORTED_CURRENCIES.includes(explicitCode as any)) return { ok: false, code: "UNSUPPORTED_CURRENCY" };
+  const alias = currencyAliases.find(([pattern]) => pattern.test(raw));
+  const currency = (explicitCode || alias?.[1]) as (typeof SUPPORTED_CURRENCIES)[number] | undefined;
+  if (!currency) return { ok: false, code: "MISSING_CURRENCY" };
+  const digits: Record<string, string> = { "٠":"0", "١":"1", "٢":"2", "٣":"3", "٤":"4", "٥":"5", "٦":"6", "٧":"7", "٨":"8", "٩":"9", "٫":".", "٬":"" };
+  const withoutCurrency = currencyAliases.reduce((current, [pattern]) => current.replace(pattern, ""), raw.replace(/\b[A-Z]{3}\b/giu, ""));
+  const normalized = withoutCurrency.replace(/[٠-٩٫٬]/g, (character) => digits[character]).replace(/[\s,]/g, "");
+  if (!/^[+-]?\d+(?:\.\d+)?$/.test(normalized)) return { ok: false, code: "INVALID_AMOUNT" };
+  if (normalized.startsWith("-")) return { ok: false, code: "NEGATIVE_AMOUNT" };
+  const unsigned = normalized.replace(/^\+/, "");
+  const [integerRaw, fractionRaw = ""] = unsigned.split(".");
+  const significantFraction = fractionRaw.replace(/0+$/, "");
+  if (significantFraction.length > 2) return { ok: false, code: "TOO_MANY_DECIMALS" };
+  const integer = integerRaw.replace(/^0+(?=\d)/, "") || "0";
+  const fraction = fractionRaw.slice(0, 2).replace(/0+$/, "");
+  return { ok: true, amount: fraction ? `${integer}.${fraction}` : integer, currency };
 }
 
 export function parsePaymentPlanHeader(source: string) {
