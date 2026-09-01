@@ -33,6 +33,29 @@ export type NadimSearchState = {
   queryObjective?: "BEST_MATCH" | "CHEAPEST" | "MOST_EXPENSIVE";
 };
 
+export type NadimReservationFields = {
+  fullName?: string;
+  phone?: string;
+  paymentMethod?: "PROJECT_PAYMENT_PLAN";
+};
+
+export type NadimPendingAction = {
+  type: "RESERVATION_REQUEST";
+  unitId: string;
+  collectedFields: NadimReservationFields;
+  missingFields: Array<keyof NadimReservationFields>;
+  requestedAt: string;
+  lastExecutionStatus?: "READY" | "NOT_EXECUTED" | "FAILED";
+  lastErrorCode?: string;
+};
+
+export type NadimPendingFollowUp = {
+  channel?: "WHATSAPP" | "WEB" | "PHONE";
+  outboundAddress?: string;
+  temporal?: { kind: "RELATIVE"; amount: number; unit: "MINUTE" | "HOUR" | "DAY" | "WEEK" }
+    | { kind: "TOMORROW"; localTime?: string };
+};
+
 export type NadimState = {
   version: 2;
   revision: number;
@@ -48,6 +71,8 @@ export type NadimState = {
   comparisonUnitIds: string[];
   lastResultIds: string[];
   pendingClarification?: { reason: string; field?: StateField };
+  pendingAction?: NadimPendingAction;
+  pendingFollowUp?: NadimPendingFollowUp;
   lastOperations: StateOperation[];
   recentAssistantWording?: string;
 };

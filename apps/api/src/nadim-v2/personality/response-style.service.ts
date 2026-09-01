@@ -152,6 +152,70 @@ export class ResponseStyleService {
   }
 
   clarification(style: NadimLanguageStyle, reason: string) {
+    if (reason === "RESERVATION_FULLNAME_REQUIRED") return this.pick(style, {
+      AR_EGYPTIAN: "تمام، الوحدة اتحددت. إيه الاسم الكامل اللي أسجل بيه طلب الحجز؟",
+      AR_GULF: "تمام، تم تحديد الوحدة. ما الاسم الكامل لتسجيل طلب الحجز؟",
+      AR_FORMAL: "تم تحديد الوحدة. ما الاسم الكامل الذي أسجل به طلب الحجز؟",
+      EN_US: "The unit is selected. What full name should I use for the reservation request?",
+      FRANCO_ARABIC: "tamam, el unit et7adadet. eh el full name lel reservation request?",
+      MIXED_AR_EN: "تمام، الـunit اتحددت. إيه الـfull name لطلب الحجز؟",
+    });
+    if (reason === "RESERVATION_PHONE_REQUIRED") return this.pick(style, {
+      AR_EGYPTIAN: "تمام، محتاج رقم الموبايل بس عشان أكمل نفس طلب الحجز.",
+      AR_GULF: "تمام، أحتاج رقم الجوال فقط لإكمال طلب الحجز نفسه.",
+      AR_FORMAL: "أحتاج رقم الهاتف فقط لإكمال طلب الحجز نفسه.",
+      EN_US: "I only need your phone number to continue this reservation request.",
+      FRANCO_ARABIC: "me7tag رقم el mobile bas 3ashan akamel nafs el request.",
+      MIXED_AR_EN: "محتاج رقم الموبايل بس عشان أكمل نفس الـreservation request.",
+    });
+    if (reason === "RESERVATION_PHONE_CONFLICT") return this.pick(style, {
+      AR_EGYPTIAN: "الرقم ده مرتبط بعميل تاني، فمش هستخدمه تلقائيًا. ابعت رقمك الصحيح عشان أكمل نفس طلب الحجز.",
+      AR_GULF: "هذا الرقم مرتبط بعميل آخر، لذلك لن أستخدمه تلقائيًا. أرسل رقمك الصحيح لإكمال الطلب نفسه.",
+      AR_FORMAL: "هذا الرقم مرتبط بعميل آخر، لذلك لن أستخدمه تلقائيًا. أرسل رقمك الصحيح لإكمال طلب الحجز نفسه.",
+      EN_US: "That number belongs to another customer, so I won't reuse it. Send your correct number to continue this request.",
+      FRANCO_ARABIC: "el number da linked b customer tany, fa mesh hast5demo. eb3at رقمك el sa7.",
+      MIXED_AR_EN: "الرقم ده linked بعميل تاني، فمش هستخدمه. ابعت رقمك الصحيح عشان أكمل الـrequest.",
+    });
+    if (reason === "RESERVATION_PAYMENTMETHOD_REQUIRED") return this.pick(style, {
+      AR_EGYPTIAN: "تمام، تحب تستخدم نظام سداد المشروع ولا طريقة سداد مختلفة؟",
+      AR_GULF: "تمام، تفضّل نظام سداد المشروع أو طريقة سداد مختلفة؟",
+      AR_FORMAL: "هل تفضّل نظام سداد المشروع أم طريقة سداد مختلفة؟",
+      EN_US: "Would you like the project's payment plan or a different payment method?",
+      FRANCO_ARABIC: "te7eb project payment plan wala taree2a mokhtalefa?",
+      MIXED_AR_EN: "تحب الـproject payment plan ولا طريقة سداد مختلفة؟",
+    });
+    if (reason === "RESERVATION_PAYMENT_PLAN_UNAVAILABLE") return this.pick(style, {
+      AR_EGYPTIAN: "مش قادر أوثّق نظام سداد الوحدة دلوقتي، فمش هبعت طلب حجز ببيانات ناقصة.",
+      AR_GULF: "ما قدرت أوثّق نظام سداد الوحدة الآن، لذلك لن أرسل طلبًا ببيانات ناقصة.",
+      AR_FORMAL: "تعذر توثيق نظام سداد الوحدة الآن، لذلك لن أرسل طلبًا ببيانات ناقصة.",
+      EN_US: "I couldn't verify this unit's payment plan, so I won't submit an incomplete request.",
+      FRANCO_ARABIC: "mesh 2ader athabet payment plan, fa mesh hab3at request na2es.",
+      MIXED_AR_EN: "مش قادر أعمل verify للـpayment plan، فمش هبعت request ناقص.",
+    });
+    if (reason === "FOLLOWUP_WHATSAPP_PHONE_REQUIRED") return this.pick(style, {
+      AR_EGYPTIAN: "تمام، المتابعة هتكون واتساب. ابعتلي رقم واتساب اللي تحب نستخدمه.",
+      AR_GULF: "تمام، المتابعة ستكون على واتساب. أرسل رقم واتساب الذي تفضّل استخدامه.",
+      AR_FORMAL: "ستكون المتابعة عبر واتساب. ما رقم واتساب الذي تفضّل استخدامه؟",
+      EN_US: "The follow-up will be on WhatsApp. Which WhatsApp number should we use?",
+      FRANCO_ARABIC: "tamam, el follow-up WhatsApp. eb3atly el number elli nستخدمه.",
+      MIXED_AR_EN: "تمام، الـfollow-up هيكون WhatsApp. ابعتلي الرقم اللي نستخدمه.",
+    });
+    if (reason === "FOLLOWUP_EXACT_TIME_REQUIRED") return this.pick(style, {
+      AR_EGYPTIAN: "بكرة تمام. الساعة كام تحب المتابعة؟",
+      AR_GULF: "غدًا تمام. الساعة كم تفضّل المتابعة؟",
+      AR_FORMAL: "غدًا مناسب. في أي ساعة تفضّل المتابعة؟",
+      EN_US: "Tomorrow works. What time would you like the follow-up?",
+      FRANCO_ARABIC: "bokra tamam. el sa3a kam?",
+      MIXED_AR_EN: "بكرة تمام. تحب الـfollow-up الساعة كام؟",
+    });
+    if (reason === "FOLLOWUP_TIME_REQUIRED") return this.pick(style, {
+      AR_EGYPTIAN: "تمام، المتابعة هتكون واتساب. تحب أحددها إمتى؟",
+      AR_GULF: "تمام، المتابعة ستكون على واتساب. متى تفضّل موعدها؟",
+      AR_FORMAL: "ستكون المتابعة عبر واتساب. متى تفضّل موعدها؟",
+      EN_US: "The follow-up will be on WhatsApp. When should I schedule it?",
+      FRANCO_ARABIC: "tamam, el follow-up WhatsApp. a7adedha emta?",
+      MIXED_AR_EN: "تمام، الـfollow-up هيكون WhatsApp. أحدده إمتى؟",
+    });
     if (reason === "SEARCH_CHANGE_AMOUNT_REQUIRED") return this.pick(style, {
       AR_EGYPTIAN: "عايز تزودها لكام تحديدًا؟",
       AR_GULF: "تبغى ترفعها إلى كم تحديدًا؟",

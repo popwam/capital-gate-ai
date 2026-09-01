@@ -1143,7 +1143,14 @@ test("live Arabic product commands retain semantic routing during provider outag
   assert.equal(human.intent, "HUMAN_HANDOFF");
   const deletion = await understand("امسح المحادثة", compared);
   assert.equal(deletion.proposedActions?.[0]?.type, "REQUEST_CONVERSATION_DELETION");
-  for (const result of [share, human, deletion]) assert.notEqual(result.responseGoal, "CONTINUE_CONVERSATION_SAFELY");
+  for (const message of ["عاوز أكمل من الواتس", "عاوز افتح المحادثة دي من الواتس", "ابعتلي لينك الواتس", "هات رابط المحادثة من الواتس", "continue this conversation on WhatsApp", "open this chat on WhatsApp"]) {
+    const whatsapp = await understand(message, compared);
+    assert.equal(whatsapp.proposedActions?.some((action) => action.type === "CREATE_WHATSAPP_HANDOFF_LINK"), true, message);
+    assert.notEqual(whatsapp.responseGoal, "CONTINUE_CONVERSATION_SAFELY", message);
+  }
+  const schedule = await understand("حدد معاد بكرا", compared);
+  assert.equal(schedule.proposedActions?.some((action) => action.type === "CREATE_FOLLOWUP"), true);
+  for (const result of [share, human, deletion, schedule]) assert.notEqual(result.responseGoal, "CONTINUE_CONVERSATION_SAFELY");
 });
 
 test("pending delete confirmation and multi-intent requirement plus follow-up produce separate executable actions", async () => {

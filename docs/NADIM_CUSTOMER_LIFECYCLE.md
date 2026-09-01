@@ -31,6 +31,29 @@ The browser uses same-origin routes. Server routes call guarded internal endpoin
 
 Required deployment variables are `WEB_BASE_URL` and `WHATSAPP_BUSINESS_NUMBER` in addition to the existing Nadim server variables.
 
+## Reservation requests and sales opportunities
+
+A reservation request is a resumable Nadim V2 pending action stored in the canonical conversation state. It retains the exact selected unit and collects only the missing customer name, phone, and payment method. Choosing the project payment plan forces a fresh verified payment-plan lookup for that exact unit before an action can be proposed.
+
+`CREATE_RESERVATION_REQUEST` is execution-gated. It reaches the existing Automation API only when all of the following are configured:
+
+- `NADIM_ACTION_EXECUTION_ENABLED=true`
+- `NADIM_AUTOMATION_API_URL`
+- `NADIM_AUTOMATION_SECRET`
+- a supported customer channel and an exact unit
+
+When the gate is disabled, unavailable, or rejects the request, Nadim keeps the pending action resumable and must not claim that the request was submitted. Enabling the gate is an explicit deployment decision; application code does not change it.
+
+The Dashboard uses these distinct product concepts:
+
+- Conversation: the customer communication thread and its AI/HUMAN ownership.
+- Property requirement: an independent saved property brief, including recent matches and any selected unit.
+- Sales opportunity (`Lead`): an actionable commercial event created by the authorized Automation API for explicit reservation, viewing, callback/contact, or another configured qualification policy.
+
+A conversation or requirement alone does not create a sales opportunity. Therefore a zero opportunity count is valid when requests are still collecting fields or action execution is disabled. The pending reservation remains visible in conversation detail without fabricating a Lead.
+
+For a Web conversation that requests WhatsApp follow-up, the task stores `channel=WHATSAPP` and the verified customer destination. The Web device identifier is never registered as a WhatsApp identity.
+
 ## Controlled inventory
 
 Run intentionally with:

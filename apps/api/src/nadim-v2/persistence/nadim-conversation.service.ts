@@ -229,6 +229,9 @@ export class NadimConversationService {
           select: { id: true, title: true, purpose: true, propertyType: true, locations: true, preferredDevelopers: true, preferredProjects: true, bedrooms: true, bathrooms: true, areaMin: true, areaMax: true, budgetMin: true, budgetMax: true, currency: true, budgetOriginalAmount: true, budgetOriginalCurrency: true, budgetNormalizedAmount: true, budgetNormalizedCurrency: true, fxRate: true, fxAsOf: true, fxSource: true, paymentPreference: true, deliveryPreference: true, recentResultIds: true, selectedUnitId: true, selectedProjectId: true, comparisonUnitIds: true, status: true, createdAt: true, updatedAt: true },
         })
       : [];
+    const customerProfile = customerId && typeof this.prisma.customer?.findUnique === "function"
+      ? await this.prisma.customer.findUnique({ where: { id: customerId }, select: { name: true, normalizedPhone: true, normalizedEmail: true } })
+      : null;
     const recentTurns = recentRows.reverse().map(recentTurnContext);
     const last = recentTurns.at(-1);
     const lastVerifiedToolSummary = [...recentTurns].reverse().find((turn) => turn.tools.some((tool) => tool.ok))?.tools;
@@ -240,6 +243,7 @@ export class NadimConversationService {
       summary: plainObject(conversation.summary),
       customerContext: {
         ...plainObject(conversation.customerContext),
+        customerProfile,
         activeRequirementId: conversation.activeRequirementId ?? null,
         propertyRequirements: requirements.map((requirement) => ({
           ...requirement,

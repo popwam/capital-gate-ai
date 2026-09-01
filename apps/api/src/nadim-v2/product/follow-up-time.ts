@@ -8,7 +8,18 @@ const asciiDigits = (value: string) => value.replace(/[٠-٩]/gu, (digit) => Str
 /** Outage-safe extraction. The healthy AI brain emits the same normalized contract. */
 export function extractFollowUpTemporalRequest(message: string): FollowUpTemporalRequest | undefined {
   const text = asciiDigits(message).normalize("NFKC").toLocaleLowerCase();
-  if (/(?:بكرة|غد[ًاا]?|tomorrow)/iu.test(text)) return { kind: "TOMORROW" };
+  if (/(?:بكر[ةهع]؟?|بكرا|غد[ًاا]?|tomorrow)/iu.test(text)) {
+    const clock = text.match(/(?:الساعة|الساعه|ساعة|at)\s*(\d{1,2})(?:\s*[:.]\s*(\d{1,2}))?\s*(ص|صباح(?:ًا|ا)?|م|مساء(?:ً|ا)?|am|pm)?/iu);
+    if (!clock) return { kind: "TOMORROW" };
+    let hour = Number(clock[1]);
+    const minute = Number(clock[2] ?? 0);
+    const period = clock[3]?.toLocaleLowerCase();
+    if (/(?:م|مساء|pm)/iu.test(period ?? "") && hour < 12) hour += 12;
+    if (/(?:ص|صباح|am)/iu.test(period ?? "") && hour === 12) hour = 0;
+    return hour <= 23 && minute <= 59
+      ? { kind: "TOMORROW", localTime: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}` }
+      : { kind: "TOMORROW" };
+  }
   if (/(?:الأسبوع\s+الجاي|الاسبوع\s+الجاي|next\s+week)/iu.test(text)) return { kind: "RELATIVE", amount: 1, unit: "WEEK" };
   if (/(?:نص|نصف|half)(?:\s+an?)?\s*(?:ساعة|ساعه|hour)/iu.test(text)) return { kind: "RELATIVE", amount: 30, unit: "MINUTE" };
   if (/(?:ساعتين|ساعتان|two\s+hours?)/iu.test(text)) return { kind: "RELATIVE", amount: 2, unit: "HOUR" };

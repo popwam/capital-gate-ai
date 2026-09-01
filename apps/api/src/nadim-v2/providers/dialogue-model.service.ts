@@ -45,6 +45,8 @@ function compactState(state: NadimState, context?: NadimConversationContext) {
     selectedProjectId: state.selectedProjectId,
     recentResultIds: state.lastResultIds.slice(0, 10),
     pendingClarification: state.pendingClarification,
+    pendingAction: state.pendingAction,
+    pendingFollowUp: state.pendingFollowUp,
     pendingDeletion: context?.pendingDeletion,
     responseLanguage: state.languageStyle.preferredResponseStyle,
     regionalVariant: state.languageStyle.regionalVariant,

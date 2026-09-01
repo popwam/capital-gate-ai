@@ -2,12 +2,13 @@
 
 import {
   Activity,
-  Building2,
-  Database,
-  FileSpreadsheet,
+  BarChart3,
+  CalendarClock,
+  ClipboardList,
+  Cog,
   LayoutDashboard,
-  MapPinned,
   MessageSquareText,
+  UserRoundCog,
   UsersRound,
   Warehouse,
 } from "lucide-react";
@@ -26,31 +27,22 @@ type NavGroup = {
 
 const groups: NavGroup[] = [
   {
-    label: "التشغيل",
+    label: "مساحة العمل",
     items: [
       { icon: LayoutDashboard, label: "نظرة عامة", href: "/admin" },
-      { icon: FileSpreadsheet, label: "البيانات والاستيراد", href: "/admin/data" },
-      { icon: Warehouse, label: "المخزون", href: "/admin/inventory" },
-    ],
-  },
-  {
-    label: "الكتالوج العقاري",
-    items: [
-      { icon: UsersRound, label: "المطورون", href: "/admin/developers" },
-      { icon: Building2, label: "المشروعات", href: "/admin/projects" },
-      { icon: MapPinned, label: "المناطق", href: "/admin/locations" },
-    ],
-  },
-  {
-    label: "المبيعات والمحادثات",
-    items: [
-      { icon: Database, label: "العملاء المحتملون", href: "/admin/leads" },
       { icon: MessageSquareText, label: "المحادثات", href: "/admin/conversations" },
+      { icon: ClipboardList, label: "المتطلبات العقارية", href: "/admin/requirements" },
+      { icon: CalendarClock, label: "المتابعات", href: "/admin/follow-ups" },
+      { icon: UsersRound, label: "فرص البيع", href: "/admin/leads" },
+      { icon: Warehouse, label: "المخزون", href: "/admin/inventory" },
+      { icon: UserRoundCog, label: "الفريق", href: "/admin/team" },
+      { icon: BarChart3, label: "التحليلات", href: "/admin/analytics" },
+      { icon: Cog, label: "الإعدادات", href: "/admin/settings" },
     ],
   },
   {
-    label: "النظام",
-    items: [{ icon: Activity, label: "حالة النظام والذكاء", href: "/admin/system" }],
+    label: "أدوات الإدارة",
+    items: [{ icon: Activity, label: "حالة النظام", href: "/admin/system" }],
   },
 ];
 

@@ -700,23 +700,39 @@ export class LeadCrmService {
         activeRequirementId: true,
         customerContext: true,
         summary: true,
+        state: true,
         externalUserId: true,
         createdAt: true,
         updatedAt: true,
-        customer: { select: { name: true } },
+        customer: { select: { name: true, normalizedPhone: true, normalizedEmail: true } },
         turns: {
           orderBy: { createdAt: "asc" },
           select: { id: true, channel: true, userMessage: true, assistantReply: true, modelProvider: true, createdAt: true },
         },
-        propertyRequirements: { orderBy: { updatedAt: "desc" }, select: { id: true, title: true, status: true, purpose: true, propertyType: true, locations: true, preferredDevelopers: true, preferredProjects: true, bedrooms: true, bathrooms: true, areaMin: true, areaMax: true, budgetMin: true, budgetMax: true, currency: true, updatedAt: true } },
+        propertyRequirements: { orderBy: { updatedAt: "desc" }, select: { id: true, title: true, status: true, purpose: true, propertyType: true, locations: true, preferredDevelopers: true, preferredProjects: true, bedrooms: true, bathrooms: true, areaMin: true, areaMax: true, budgetMin: true, budgetMax: true, currency: true, recentResultIds: true, selectedUnitId: true, updatedAt: true } },
         followUpTasks: { where: { status: { in: ["PENDING", "CLAIMED"] } }, orderBy: { dueAt: "asc" }, select: { id: true, dueAt: true, timezone: true, status: true, reason: true, channel: true } },
         participants: { orderBy: { joinedAt: "asc" }, select: { id: true, channel: true, role: true, status: true, joinedAt: true, externalUserId: true } },
       },
     });
     if (!item) throw new NotFoundException("Conversation not found");
+    const state = this.json(item.state);
+    const pendingAction = this.json(state.pendingAction);
+    const unitIds = [...new Set([
+      typeof state.selectedUnitId === "string" ? state.selectedUnitId : undefined,
+      typeof pendingAction.unitId === "string" ? pendingAction.unitId : undefined,
+      ...item.propertyRequirements.map((requirement) => requirement.selectedUnitId ?? undefined),
+    ].filter((value): value is string => Boolean(value)))];
+    const units = unitIds.length ? await this.prisma.unit.findMany({
+      where: { id: { in: unitIds } },
+      select: { id: true, externalUnitId: true, unitType: true, price: true, currency: true, project: { select: { name: true, nameAr: true, nameEn: true } } },
+    }) : [];
+    const unitMap = new Map(units.map((unit) => [unit.id, { ...unit, price: unit.price == null ? null : Number(unit.price), projectName: unit.project.nameAr ?? unit.project.nameEn ?? unit.project.name }]));
     return {
       ...item,
       identity: item.customer?.name ?? this.maskIdentity(item.externalUserId) ?? "عميل بدون اسم",
+      contact: item.customer ? { name: item.customer.name, phone: item.customer.normalizedPhone, email: item.customer.normalizedEmail, verified: Boolean(item.customer.normalizedPhone || item.customer.normalizedEmail) } : null,
+      selectedUnit: typeof state.selectedUnitId === "string" ? unitMap.get(state.selectedUnitId) ?? null : null,
+      pendingAction: pendingAction.type === "RESERVATION_REQUEST" ? { ...pendingAction, unit: typeof pendingAction.unitId === "string" ? unitMap.get(pendingAction.unitId) ?? null : null } : null,
       externalUserId: undefined,
       customer: undefined,
       messages: item.turns.flatMap((turn) => [
@@ -724,9 +740,55 @@ export class LeadCrmService {
         ...(turn.assistantReply ? [{ id: `${turn.id}:assistant`, role: turn.modelProvider === "HUMAN" ? "HUMAN" : "ASSISTANT", content: turn.assistantReply, channel: turn.channel, createdAt: turn.createdAt }] : []),
       ]),
       turns: undefined,
-      propertyRequirements: item.propertyRequirements.map((requirement) => ({ ...requirement, active: requirement.id === item.activeRequirementId })),
+      propertyRequirements: item.propertyRequirements.map((requirement) => ({
+        ...requirement,
+        active: requirement.id === item.activeRequirementId,
+        matchCount: requirement.recentResultIds?.length ?? 0,
+        selectedUnit: requirement.selectedUnitId ? unitMap.get(requirement.selectedUnitId) ?? null : null,
+      })),
       participants: item.participants.map((participant) => ({ ...participant, externalUserId: this.maskIdentity(participant.externalUserId) })),
     };
+  }
+
+  async requirementsWorkflow() {
+    const items = await this.prisma.propertyRequirement.findMany({
+      where: { status: { not: "CLOSED" }, conversation: { is: { deletedAt: null } } },
+      orderBy: { updatedAt: "desc" },
+      take: 200,
+      select: {
+        id: true, title: true, propertyType: true, locations: true, bedrooms: true, budgetMax: true, currency: true,
+        status: true, recentResultIds: true, selectedUnitId: true, updatedAt: true,
+        customer: { select: { name: true, normalizedPhone: true } },
+        conversation: { select: { id: true, activeRequirementId: true } },
+      },
+    });
+    const unitIds = [...new Set(items.map((item) => item.selectedUnitId).filter((value): value is string => Boolean(value)))];
+    const units = unitIds.length ? await this.prisma.unit.findMany({ where: { id: { in: unitIds } }, select: { id: true, externalUnitId: true, project: { select: { name: true, nameAr: true, nameEn: true } } } }) : [];
+    const unitMap = new Map(units.map((unit) => [unit.id, { externalUnitId: unit.externalUnitId, projectName: unit.project.nameAr ?? unit.project.nameEn ?? unit.project.name }]));
+    return items.map((item) => ({
+      ...item,
+      customer: { name: item.customer.name, phone: item.customer.normalizedPhone },
+      conversationId: item.conversation?.id ?? null,
+      active: item.conversation?.activeRequirementId === item.id,
+      matchCount: item.recentResultIds.length,
+      selectedUnit: item.selectedUnitId ? unitMap.get(item.selectedUnitId) ?? null : null,
+      conversation: undefined,
+    }));
+  }
+
+  async followUpsWorkflow() {
+    return this.prisma.followUpTask.findMany({
+      where: { status: { in: ["PENDING", "CLAIMED"] }, conversation: { deletedAt: null } },
+      orderBy: { dueAt: "asc" },
+      take: 200,
+      select: {
+        id: true, dueAt: true, timezone: true, channel: true, outboundAddress: true, status: true, reason: true,
+        conversationId: true, createdAt: true,
+        customer: { select: { name: true, normalizedPhone: true } },
+        propertyRequirement: { select: { title: true } },
+        conversation: { select: { mode: true } },
+      },
+    });
   }
 
   async setConversationMode(id: string, mode: "AI" | "HUMAN" | "PAUSED", adminUserId: string) {

@@ -8,7 +8,7 @@ import { StateEngineService } from "./brain/state-engine.service";
 import { ToolExecutorService } from "./brain/tool-executor.service";
 import { ToolLoopService, ToolLoopResult } from "./brain/tool-loop.service";
 import { UnderstandingResult, UnderstandingService } from "./brain/understanding.service";
-import { ExecutedAction, NadimConversationMode } from "./domain/nadim-action";
+import { ExecutedAction, NadimConversationMode, ProposedAction } from "./domain/nadim-action";
 import { NadimTurnResult } from "./domain/nadim-result";
 import { buildNadimUi } from "./domain/nadim-ui";
 import { NadimTurnDto } from "./dto/nadim-turn.dto";
@@ -16,6 +16,7 @@ import { LanguageStyleDetectorService } from "./personality/language-style-detec
 import { nadimTurnRequestHash, NadimConversationService } from "./persistence/nadim-conversation.service";
 import { CustomerLifecycleService } from "./product/customer-lifecycle.service";
 import { FxRateService } from "./product/fx-rate.service";
+import { followUpTransition, reservationTransition } from "./product/customer-journey";
 
 function safeDiagnosticMeaning(value?: string) {
   if (!value) return undefined;
@@ -247,6 +248,66 @@ export class NadimV2Service {
         locale: input.locale,
       });
       state = await this.normalizeBudget(state);
+
+      const profile = resolved.conversationContext?.customerContext?.customerProfile as { name?: string | null; normalizedPhone?: string | null } | undefined;
+      const reservation = reservationTransition({
+        state,
+        message: input.message,
+        reservationIntent: understood.understanding.intent === "RESERVATION_REQUEST",
+        profile: { name: profile?.name, phone: profile?.normalizedPhone },
+      });
+      let reservationBlocked = false;
+      if (reservation?.pendingAction) {
+        state = { ...state, pendingAction: reservation.pendingAction };
+        if (reservation.clarification) state.pendingClarification = { reason: reservation.clarification };
+        if (this.lifecycle && (reservation.pendingAction.collectedFields.fullName || reservation.pendingAction.collectedFields.phone)) {
+          try {
+            const contact = await this.lifecycle.saveCustomerContact({
+              conversationId: resolved.conversation.id,
+              channel: input.channel,
+              externalUserId: input.externalUserId,
+              name: reservation.pendingAction.collectedFields.fullName,
+              phone: reservation.pendingAction.collectedFields.phone,
+            });
+            state.customerId = contact.id;
+          } catch (error) {
+            const response = typeof (error as { getResponse?: unknown })?.getResponse === "function"
+              ? (error as { getResponse: () => unknown }).getResponse()
+              : undefined;
+            const code = response && typeof response === "object" ? (response as { code?: unknown }).code : undefined;
+            if (code !== "CUSTOMER_PHONE_CONFLICT" || !state.pendingAction) throw error;
+            reservationBlocked = true;
+            const collectedFields = { ...state.pendingAction.collectedFields, phone: undefined };
+            state = {
+              ...state,
+              pendingAction: { ...state.pendingAction, collectedFields, missingFields: [...new Set([...state.pendingAction.missingFields, "phone" as const])] },
+              pendingClarification: { reason: "RESERVATION_PHONE_CONFLICT" },
+            };
+          }
+        }
+      }
+
+      const followUp = followUpTransition({ state, message: input.message, profilePhone: profile?.normalizedPhone });
+      if (followUp) {
+        state = { ...state, pendingFollowUp: followUp.pendingFollowUp };
+        if (followUp.clarification) state.pendingClarification = { reason: followUp.clarification };
+        else if (!followUp.scheduling && followUp.pendingFollowUp.channel) state.pendingClarification = { reason: "FOLLOWUP_TIME_REQUIRED" };
+        const actions = (understood.understanding.proposedActions ?? []).filter((action) => action.type !== "CREATE_FOLLOWUP");
+        if (followUp.ready && followUp.pendingFollowUp.temporal) {
+          actions.push({
+            type: "CREATE_FOLLOWUP",
+            reason: "Customer explicitly requested a scheduled follow-up",
+            payload: {
+              temporal: followUp.pendingFollowUp.temporal,
+              channel: followUp.pendingFollowUp.channel ?? input.channel,
+              outboundAddress: followUp.pendingFollowUp.outboundAddress,
+              sourceText: input.message.slice(0, 500),
+            },
+          });
+          state.pendingClarification = undefined;
+        }
+        understood.understanding.proposedActions = actions;
+      }
       if (beginsIndependentRequirement && !this.hasRequirementCriteria(state)) {
         state = { ...state, pendingClarification: { reason: "NEW_REQUIREMENT_EXPECTED" } };
       }
@@ -279,9 +340,16 @@ export class NadimV2Service {
           })
         : undefined;
 
-      const plan = control.action
+      let plan = control.action
         ? { goal: control.action, steps: [] }
         : this.planner.plan(understood.understanding, state);
+      if (!control.action && !reservationBlocked && reservation?.shouldSubmit && reservation.pendingAction?.collectedFields.paymentMethod === "PROJECT_PAYMENT_PLAN") {
+        plan = {
+          ...plan,
+          clarification: undefined,
+          steps: [...plan.steps.filter((step) => step.tool !== "GET_PAYMENT_PLAN"), { tool: "GET_PAYMENT_PLAN" as const, arguments: { unitId: reservation.pendingAction.unitId } }].slice(0, 4),
+        };
+      }
       const loop = await this.executeToolLoop(plan, state, understood.brainDecision, trace);
       const toolResults = loop.results;
       const finalDecision = loop.finalDecision;
@@ -314,8 +382,27 @@ export class NadimV2Service {
         state = { ...state, selectedUnitId: referencedUnitId };
       }
 
-      const proposedActions = control.action ? [] : this.actionPolicy.propose(understood.understanding, state)
+      let proposedActions: ProposedAction[] = control.action ? [] : this.actionPolicy.propose(understood.understanding, state)
         .filter((action) => !(persistedRequirement && action.type === "SAVE_PROPERTY_REQUIREMENT"));
+      proposedActions = proposedActions.filter((action) => action.type !== "CREATE_RESERVATION_REQUEST");
+      if (!control.action && !reservationBlocked && reservation?.shouldSubmit && reservation.pendingAction) {
+        const verifiedPayment = toolResults.find((result) => result.tool === "GET_PAYMENT_PLAN" && result.ok)?.data as { unit?: { id?: string }; plans?: unknown[] } | undefined;
+        if (verifiedPayment?.unit?.id === reservation.pendingAction.unitId && verifiedPayment.plans?.length) {
+          proposedActions.push({
+            type: "CREATE_RESERVATION_REQUEST",
+            reason: "Customer supplied every required reservation-request field",
+            payload: {
+              unitId: reservation.pendingAction.unitId,
+              fullName: reservation.pendingAction.collectedFields.fullName,
+              phone: reservation.pendingAction.collectedFields.phone,
+              paymentMethod: reservation.pendingAction.collectedFields.paymentMethod,
+              verifiedPaymentPlans: verifiedPayment.plans,
+            },
+          });
+        } else {
+          state.pendingClarification = { reason: "RESERVATION_PAYMENT_PLAN_UNAVAILABLE" };
+        }
+      }
       const actionStarted = Date.now();
       const externalActions = control.action ? [] : await this.actionPolicy.execute(proposedActions, {
         channel: input.channel,
@@ -329,6 +416,19 @@ export class NadimV2Service {
       });
       const actionLatencyMs = Date.now() - actionStarted;
       const executedActions: ExecutedAction[] = [...(control.executed ? [control.executed] : []), ...externalActions];
+      const reservationResult = executedActions.find((action) => action.type === "CREATE_RESERVATION_REQUEST");
+      if (reservationResult?.status === "SUCCEEDED") state = { ...state, pendingAction: undefined };
+      else if (reservationResult && state.pendingAction) state = {
+        ...state,
+        pendingAction: {
+          ...state.pendingAction,
+          lastExecutionStatus: reservationResult.status === "FAILED" ? "FAILED" : "NOT_EXECUTED",
+          lastErrorCode: reservationResult.errorCode,
+        },
+      };
+      if (executedActions.some((action) => action.type === "CREATE_FOLLOWUP" && action.status === "SUCCEEDED")) {
+        state = { ...state, pendingFollowUp: undefined };
+      }
 
       const activeRequirementId = persistedRequirement?.id
         ?? switchedRequirementId

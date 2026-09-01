@@ -116,7 +116,7 @@ export default function LeadsPage() {
   return (
     <main className="mx-auto max-w-[1480px] p-4 sm:p-6 lg:p-8" dir="rtl">
       <section className="rounded-[24px] border border-[#dfe4e0] bg-white p-5 sm:p-6">
-        <div className="flex items-end justify-between gap-4"><div><div className="flex items-center gap-2 text-[12px] font-bold text-[#4f7568]"><Users size={16}/> إدارة فرص البيع</div><h2 className="mt-2 text-[24px] font-bold">العملاء المحتملون</h2><p className="mt-1 text-[13px] text-[#74817b]">{data.total} فرصة ناتجة من محادثات العملاء، مع المتابعة والتعيين وسياق الاهتمام.</p></div></div>
+        <div className="flex items-end justify-between gap-4"><div><div className="flex items-center gap-2 text-[12px] font-bold text-[#4f7568]"><Users size={16}/> إدارة فرص البيع</div><h2 className="mt-2 text-[24px] font-bold">فرص البيع</h2><p className="mt-1 text-[13px] text-[#74817b]">{data.total ? `${data.total} فرصة مؤهلة قابلة للمتابعة.` : "لا توجد فرص مؤهلة بعد؛ لا تتحول المحادثة أو المتطلب وحدهما إلى فرصة بيع."}</p></div></div>
       </section>
       {trustAlerts.length>0&&<section className="mt-4 rounded-[22px] border border-[#ead7b9] bg-[#fffaf0] p-4 sm:p-5"><div className="flex items-center gap-2 text-[#8b6225]"><AlertTriangle size={17}/><b>تنبيهات ثقة العملاء</b><span className="rounded-full bg-white px-2 py-1 text-[11px] font-bold">{trustAlerts.length}</span></div><p className="mt-1 text-[12px] text-[#8a7a62]">دي تنبيهات مراجعة، مش حكم تلقائي إن العميل Fake. قرار التأكيد النهائي للأدمن.</p><div className="mt-3 grid gap-2 lg:grid-cols-2">{trustAlerts.slice(0,4).map(alert=><div key={alert.id} className="rounded-xl border border-[#eadfcf] bg-white p-3"><a href={alert.leadId?`/admin/leads/${alert.leadId}`:`/admin/conversations/${alert.conversationId}`} className="block transition hover:opacity-80"><div className="flex items-center justify-between gap-2"><b className="text-[12px]" dir="auto">{alert.candidateName||"بيانات غير مكتملة"}</b><TrustStatus value={alert.riskLevel}/></div><p className="mt-1 text-[11px] text-[#756f64]" dir="auto">{alert.candidatePhone||alert.messagePreview||"—"}</p><p className="mt-2 text-[10px] text-[#9a7650]">{alert.reasons.slice(0,3).map(reasonLabel).join(" · ")}</p></a><div className="mt-3 flex gap-2"><button onClick={()=>reviewAlert(alert.id,"ADMIN_CONFIRMED_REAL")} className="rounded-lg bg-[#e5f3eb] px-2.5 py-1.5 text-[10px] font-bold text-[#2f6d52]">حقيقي</button><button onClick={()=>reviewAlert(alert.id,"RESOLVED")} className="rounded-lg border px-2.5 py-1.5 text-[10px] font-bold">مراجَع</button><button onClick={()=>reviewAlert(alert.id,"ADMIN_CONFIRMED_FAKE")} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-[10px] font-bold text-red-700">Fake مؤكد</button></div></div>)}</div></section>}
         <form onSubmit={submit} className="mt-5 rounded-[22px] border border-[#dfe4e0] bg-white p-4">
@@ -222,15 +222,15 @@ export default function LeadsPage() {
         <div className="mt-4 overflow-hidden rounded-[20px] border bg-white">
           <div className="hidden grid-cols-[1.2fr_1fr_.8fr_.8fr_.9fr_1fr_1fr_.9fr_1fr_26px] gap-3 border-b bg-[#fbfaf7] px-4 py-3 text-[7px] font-bold uppercase tracking-wide text-[#7c8782] xl:grid">
             {[
-              "Customer",
-              "Status",
-              "Intent",
-              "Budget",
-              "Area",
-              "Project / Unit",
-              "Created",
-              "Last activity",
-              "Assigned",
+              "العميل",
+              "الحالة",
+              "نوع الفرصة",
+              "الميزانية",
+              "المنطقة",
+              "المشروع / الوحدة",
+              "تاريخ الإنشاء",
+              "آخر نشاط",
+              "المسؤول",
               "",
             ].map((x) => (
               <span key={x}>{x}</span>
@@ -247,33 +247,33 @@ export default function LeadsPage() {
                 key={lead.id}
                 className="grid gap-3 border-b px-4 py-4 transition last:border-0 hover:bg-[#fbfaf7] sm:grid-cols-2 xl:grid-cols-[1.2fr_1fr_.8fr_.8fr_.9fr_1fr_1fr_.9fr_1fr_26px] xl:items-center"
               >
-                <Cell label="Customer">
-                  <b className="block text-[10px]">{lead.name || "Unnamed customer"}</b>
-                  <span className="text-[8px] text-[#74817b]">{lead.phone || "No phone provided"}</span>
+                <Cell label="العميل">
+                  <b className="block text-[10px]">{lead.name || "عميل بدون اسم"}</b>
+                  <span className="text-[8px] text-[#74817b]">{lead.phone || "لم يُسجل رقم هاتف"}</span>
                   <div className="mt-1"><TrustStatus value={lead.trustStatus}/></div>
                 </Cell>
-                <Cell label="Status">
+                <Cell label="الحالة">
                   <Status value={lead.status} />
                 </Cell>
-                <Cell label="Intent">
+                <Cell label="نوع الفرصة">
                   <b className="text-[10px]">{lead.intentScore} / 100</b>
                   <span className="block text-[7px] text-[#78837e]">
                     {lead.intent}
                   </span>
                 </Cell>
-                <Cell label="Budget">{money(lead.budget)}</Cell>
-                <Cell label="Preferred area">
+                <Cell label="الميزانية">{money(lead.budget)}</Cell>
+                <Cell label="المنطقة">
                   {lead.preferredAreas?.[0] || "—"}
                 </Cell>
-                <Cell label="Project / Unit">
+                <Cell label="المشروع / الوحدة">
                   <b className="block">{lead.interestedProject?.name || "—"}</b>
                   <span className="text-[#7b8781]">
                     {lead.interestedUnit?.externalUnitId || ""}
                   </span>
                 </Cell>
-                <Cell label="Created">{fmt(lead.createdAt)}</Cell>
-                <Cell label="Last activity">{fmt(lead.lastActivityAt)}</Cell>
-                <Cell label="Assigned">
+                <Cell label="تاريخ الإنشاء">{fmt(lead.createdAt)}</Cell>
+                <Cell label="آخر نشاط">{fmt(lead.lastActivityAt)}</Cell>
+                <Cell label="المسؤول">
                   {lead.assignedTo?.name || "غير معيّن"}
                 </Cell>
                 <ArrowRight size={13} className="hidden xl:block" />
@@ -282,13 +282,13 @@ export default function LeadsPage() {
           )}
           {!loading && !data.items.length && (
             <div className="p-12 text-center text-[10px] text-[#78837e]">
-              No leads match these filters.
+              {data.total === 0 ? "لم يتم إنشاء فرص بيع بعد. ستظهر هنا الطلبات المؤهلة مثل طلبات الحجز والمعاينة والتواصل مع المبيعات." : "لا توجد فرص بيع مطابقة للفلاتر الحالية."}
             </div>
           )}
         </div>
         <div className="mt-4 flex items-center justify-between">
           <p className="text-[8px] text-[#7c8782]">
-            Page {data.page} of {data.totalPages}
+            صفحة {data.page} من {data.totalPages}
           </p>
           <div className="flex gap-2">
             <button
@@ -296,14 +296,14 @@ export default function LeadsPage() {
               onClick={() => load(data.page - 1)}
               className="rounded-xl border bg-white px-4 py-2 text-[8px] font-bold disabled:opacity-40"
             >
-              Previous
+              السابق
             </button>
             <button
               disabled={data.page >= data.totalPages}
               onClick={() => load(data.page + 1)}
               className="rounded-xl border bg-white px-4 py-2 text-[8px] font-bold disabled:opacity-40"
             >
-              Next
+              التالي
             </button>
           </div>
         </div>

@@ -191,3 +191,18 @@ test("successful +30 minute action persists the deterministic dueAt in the conve
   assert.equal(captured.timezone, "Africa/Cairo");
   assert.ok(captured.dueAt.getTime() >= before + 30 * 60_000 && captured.dueAt.getTime() < before + 30 * 60_000 + 1_000);
 });
+
+test("a Web-requested WhatsApp follow-up uses the verified destination without creating a false WhatsApp identity", async () => {
+  let captured: any;
+  const policy = new ActionPolicyService({} as any, {
+    conversationTimezone: async () => "Africa/Cairo",
+    createFollowUp: async (input: any) => { captured = input; return { id: "followup-wa" }; },
+  } as any);
+  const [result] = await policy.execute([{ type: "CREATE_FOLLOWUP", reason: "explicit", payload: {
+    temporal: { kind: "RELATIVE", amount: 30, unit: "MINUTE" }, channel: "WHATSAPP", outboundAddress: "01033662881",
+  } }], { channel: "WEB", externalUserId: "web-device-id", conversationId: "c1", requestId: "r1", state: initialNadimState({ channel: "WEB", locale: "ar-EG" }) });
+  assert.equal(result.status, "SUCCEEDED");
+  assert.equal(captured.channel, "WHATSAPP");
+  assert.equal(captured.outboundAddress, "01033662881");
+  assert.equal(captured.externalUserId, undefined);
+});

@@ -66,8 +66,13 @@ export class ActionPolicyService {
         const timezone = await this.lifecycle.conversationTimezone(context.conversationId) ?? this.localeTimezone(context.state!.locale);
         if (!timezone) return { type: proposal.type, status: "NOT_EXECUTED", errorCode: "TIMEZONE_REQUIRED" };
         const dueAt = resolveFollowUpDueAt(temporal, timezone);
+        const requestedChannel = typeof proposal.payload.channel === "string" && ["WEB", "WHATSAPP", "PHONE"].includes(proposal.payload.channel)
+          ? proposal.payload.channel as NadimChannel
+          : context.channel;
         const task = await this.lifecycle.createFollowUp({
-          conversationId: context.conversationId, channel: context.channel, externalUserId: context.externalUserId,
+          conversationId: context.conversationId, channel: requestedChannel,
+          externalUserId: requestedChannel === context.channel ? context.externalUserId : undefined,
+          outboundAddress: typeof proposal.payload.outboundAddress === "string" ? proposal.payload.outboundAddress : undefined,
           dueAt, timezone, reason: proposal.reason, messageIntent: proposal.payload,
           renderedMessage: typeof proposal.payload.text === "string" ? proposal.payload.text : undefined,
           propertyRequirementId: typeof proposal.payload.propertyRequirementId === "string" ? proposal.payload.propertyRequirementId : undefined,

@@ -55,6 +55,23 @@ export class CustomerLifecycleService {
     return customerId;
   }
 
+  async saveCustomerContact(input: { conversationId: string; channel: NadimChannel; externalUserId?: string; name?: string; phone?: string }) {
+    const customerId = await this.ensureCustomer(input.conversationId, input.channel, input.externalUserId);
+    const name = safeText(input.name, 100) || undefined;
+    const phone = safeText(input.phone, 30) || undefined;
+    if (phone) {
+      const owner = await this.prisma.customer.findUnique({ where: { normalizedPhone: phone }, select: { id: true } });
+      if (owner && owner.id !== customerId) {
+        throw new ConflictException({ code: "CUSTOMER_PHONE_CONFLICT", message: "This phone is already linked to another customer", safe: true });
+      }
+    }
+    return this.prisma.customer.update({
+      where: { id: customerId },
+      data: { ...(name ? { name } : {}), ...(phone ? { normalizedPhone: phone } : {}) },
+      select: { id: true, name: true, normalizedPhone: true },
+    });
+  }
+
   async saveRequirement(input: { conversationId: string; channel: NadimChannel; externalUserId?: string; state: NadimState; title?: string; status?: PropertyRequirementStatus; allowNew?: boolean }) {
     const customerId = await this.ensureCustomer(input.conversationId, input.channel, input.externalUserId);
     const search = input.state.search;
@@ -138,12 +155,13 @@ export class CustomerLifecycleService {
   async createFollowUp(input: {
     conversationId: string; channel: NadimChannel; externalUserId?: string; dueAt: Date; timezone: string;
     reason: string; messageIntent: Record<string, unknown>; renderedMessage?: string; propertyRequirementId?: string; dedupeSource?: string;
+    outboundAddress?: string;
   }) {
     if (!this.validTimezone(input.timezone)) throw new BadRequestException({ code: "TIMEZONE_REQUIRED", message: "A valid customer timezone is required", safe: true });
     if (!Number.isFinite(input.dueAt.getTime()) || input.dueAt <= new Date()) throw new BadRequestException({ code: "INVALID_FOLLOWUP_TIME", message: "Follow-up time must be in the future", safe: true });
     const customerId = await this.ensureCustomer(input.conversationId, input.channel, input.externalUserId);
     const conversation = await this.prisma.nadimConversation.findUniqueOrThrow({ where: { id: input.conversationId } });
-    const outboundAddress = safeText(input.externalUserId ?? conversation.externalUserId, 300);
+    const outboundAddress = safeText(input.outboundAddress ?? input.externalUserId ?? conversation.externalUserId, 300);
     if (!outboundAddress) throw new BadRequestException({ code: "FOLLOWUP_ADDRESS_REQUIRED", message: "A delivery address is required", safe: true });
     const bucket = Math.floor(Date.now() / (10 * 60_000));
     const dedupeKey = createHash("sha256").update(`${input.conversationId}:${input.dedupeSource ?? input.reason}:${bucket}`, "utf8").digest("hex");

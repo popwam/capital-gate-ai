@@ -26,13 +26,25 @@ export class AutomationActionClient {
       source: context.channel === "WEB" ? "WEB_CHAT" : context.channel,
       channel,
       customerId: context.customerId,
-      customer: context.externalUserId ? { channelExternalId: context.externalUserId } : undefined,
+      customer: context.externalUserId || action.payload.fullName || action.payload.phone ? {
+        channelExternalId: context.externalUserId,
+        name: typeof action.payload.fullName === "string" ? action.payload.fullName : undefined,
+        phone: typeof action.payload.phone === "string" ? action.payload.phone : undefined,
+      } : undefined,
       lead: {
         intent,
         intentScore: action.type === "CREATE_RESERVATION_REQUEST" ? 95 : action.type === "CREATE_VIEWING_REQUEST" ? 90 : 75,
         notes: String(action.payload.note ?? action.reason).slice(0, 4_000),
+        preferredContactChannel: typeof action.payload.preferredContactChannel === "string" ? action.payload.preferredContactChannel : undefined,
       },
-      context: { externalChannelId: context.externalUserId, eventId: context.requestId, metadata: { nadimBrainVersion: "v2", nadimConversationId: context.conversationId, requestedAction: action.type, unitId: action.payload.unitId } },
+      context: { externalChannelId: context.externalUserId, eventId: context.requestId, metadata: {
+        nadimBrainVersion: "v2",
+        nadimConversationId: context.conversationId,
+        requestedAction: action.type,
+        unitId: action.payload.unitId,
+        paymentMethod: action.payload.paymentMethod,
+        verifiedPaymentPlans: action.payload.verifiedPaymentPlans,
+      } },
     };
     try {
       const response = await fetch(`${baseUrl.replace(/\/$/u, "")}/v1/leads/upsert`, {

@@ -325,9 +325,9 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
   }
 
   const followUpTemporal = extractFollowUpTemporalRequest(rawText);
-  const explicitFollowUp = Boolean(followUpTemporal && /(?:تابع|كلمني|ارجع|فكرني|follow\s*up|call\s+me|remind\s+me|get\s+back)/iu.test(text));
+  const explicitFollowUp = Boolean(followUpTemporal && /(?:تابع|كلمني|ارجع|فكرني|حدد|حدّد|معاد|موعد|اتصل|follow\s*up|call\s+me|remind\s+me|get\s+back|schedule)/iu.test(text));
   const shareRequest = /(?:(?:هات|ابعت|اديني|عايز|عاوز).{0,18})?(?:رابط|لينك).{0,18}(?:المحادثة|الويب)|(?:conversation|web)\s+(?:link|url)|(?:أكمل|اكمل|continue).{0,20}(?:الويب|web)/iu.test(text);
-  const whatsappHandoff = /(?:أكمل|اكمل|continue).{0,24}(?:واتساب|whatsapp)/iu.test(text);
+  const whatsappHandoff = /(?:(?:أكمل|اكمل|افتح|انقل|حوّل|حول|continue|open|move).{0,40}(?:المحادثة|الشات|chat|conversation)?\s*(?:دي|هذه|this)?\s*.{0,16}(?:واتس(?:اب)?|whatsapp))|(?:(?:هات|ابعت|اديني|عايز|عاوز|أبي|ابي|give|send).{0,24}(?:رابط|لينك|link).{0,18}(?:واتس(?:اب)?|whatsapp))/iu.test(text);
   const deleteRequest = /(?:امسح|احذف|حذف|delete|erase).{0,20}(?:المحادثة|الشات|conversation|chat)/iu.test(text);
   const deletionPending = Boolean(context?.pendingDeletion?.expiresAt && Date.parse(context.pendingDeletion.expiresAt) > Date.now());
   const deleteConfirmation = deletionPending && /^(?:أيوه|ايوه|نعم|أكيد|اكد|أكد|yes|confirm)(?:\s+(?:امسحها|احذفها|delete\s+it))?[.!،,\s]*$/iu.test(text);

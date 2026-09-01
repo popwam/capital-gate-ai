@@ -102,6 +102,12 @@ export class AdminConversationsController {
     response.setHeader("Cache-Control", "private, no-store");
     response.send(file.body);
   }
+  @Get("workflow/requirements") requirements() {
+    return this.crm.requirementsWorkflow();
+  }
+  @Get("workflow/follow-ups") followUps() {
+    return this.crm.followUpsWorkflow();
+  }
   @Get(":id") detail(@Param("id") id: string) {
     return this.crm.conversation(id);
   }
