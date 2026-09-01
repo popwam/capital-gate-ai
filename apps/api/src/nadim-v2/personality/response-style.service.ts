@@ -307,7 +307,7 @@ export class ResponseStyleService {
     });
   }
 
-  noMatch(style: NadimLanguageStyle, context: { change?: string; previousAssistantWording?: string } = {}) {
+  noMatch(style: NadimLanguageStyle, context: { change?: string; previousAssistantWording?: string; state?: NadimState } = {}) {
     const primary = this.pick(style, {
       AR_EGYPTIAN: "مش شايف حاجة مناسبة داخلة في الطلب ده دلوقتي.",
       AR_GULF: "ما ظهر لي شيء مناسب للطلب هذا حاليًا.",
@@ -325,7 +325,34 @@ export class ResponseStyleService {
       MIXED_AR_EN: "لحد دلوقتي مفيش option مناسب ظاهر.",
     });
     const response = context.previousAssistantWording?.includes(primary.split(/[.!؟]/u)[0]) ? alternate : primary;
-    return [context.change, response].filter(Boolean).join(" ");
+    const search = context.state?.search;
+    const next = !search?.purpose
+      ? this.pick(style, {
+          AR_EGYPTIAN: "الطلب ده للسكن ولا للاستثمار؟",
+          AR_GULF: "الطلب هذا للسكن أو للاستثمار؟",
+          AR_FORMAL: "هل هذا الطلب للسكن أم للاستثمار؟",
+          EN_US: "Is this search for living or investment?",
+          FRANCO_ARABIC: "el talab da lel sakan wala investment?",
+          MIXED_AR_EN: "الطلب ده للسكن ولا investment؟",
+        })
+      : search.propertyTypes.length > 0 && search.bedrooms == null
+        ? this.pick(style, {
+            AR_EGYPTIAN: "كام غرفة محتاج؟",
+            AR_GULF: "كم غرفة تحتاج؟",
+            AR_FORMAL: "كم غرفة تحتاج؟",
+            EN_US: "How many bedrooms do you need?",
+            FRANCO_ARABIC: "me7tag kam bedroom?",
+            MIXED_AR_EN: "محتاج كام bedroom؟",
+          })
+        : this.pick(style, {
+            AR_EGYPTIAN: "تحب أرتبلك متابعة أول ما يظهر اختيار مطابق؟",
+            AR_GULF: "تحب أرتب لك متابعة أول ما يظهر خيار مطابق؟",
+            AR_FORMAL: "هل ترغب في ترتيب متابعة عند ظهور خيار مطابق؟",
+            EN_US: "Would you like me to arrange a follow-up when an exact match appears?",
+            FRANCO_ARABIC: "te7eb artblak follow-up lama option motabe2 yezhar?",
+            MIXED_AR_EN: "تحب أرتبلك follow-up أول ما يظهر exact match؟",
+          });
+    return [context.change, response, next].filter(Boolean).join(" ");
   }
 
   searchResults(style: NadimLanguageStyle, units: any[], change?: string, address: GrammaticalAddress = "NEUTRAL") {

@@ -13,6 +13,7 @@ export type NadimToolResult = {
   tool: NadimToolName;
   ok: boolean;
   data?: unknown;
+  metadata?: { totalExactMatches?: number; returnedCount?: number; hasMore?: boolean };
   errorCode?: string;
   latencyMs: number;
 };

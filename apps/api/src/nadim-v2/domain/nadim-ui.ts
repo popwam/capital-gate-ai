@@ -3,7 +3,7 @@ import type { NadimToolResult } from "./nadim-plan";
 import type { VerifiedUnitPaymentPlanResult } from "./verified-payment-plan";
 
 export type NadimUiPayload =
-  | { type: "PROPERTY_RESULTS"; data: { properties: unknown[] } }
+  | { type: "PROPERTY_RESULTS"; data: { totalExactMatches: number; returnedCount: number; hasMore: boolean; properties: unknown[] } }
   | { type: "PROPERTY_COMPARISON"; data: { properties: unknown[] } }
   | { type: "MEDIA"; data: { media: unknown[]; location?: unknown } }
   | { type: "LOCATION"; data: { location: unknown } }
@@ -16,7 +16,14 @@ export function buildNadimUi(toolResults: NadimToolResult[], actions: ExecutedAc
   for (const result of toolResults) {
     if (!result.ok) continue;
     if (result.tool === "PROPERTY_SEARCH" && Array.isArray(result.data) && result.data.length) {
-      ui.push({ type: "PROPERTY_RESULTS", data: { properties: result.data } });
+      const returnedCount = result.data.length;
+      const totalExactMatches = Math.max(returnedCount, Number(result.metadata?.totalExactMatches ?? returnedCount));
+      ui.push({ type: "PROPERTY_RESULTS", data: {
+        totalExactMatches,
+        returnedCount,
+        hasMore: Boolean(result.metadata?.hasMore ?? totalExactMatches > returnedCount),
+        properties: result.data,
+      } });
     } else if (result.tool === "COMPARE_PROPERTIES" && Array.isArray(result.data) && result.data.length) {
       ui.push({ type: "PROPERTY_COMPARISON", data: { properties: result.data } });
     } else if (result.tool === "GET_MEDIA" && result.data && !Array.isArray(result.data)) {

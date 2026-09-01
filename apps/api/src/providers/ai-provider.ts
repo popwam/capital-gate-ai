@@ -51,6 +51,7 @@ export type StructuredIntent = {
   bathrooms?: number;
   budgetMin?: number;
   budgetMax?: number;
+  budgetStrictness?: "APPROXIMATE" | "HARD";
   currency?: string;
   deliveryMaxYears?: number;
   maxDownPayment?: number;
@@ -109,7 +110,7 @@ export type StructuredIntent = {
   extractionDegraded?: boolean;
   /** Current-turn patch metadata. Applied before persistence, then discarded. */
   constraintOperations?: ConstraintOperation[];
-  queryObjective?: "CHEAPEST" | "MOST_EXPENSIVE" | "BEST_MATCH";
+  queryObjective?: "BEST_MATCH" | "HIGHEST_WITHIN_BUDGET" | "CHEAPEST" | "MOST_EXPENSIVE" | "LOWEST_DOWN_PAYMENT" | "LOWEST_INSTALLMENT" | "EARLIEST_DELIVERY" | "LARGEST_AREA";
   /** Current-turn deterministic permission; reset on the next semantic merge. */
   searchRelaxationAuthorized?: boolean;
 };

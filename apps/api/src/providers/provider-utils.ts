@@ -100,7 +100,8 @@ export function sanitizeIntent(raw:Record<string,unknown>,previous:StructuredInt
     externalUnitId:text("externalUnitId")??previous.externalUnitId,
     extractionDegraded:false,
     constraintOperations:operations,
-    queryObjective:oneOf("queryObjective",["CHEAPEST","MOST_EXPENSIVE","BEST_MATCH"] as const)??previous.queryObjective
+    budgetStrictness:oneOf("budgetStrictness",["APPROXIMATE","HARD"] as const)??previous.budgetStrictness,
+    queryObjective:oneOf("queryObjective",["BEST_MATCH","HIGHEST_WITHIN_BUDGET","CHEAPEST","MOST_EXPENSIVE","LOWEST_DOWN_PAYMENT","LOWEST_INSTALLMENT","EARLIEST_DELIVERY","LARGEST_AREA"] as const)??previous.queryObjective
   };
 }
 function oneOfValue<T extends string>(value:unknown,values:readonly T[]){return values.includes(value as T)?value as T:undefined;}

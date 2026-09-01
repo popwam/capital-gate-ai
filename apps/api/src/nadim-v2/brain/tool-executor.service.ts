@@ -22,6 +22,11 @@ function compactUnit(unit: any) {
     builtUpArea: unit.builtUpArea == null ? null : Number(unit.builtUpArea),
     price: unit.price == null ? null : Number(unit.price),
     currency: unit.currency,
+    canonicalPrice: unit.canonicalPrice ? {
+      amount: Number(unit.canonicalPrice.amount),
+      currency: unit.canonicalPrice.currency,
+      source: unit.canonicalPrice.source,
+    } : unit.price == null ? null : { amount: Number(unit.price), currency: unit.currency ?? "EGP", source: "UNIT_PRICE" },
     status: unit.status,
     availabilityUpdatedAt: unit.availabilityUpdatedAt,
     deliveryDate: unit.deliveryDate,
@@ -81,6 +86,8 @@ function searchIntent(search: NadimSearchState, locale: string): StructuredInten
   if (search.currency && search.currency.toUpperCase() !== "EGP" && !search.budget?.normalizedAmount) {
     throw Object.assign(new Error("Verified FX is required before searching EGP inventory"), { code: "FX_UNAVAILABLE" });
   }
+  const hardBudget = search.budgetConstraint?.strictness !== "APPROXIMATE";
+  const normalizedBudget = search.budget?.normalizedAmount ?? search.budgetMax;
   return {
     language: locale,
     locations: search.locations,
@@ -92,16 +99,19 @@ function searchIntent(search: NadimSearchState, locale: string): StructuredInten
     builtUpAreaMin: search.areaMin,
     builtUpAreaMax: search.areaMax,
     budgetMin: search.budgetMin,
-    budgetMax: search.budget?.normalizedAmount ?? search.budgetMax,
+    budgetMax: hardBudget ? normalizedBudget : undefined,
+    priceTarget: hardBudget ? undefined : normalizedBudget,
+    budgetStrictness: search.budgetConstraint?.strictness ?? "HARD",
     currency: search.budget?.normalizedCurrency ?? search.currency,
     maxDownPayment: search.downPaymentMax,
+    maxMonthlyInstallment: search.monthlyInstallmentMax,
     preferredPaymentDurationMonths: search.installmentMonths,
     softPreferences: search.installmentPreference === "LONG_TERM"
       ? ["LONG_TERM_INSTALLMENTS"]
       : search.installmentPreference === "INSTALLMENTS" ? ["INSTALLMENTS"] : undefined,
     deliveryMaxYears: search.deliveryMaxYears,
     purpose: search.purpose,
-    queryObjective: search.queryObjective ?? "BEST_MATCH",
+    queryObjective: search.queryObjective,
     extractionDegraded: false,
     searchRelaxationAuthorized: false,
   };
@@ -124,6 +134,26 @@ export class ToolExecutorService {
     for (const step of plan.steps) {
       const started = Date.now();
       try {
+        if (step.tool === "PROPERTY_SEARCH") {
+          const intent = searchIntent(state.search, state.locale);
+          const limit = Number(step.arguments.limit ?? 5);
+          const search = typeof (this.properties as any).searchPropertiesWithMetadata === "function"
+            ? await this.properties.searchPropertiesWithMetadata(intent, limit)
+            : (() => undefined)();
+          const properties = search?.properties ?? await this.properties.searchProperties(intent, limit);
+          results.push({
+            tool: step.tool,
+            ok: true,
+            data: properties.map(compactUnit),
+            metadata: {
+              totalExactMatches: search?.totalExactMatches ?? properties.length,
+              returnedCount: search?.returnedCount ?? properties.length,
+              hasMore: search?.hasMore ?? false,
+            },
+            latencyMs: Date.now() - started,
+          });
+          continue;
+        }
         const data = await this.executeOne(step.tool, step.arguments, state);
         results.push({ tool: step.tool, ok: true, data, latencyMs: Date.now() - started });
       } catch (error) {
@@ -135,10 +165,6 @@ export class ToolExecutorService {
 
   private async executeOne(tool: NadimPlan["steps"][number]["tool"], args: Record<string, unknown>, state: NadimState): Promise<unknown> {
     if (tool === "GET_CURRENT_TIME") return this.time.now(state.locale, args.timeZone);
-    if (tool === "PROPERTY_SEARCH") {
-      const units = await this.properties.searchProperties(searchIntent(state.search, state.locale), Number(args.limit ?? 5));
-      return units.map(compactUnit);
-    }
     if (tool === "GET_UNIT_FACTS") {
       const unit = args.unitReference
         ? await this.resolveRecentUnitReference(String(args.unitReference), state)

@@ -52,6 +52,16 @@ The Dashboard uses these distinct product concepts:
 
 A conversation or requirement alone does not create a sales opportunity. Therefore a zero opportunity count is valid when requests are still collecting fields or action execution is disabled. The pending reservation remains visible in conversation detail without fabricating a Lead.
 
+## Search truth and zero-match demand
+
+`Unit.price` is the canonical searchable total price. It is the inventory-wide verified price used consistently for hard-budget filtering, final validation, ordering, property cards, and prose. A payment plan's `effectiveTotalPrice` remains a verified plan-specific quote; it does not replace the unit-wide search price until the customer selects that plan. Active offer text/discounts are not silently folded into the searchable price.
+
+Nadim state distinguishes `APPROXIMATE` budget context from a `HARD` ceiling. A hard ceiling is applied in the database and revalidated before structured cards are built. An approximate amount is retained for relevance/scoring and is not silently promoted to a ceiling. A later explicit maximum upgrades only the budget constraint and preserves the rest of the requirement.
+
+Search ordering is deterministic. Explicit customer objectives win. Otherwise a hard maximum uses `HIGHEST_WITHIN_BUDGET`; every unit is filtered and validated before ranking. Database-translatable objectives are ordered before `take`. Down-payment and installment objectives resolve all applicable unit, phase, and project plans before ranking because those values are not one unit column.
+
+A verified zero-match updates the existing `PropertyRequirement` to `NEEDS_MATCH`. It does not create a Lead, reservation, booking, or Sales Opportunity. An opportunity still requires an explicit commercial event or the separately configured qualification policy described above. The customer-facing reply continues naturally without exposing these lifecycle terms or silently relaxing constraints.
+
 For a Web conversation that requests WhatsApp follow-up, the task stores `channel=WHATSAPP` and the verified customer destination. The Web device identifier is never registered as a WhatsApp identity.
 
 ## Controlled inventory

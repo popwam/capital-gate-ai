@@ -79,7 +79,7 @@ function isWellbeingSmallTalk(text: string) {
 function amount(raw: string, scale?: string, implicitMillions = false) {
   const value = Number(raw.replace(/,/gu, ""));
   if (!Number.isFinite(value) || value < 0) return undefined;
-  if (/^(?:مليون|million|m)$/iu.test(scale ?? "") || (implicitMillions && value <= 500)) return value * 1_000_000;
+  if (/^(?:مليون|م|million|m)$/iu.test(scale ?? "") || (implicitMillions && value <= 500)) return value * 1_000_000;
   if (/^(?:ألف|الف|thousand|k)$/iu.test(scale ?? "")) return value * 1_000;
   return value;
 }
@@ -88,7 +88,7 @@ function currencyCode(value: string) {
   if (/(?:USD|دولار(?:\s+أمريكي)?)/iu.test(value)) return "USD";
   if (/(?:SAR|ريال(?:\s+سعودي)?)/iu.test(value)) return "SAR";
   if (/(?:AED|درهم(?:\s+إماراتي)?)/iu.test(value)) return "AED";
-  if (/(?:EGP|جنيه(?:\s+مصري)?)/iu.test(value)) return "EGP";
+  if (/(?:EGP|جنيه(?:\s+مصري)?|مصري)/iu.test(value)) return "EGP";
   return undefined;
 }
 
@@ -167,7 +167,7 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
 
   const locations = LOCATION_TERMS.filter((term) => lower.includes(term.toLowerCase()));
   const openLocation = activeSearch && state.search.locations.length > 0
-    && /(?:سيب|خلي|خل)\s+(?:المكان|الموقع)\s+(?:مفتوح|أي\s+مكان|اي\s+مكان)|(?:anywhere|any location|leave (?:the )?location open)/iu.test(text);
+    && /(?:سيب|خلي|خل)\s+(?:المكان|الموقع)\s+(?:مفتوح|أي\s+مكان|اي\s+مكان)|(?:لا\s+)?مش\s+(?:مكان|منطقة)\s+معين(?:ة)?|مش\s+فارق(?:ة)?\s+(?:المكان|المنطقة)|أي\s+مكان|اي\s+مكان|(?:anywhere|any location|leave (?:the )?location open)/iu.test(text);
   const removeLocation = (locations.length > 0 && /(?:مش مهم|فكك من|شيل|الغي|الغى|انس|بدون|remove|not important)/iu.test(text)) || openLocation;
   const locationIsConstraint = hasSearch
     || modifyingSearch
@@ -181,12 +181,29 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
   const bathroom = text.match(/(\d{1,2})\s*(?:حمام|bathrooms?)/iu);
   if (bathroom) operations.push({ operation: "SET", field: "bathrooms", value: Number(bathroom[1]) });
 
-  const maxBudget = text.match(/(?:تحت|لحد|ب?حد أقصى|ب?حد اقصى|الميزانية|ميزانية|budget(?:\s+(?:is|max))?|up to|under)\s*(\d[\d,.]*)\s*(مليون|million|m)?/iu);
+  const approximateBudget = text.match(/(?:في\s+حدود|حوالي|تقريب[ًاا]?|around|approximately)\s*(\d[\d,.]*)\s*(ألف|الف|thousand|k|مليون|م|million|m)?/iu);
+  const hardBudget = text.match(/(?:لغاية|تحت|لحد|ب?حد أقصى|ب?حد اقصى|ما\s*يزدش\s+عن|مايزدش\s+عن|up to|under|maximum)\s*(\d[\d,.]*)\s*(مليون|م|million|m)?|(?:الميزانية|ميزانية|budget(?:\s+(?:is|max))?)\s*(\d[\d,.]*)\s*(مليون|م|million|m)?(?:\s*فقط)?/iu)
+    ?? text.match(/(\d[\d,.]*)\s*(مليون|م|million|m)\s*فقط/iu);
+  const maxBudget = hardBudget ?? approximateBudget;
   if (maxBudget) {
-    const value = amount(maxBudget[1], maxBudget[2], /(?:الميزانية|ميزانية)/u.test(maxBudget[0]));
-    if (value !== undefined) operations.push({ operation: "SET", field: "budgetMax", value });
+    const rawAmount = maxBudget[1] ?? maxBudget[3];
+    const rawScale = maxBudget[2] ?? maxBudget[4];
+    const value = amount(rawAmount, rawScale, /(?:الميزانية|ميزانية)/u.test(maxBudget[0]));
+    if (value !== undefined) operations.push(
+      { operation: "SET", field: "budgetMax", value },
+      { operation: "SET", field: "budgetStrictness", value: approximateBudget && !hardBudget ? "APPROXIMATE" : "HARD" },
+    );
   }
-  const explicitMoneyBudget = text.match(/(?:معايا|معي|ميزانيتي|ميزانية|budget(?:\s+(?:is|max))?|لحد|تحت|up\s+to|under|خليها|خليه|زودها|زوّدها|make\s+it|increase\s+it)\s*(?:ل[ـ-]?\s*)?(\d[\d,.]*)\s*(ألف|الف|thousand|k|مليون|million|m)?\s*(USD|SAR|AED|EGP|دولار(?:\s+أمريكي)?|ريال(?:\s+سعودي)?|درهم(?:\s+إماراتي)?|جنيه(?:\s+مصري)?)/iu);
+  const contextualEgyptianBudget = text.match(/^(?:خليها\s*)?(\d[\d,.]*)\s*(مليون|م|million|m)?\s*مصري[.!؟?\s]*$/iu);
+  if (contextualEgyptianBudget && (activeSearch || hasSearch)) {
+    const value = amount(contextualEgyptianBudget[1], contextualEgyptianBudget[2], true);
+    if (value !== undefined) operations.push(
+      { operation: "SET", field: "budgetMax", value },
+      { operation: "SET", field: "currency", value: "EGP" },
+      { operation: "SET", field: "budgetStrictness", value: state.search.budgetConstraint?.strictness ?? "HARD" },
+    );
+  }
+  const explicitMoneyBudget = text.match(/(?:معايا|معي|ميزانيتي|ميزانية|في\s+حدود|حوالي|around|approximately|budget(?:\s+(?:is|max))?|لحد|تحت|up\s+to|under|خليها|خليه|زودها|زوّدها|make\s+it|increase\s+it)\s*(?:ل[ـ-]?\s*)?(\d[\d,.]*)\s*(ألف|الف|thousand|k|مليون|م|million|m)?\s*(USD|SAR|AED|EGP|دولار(?:\s+أمريكي)?|ريال(?:\s+سعودي)?|درهم(?:\s+إماراتي)?|جنيه(?:\s+مصري)?)/iu);
   const namedMillionBudget = explicitMoneyBudget ? undefined : text.match(/(?:معايا|معي|ميزانيتي|ميزانية|budget(?:\s+(?:is|max))?|لحد|تحت|up\s+to|under|خليها|خليه|زودها|زوّدها|make\s+it|increase\s+it)\s*(?:ل[ـ-]?\s*)?مليون\s*(USD|SAR|AED|EGP|دولار(?:\s+أمريكي)?|ريال(?:\s+سعودي)?|درهم(?:\s+إماراتي)?|جنيه(?:\s+مصري)?)/iu);
   if (explicitMoneyBudget) {
     const value = amount(explicitMoneyBudget[1], explicitMoneyBudget[2]);
@@ -205,6 +222,20 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
   if (minBudget) {
     const value = amount(minBudget[1], minBudget[2]);
     if (value !== undefined) operations.push({ operation: "SET", field: "budgetMin", value });
+  }
+  const downPaymentMax = text.match(/(?:مقدم|down\s*payment)\s*(?:لحد|حد\s+أقصى|ما\s*يزدش\s+عن|up\s+to|under)?\s*(\d[\d,.]*)\s*(ألف|الف|thousand|k|مليون|م|million|m)?/iu);
+  if (downPaymentMax) {
+    const parsed = amount(downPaymentMax[1], downPaymentMax[2]);
+    const value = parsed !== undefined && !downPaymentMax[2]
+      ? parsed <= 50 ? parsed * 1_000_000 : parsed <= 999 ? parsed * 1_000 : parsed
+      : parsed;
+    if (value !== undefined) operations.push({ operation: "SET", field: "downPaymentMax", value });
+  }
+  const installmentMax = text.match(/(?:قسط(?:\s+شهري)?|monthly\s+installment)\s*(?:لحد|حد\s+أقصى|ما\s*يزدش\s+عن|up\s+to|under)?\s*(\d[\d,.]*)\s*(ألف|الف|thousand|k|مليون|م|million|m)?/iu);
+  if (installmentMax) {
+    const parsed = amount(installmentMax[1], installmentMax[2]);
+    const value = parsed !== undefined && !installmentMax[2] && parsed <= 500 ? parsed * 1_000 : parsed;
+    if (value !== undefined) operations.push({ operation: "SET", field: "monthlyInstallmentMax", value });
   }
 
   if (!maxBudget && activeSearch && modifyingSearch && state.search.budgetMax !== undefined) {
@@ -228,8 +259,13 @@ function explicitUnderstanding(message: string, state: NadimState, context?: Nad
   if (/(?:فيلا|villa)/iu.test(text)) operations.push({ operation: "SET", field: "propertyTypes", value: ["Villa"] });
   if (/(?:للاستثمار|استثمار|investment)/iu.test(text)) operations.push({ operation: "SET", field: "purpose", value: "INVESTMENT" });
   if (/(?:للسكن|سكن|living|home)/iu.test(text)) operations.push({ operation: "SET", field: "purpose", value: "LIVING" });
-  if (/(?:الأرخص|الارخص|cheapest)/iu.test(text)) operations.push({ operation: "SET", field: "queryObjective", value: "CHEAPEST" });
-  if (/(?:الأغلى|الاغلى|most expensive)/iu.test(text)) operations.push({ operation: "SET", field: "queryObjective", value: "MOST_EXPENSIVE" });
+  if (/(?:الأرخص|الارخص|أقل\s+سعر|اقل\s+سعر|cheapest)/iu.test(text)) operations.push({ operation: "SET", field: "queryObjective", value: "CHEAPEST" });
+  if (/(?:أقل|اقل)\s+مقدم|lowest\s+down\s*payment/iu.test(text)) operations.push({ operation: "SET", field: "queryObjective", value: "LOWEST_DOWN_PAYMENT" });
+  if (/(?:أقل|اقل)\s+قسط|lowest\s+installment/iu.test(text)) operations.push({ operation: "SET", field: "queryObjective", value: "LOWEST_INSTALLMENT" });
+  if (/(?:أقرب|اقرب)\s+استلام|earliest\s+delivery/iu.test(text)) operations.push({ operation: "SET", field: "queryObjective", value: "EARLIEST_DELIVERY" });
+  if (/(?:أكبر|اكبر)\s+مساحة|largest\s+area/iu.test(text)) operations.push({ operation: "SET", field: "queryObjective", value: "LARGEST_AREA" });
+  if (/(?:الأغلى|الاغلى|أعلى|اعلى).{0,18}(?:ميزاني|حدود)|highest\s+within/iu.test(text)) operations.push({ operation: "SET", field: "queryObjective", value: "HIGHEST_WITHIN_BUDGET" });
+  else if (/(?:الأغلى|الاغلى|most expensive)/iu.test(text)) operations.push({ operation: "SET", field: "queryObjective", value: "MOST_EXPENSIVE" });
 
   // "من الأول" is a reset idiom, not an ordinal selection.
   const references = reset ? [] : ordinals(text);

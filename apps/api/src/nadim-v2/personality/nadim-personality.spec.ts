@@ -789,7 +789,9 @@ test("input language stays independent from the sticky response language until a
   assert.equal(modification.state.search.budgetMax, 10_000_000);
   assert.equal(modification.state.languageStyle.preferredResponseStyle, "AR_EGYPTIAN");
   assert.match(modification.reply, /10\s*مليون/u);
-  assert.deepEqual({ ...modification.state.search, budgetMax: originalSearch.budgetMax }, originalSearch);
+  const { budgetConstraint, ...searchWithoutConstraint } = modification.state.search;
+  assert.deepEqual({ ...searchWithoutConstraint, budgetMax: originalSearch.budgetMax }, originalSearch);
+  assert.deepEqual(budgetConstraint, { amount: 10_000_000, currency: "EGP", strictness: "HARD" });
 
   current = { ...current, lastResultIds: ["unit-1", "unit-2"] };
   const selected = await run("Show me the second one", [{ id: "unit-2", price: 7_500_000, currency: "EGP" }]);

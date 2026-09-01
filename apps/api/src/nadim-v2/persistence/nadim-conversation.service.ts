@@ -52,7 +52,10 @@ function toolSummary(value: Prisma.JsonValue): NadimRecentToolSummary[] {
   return value.flatMap((item) => {
     const record = objectValue(item);
     if (!record || typeof record.tool !== "string" || typeof record.ok !== "boolean") return [];
-    const count = Array.isArray(record.data) ? record.data.length : record.data == null ? 0 : 1;
+    const metadata = objectValue(record.metadata as Prisma.JsonValue);
+    const count = typeof metadata?.returnedCount === "number"
+      ? metadata.returnedCount
+      : Array.isArray(record.data) ? record.data.length : record.data == null ? 0 : 1;
     return [{
       tool: record.tool.slice(0, 80),
       ok: record.ok,

@@ -72,6 +72,36 @@ test("5 combined location budget and bedrooms remain independent", async () => {
   assert.deepEqual({ locations: next.search.locations, bedrooms: next.search.bedrooms, budgetMax: next.search.budgetMax }, { locations: ["زايد"], bedrooms: 4, budgetMax: 12_000_000 });
 });
 
+test("budget strictness upgrades from approximate to hard without resetting the search", async () => {
+  const approximateIntent = await understand("عايز شقة في حدود 5 مليون");
+  const approximate = stateEngine.apply(state(), approximateIntent, { channel: "WEB" });
+  assert.deepEqual(approximate.search.budgetConstraint, { amount: 5_000_000, currency: "EGP", strictness: "APPROXIMATE" });
+  assert.deepEqual(approximate.search.propertyTypes, ["Apartment"]);
+
+  const hardIntent = await understand("لغاية 5 م فقط", approximate);
+  const hard = stateEngine.apply(approximate, hardIntent, { channel: "WEB" });
+  assert.deepEqual(hard.search.budgetConstraint, { amount: 5_000_000, currency: "EGP", strictness: "HARD" });
+  assert.deepEqual(hard.search.propertyTypes, ["Apartment"]);
+
+  const currencyIntent = await understand("5 م مصري", hard);
+  const currency = stateEngine.apply(hard, currencyIntent, { channel: "WEB" });
+  assert.equal(currency.search.currency, "EGP");
+  assert.equal(currency.search.budgetMax, 5_000_000);
+  assert.deepEqual(currency.search.propertyTypes, ["Apartment"]);
+});
+
+test("structured ranking objectives are independent search-state operations", async () => {
+  for (const [message, expected] of [
+    ["هات الأرخص", "CHEAPEST"], ["أقل مقدم", "LOWEST_DOWN_PAYMENT"], ["أقل قسط", "LOWEST_INSTALLMENT"],
+    ["أقرب استلام", "EARLIEST_DELIVERY"], ["أكبر مساحة", "LARGEST_AREA"], ["أعلى حاجة في حدود ميزانيتي", "HIGHEST_WITHIN_BUDGET"],
+  ] as const) {
+    const active = state({ search: { locations: [], projects: [], developers: [], propertyTypes: ["Apartment"], budgetMax: 5_000_000 } });
+    const intent = await understand(message, active);
+    const next = stateEngine.apply(active, intent, { channel: "WEB" });
+    assert.equal(next.search.queryObjective, expected, message);
+  }
+});
+
 test("compound Arabic search dominates installment wording and executes property search", async () => {
   const intent = await understand("عايز شقة 3 غرف في التجمع بحد أقصى 8 مليون وتقسيط طويل");
   const current = stateEngine.apply(state(), intent, { channel: "WEB" });
@@ -1176,6 +1206,14 @@ test("structured UI is derived only from verified tool and successful action res
   );
   assert.deepEqual(ui.map((item) => item.type), ["PROPERTY_RESULTS", "SHARE_LINK"]);
   assert.deepEqual((ui[0] as any).data.properties, properties);
+});
+
+test("property result UI exposes exact and returned counts without parsing prose", () => {
+  const ui = buildNadimUi([{
+    tool: "PROPERTY_SEARCH", ok: true, data: [{ id: "u1" }, { id: "u2" }], latencyMs: 1,
+    metadata: { totalExactMatches: 5, returnedCount: 2, hasMore: true },
+  }], []);
+  assert.deepEqual(ui[0], { type: "PROPERTY_RESULTS", data: { totalExactMatches: 5, returnedCount: 2, hasMore: true, properties: [{ id: "u1" }, { id: "u2" }] } });
 });
 
 test("saved requirement lists are answered from persisted customer context", async () => {

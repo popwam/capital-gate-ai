@@ -211,3 +211,55 @@ test("removing type and broadening location preserves the verified 3-5M query", 
   assert.deepEqual(capturedWhere.price, { gte: 3_000_000, lte: 5_000_000 });
   assert.equal(capturedWhere.unitType, undefined);
 });
+
+test("hard budget is filtered, validated, and ranked highest-within-budget before take", async () => {
+  let query: any;
+  const units = [4_100_000, 5_200_000, 4_950_000, 4_700_000].map((price, index) => ({
+    id: `u${index}`, price, currency: "EGP", status: "AVAILABLE", archivedAt: null,
+    projectId: "p1", project: { locationId: null, location: null }, developer: {}, paymentPlans: [], offers: [],
+  }));
+  const prisma = {
+    location: { findMany: async () => [] },
+    unit: {
+      findMany: async (value: any) => { query = value; return units.filter((unit) => unit.price <= 5_000_000); },
+      count: async () => 3,
+    },
+    paymentPlan: { findMany: async () => [] }, unitMediaRule: { findMany: async () => [] },
+  };
+  const result = await new PropertySearchService(prisma as any).searchPropertiesWithMetadata({
+    language: "ar-EG", budgetMax: 5_000_000, currency: "EGP", budgetStrictness: "HARD",
+  }, 3);
+  assert.deepEqual(query.where.price, { lte: 5_000_000 });
+  assert.deepEqual(query.orderBy.slice(0, 2), [{ price: { sort: "desc", nulls: "last" } }, { id: "asc" }]);
+  assert.deepEqual(result.properties.map((unit) => unit.price), [4_950_000, 4_700_000, 4_100_000]);
+  assert.equal(result.properties.some((unit) => unit.price > 5_000_000), false);
+  assert.deepEqual(result.properties.map((unit) => unit.canonicalPrice.source), ["UNIT_PRICE", "UNIT_PRICE", "UNIT_PRICE"]);
+  assert.deepEqual({ total: result.totalExactMatches, returned: result.returnedCount, more: result.hasMore }, { total: 3, returned: 3, more: false });
+});
+
+test("approximate budget scores without becoming a hard database ceiling", async () => {
+  let where: any;
+  const unit = { id: "u1", price: 5_200_000, currency: "EGP", status: "AVAILABLE", archivedAt: null, projectId: "p1", project: { locationId: null, location: null }, developer: {}, paymentPlans: [], offers: [] };
+  const prisma = {
+    location: { findMany: async () => [] },
+    unit: { findMany: async (query: any) => { where = query.where; return [unit]; }, count: async () => 1 },
+    paymentPlan: { findMany: async () => [] }, unitMediaRule: { findMany: async () => [] },
+  };
+  const result = await new PropertySearchService(prisma as any).searchPropertiesWithMetadata({ language: "ar-EG", budgetMax: 5_000_000, budgetStrictness: "APPROXIMATE" });
+  assert.equal(where.price, undefined);
+  assert.equal(result.properties[0]?.id, "u1");
+});
+
+test("verified payment objectives use resolved plans deterministically", async () => {
+  const units = [
+    { id: "u1", price: 4_900_000, downPayment: 900_000, installmentAmount: 50_000 },
+    { id: "u2", price: 4_800_000, downPayment: 500_000, installmentAmount: 70_000 },
+  ].map((unit) => ({ ...unit, currency: "EGP", status: "AVAILABLE", archivedAt: null, projectId: "p1", project: { locationId: null, location: null }, developer: {}, offers: [], paymentPlans: [{ id: `plan-${unit.id}`, unitId: unit.id, durationMonths: 96, downPaymentAmount: unit.downPayment, installmentAmount: unit.installmentAmount, installmentFrequency: "MONTHLY" }] }));
+  const prisma = {
+    location: { findMany: async () => [] }, unit: { findMany: async () => units },
+    paymentPlan: { findMany: async () => [] }, unitMediaRule: { findMany: async () => [] },
+  };
+  const service = new PropertySearchService(prisma as any);
+  assert.deepEqual((await service.searchProperties({ language: "ar-EG", queryObjective: "LOWEST_DOWN_PAYMENT" })).map((unit) => unit.id), ["u2", "u1"]);
+  assert.deepEqual((await service.searchProperties({ language: "ar-EG", queryObjective: "LOWEST_INSTALLMENT" })).map((unit) => unit.id), ["u1", "u2"]);
+});

@@ -253,7 +253,8 @@ function MessageView({ message, onAction, isLast, isArabic }: { message:Message;
   const human = message.kind === "human_message" || message.payload?.author === "HUMAN";
   const actions = Array.isArray(message.payload?.uiActions) ? message.payload.uiActions : [];
   const structuredUi = Array.isArray(message.payload?.ui) ? message.payload.ui : Array.isArray(message.payload?.metadata?.ui) ? message.payload.metadata.ui : [];
-  const cards = structuredUi.find((item:any) => item.type === "PROPERTY_RESULTS")?.data?.properties ?? actions.find((action:any) => action.type === "PROPERTY_CARDS")?.payload?.properties ?? [];
+  const propertyResults = structuredUi.find((item:any) => item.type === "PROPERTY_RESULTS")?.data;
+  const cards = propertyResults?.properties ?? actions.find((action:any) => action.type === "PROPERTY_CARDS")?.payload?.properties ?? [];
   const comparison = structuredUi.find((item:any) => item.type === "PROPERTY_COMPARISON")?.data?.properties ?? [];
   const mediaPayload = structuredUi.find((item:any) => item.type === "MEDIA")?.data;
   const photos = mediaPayload?.media ?? actions.find((action:any) => action.type === "PROJECT_PHOTOS")?.payload?.media ?? [];
@@ -271,7 +272,7 @@ function MessageView({ message, onAction, isLast, isArabic }: { message:Message;
     {assistant && (human ? <div className="grid h-7 min-w-7 shrink-0 place-items-center rounded-lg bg-amber-700 px-2 text-white" aria-label={isArabic ? "الفريق البشري" : "Human team"}><span className="text-[10px] font-black">{isArabic ? "الفريق" : "Team"}</span></div> : <AssistantAvatar isArabic={isArabic}/>)}
     <div className={assistant ? "max-w-[94%] sm:max-w-[86%]" : "max-w-[88%] sm:max-w-[78%]"}>
       <div dir={textDirection(message.text)} className={assistant ? `chat-copy message-assistant pt-0.5 text-start text-[15px] leading-[1.85] sm:text-[16px] ${human ? "border-s-2 border-amber-600 ps-3" : ""}` : "chat-copy message-user rounded-[10px] px-3.5 py-2.5 text-start text-[14px] leading-[1.75] sm:text-[15px]"}><RichChatText text={message.text}/></div>
-      {!!cards.length && <PropertyResults properties={cards} onAction={onAction} isArabic={isArabic}/>}
+      {!!cards.length && <PropertyResults properties={cards} metadata={propertyResults} onAction={onAction} isArabic={isArabic}/>}
       {!!comparison.length && <PropertyComparison properties={comparison} isArabic={isArabic}/>}
       {!!photos.length && <MediaGallery media={photos}/>}
       {!!brochures.length && <Documents documents={brochures}/>}
@@ -287,7 +288,7 @@ function MessageView({ message, onAction, isLast, isArabic }: { message:Message;
   </div>;
 }
 
-function PropertyResults({ properties, onAction, isArabic }: {properties:any[];onAction:ActionSend;isArabic:boolean}) {
+function PropertyResults({ properties, metadata, onAction, isArabic }: {properties:any[];metadata?:{totalExactMatches?:number;returnedCount?:number;hasMore?:boolean};onAction:ActionSend;isArabic:boolean}) {
   if (!properties.length) return null;
   const money = (value:any, currency="EGP") => value == null ? (isArabic ? "السعر غير متاح" : "Price unavailable") : `${new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 }).format(Number(value))} ${currency}`;
   const paymentLabel = (property:any) => {
@@ -306,7 +307,7 @@ function PropertyResults({ properties, onAction, isArabic }: {properties:any[];o
     return [duration, dp ? (isArabic ? `مقدم ${dp}` : `DP ${dp}`) : null].filter(Boolean).join(" · ");
   };
 
-  return <div className="scrollbar-none mt-4 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-3 pe-2">{properties.slice(0,5).map((property,index)=>{
+  return <div className="mt-4">{metadata?.hasMore&&<p className="mb-2 text-[11px] font-semibold text-[var(--ink-tertiary)]">{isArabic?`بعرض ${properties.length} من ${metadata.totalExactMatches ?? properties.length} اختيار مطابق`:`Showing ${properties.length} of ${metadata.totalExactMatches ?? properties.length} exact matches`}</p>}<div className="scrollbar-none flex snap-x snap-mandatory gap-3 overflow-x-auto pb-3 pe-2">{properties.map((property,index)=>{
     const plan = paymentLabel(property);
     const image = Array.isArray(property.media) ? property.media.find((item:any)=>item?.url && (!item.type || ["IMAGE","PHOTO","EXTERIOR","INTERIOR"].includes(item.type))) : null;
     const label = humanPropertyLabel(property, isArabic);
@@ -330,7 +331,7 @@ function PropertyResults({ properties, onAction, isArabic }: {properties:any[];o
         </div>
       </div>
     </article>;
-  })}</div>;
+  })}</div></div>;
 }
 
 function PropertyComparison({properties,isArabic}:{properties:any[];isArabic:boolean}) {

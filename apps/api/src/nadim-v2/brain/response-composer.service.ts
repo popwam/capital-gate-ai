@@ -224,7 +224,7 @@ export class ResponseComposerService {
         : undefined;
       return result.data.length
         ? this.responseStyle.searchResults(style, result.data, change, input.state.languageStyle.grammaticalAddress)
-        : this.responseStyle.noMatch(style, { change, previousAssistantWording: input.state.recentAssistantWording });
+        : this.responseStyle.noMatch(style, { change, previousAssistantWording: input.state.recentAssistantWording, state: input.state });
     }
 
     if (input.plan.goal === "COMPARISON") {

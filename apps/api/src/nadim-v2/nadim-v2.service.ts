@@ -53,6 +53,10 @@ function requestedRequirement(message: string, requirements: Array<Record<string
 
 function stateFromRequirement(previous: any, requirement: Record<string, any>) {
   const delivery = String(requirement.deliveryPreference ?? "").match(/WITHIN_(\d+)_YEARS/u)?.[1];
+  const savedSearchContext = previous.requirementSearchContexts?.[String(requirement.id)] as {
+    budgetConstraint?: { amount: number; currency: string; strictness: "APPROXIMATE" | "HARD" };
+    queryObjective?: string;
+  } | undefined;
   return {
     ...previous,
     search: {
@@ -67,6 +71,11 @@ function stateFromRequirement(previous: any, requirement: Record<string, any>) {
       budgetMin: requirement.budgetMin ?? undefined,
       budgetMax: requirement.budgetMax ?? undefined,
       currency: requirement.currency ?? undefined,
+      budgetConstraint: savedSearchContext?.budgetConstraint ?? (requirement.budgetMax != null ? {
+        amount: Number(requirement.budgetMax),
+        currency: String(requirement.currency ?? "EGP").toUpperCase(),
+        strictness: "HARD" as const,
+      } : undefined),
       budget: requirement.budgetOriginalAmount != null ? {
         originalAmount: Number(requirement.budgetOriginalAmount),
         originalCurrency: String(requirement.budgetOriginalCurrency ?? requirement.currency ?? "EGP"),
@@ -80,6 +89,7 @@ function stateFromRequirement(previous: any, requirement: Record<string, any>) {
       purpose: requirement.purpose ?? undefined,
       installmentPreference: requirement.paymentPreference ?? undefined,
       deliveryMaxYears: delivery ? Number(delivery) : undefined,
+      queryObjective: savedSearchContext?.queryObjective,
     },
     selectedUnitId: requirement.selectedUnitId ?? undefined,
     selectedProjectId: requirement.selectedProjectId ?? undefined,
@@ -339,6 +349,18 @@ export class NadimV2Service {
             allowNew: startsIndependentRequirement,
           })
         : undefined;
+      if (persistedRequirement) {
+        state = {
+          ...state,
+          requirementSearchContexts: {
+            ...(state.requirementSearchContexts ?? {}),
+            [persistedRequirement.id]: {
+              budgetConstraint: state.search.budgetConstraint,
+              queryObjective: state.search.queryObjective,
+            },
+          },
+        };
+      }
 
       let plan = control.action
         ? { goal: control.action, steps: [] }
@@ -565,15 +587,16 @@ export class NadimV2Service {
     const currency = String(state.search.currency ?? "EGP").toUpperCase();
     const current = state.search.budget;
     if (current?.originalAmount === amount && current?.originalCurrency === currency) return state;
+    const budgetConstraint = { amount, currency, strictness: state.search.budgetConstraint?.strictness ?? "HARD" };
     if (currency === "EGP") {
-      return { ...state, search: { ...state.search, currency, budget: { originalAmount: amount, originalCurrency: currency, normalizedAmount: amount, normalizedCurrency: "EGP", fxRate: 1, fxAsOf: new Date().toISOString(), fxSource: "IDENTITY", fxStatus: "VERIFIED" } } };
+      return { ...state, search: { ...state.search, currency, budgetConstraint, budget: { originalAmount: amount, originalCurrency: currency, normalizedAmount: amount, normalizedCurrency: "EGP", fxRate: 1, fxAsOf: new Date().toISOString(), fxSource: "IDENTITY", fxStatus: "VERIFIED" } } };
     }
     try {
       const budget = await this.fx?.normalize(amount, currency);
       if (!budget) throw Object.assign(new Error("FX unavailable"), { code: "FX_UNAVAILABLE" });
-      return { ...state, search: { ...state.search, currency, budget } };
+      return { ...state, search: { ...state.search, currency, budgetConstraint, budget } };
     } catch {
-      return { ...state, search: { ...state.search, currency, budget: { originalAmount: amount, originalCurrency: currency, fxStatus: "UNAVAILABLE" } } };
+      return { ...state, search: { ...state.search, currency, budgetConstraint, budget: { originalAmount: amount, originalCurrency: currency, fxStatus: "UNAVAILABLE" } } };
     }
   }
 

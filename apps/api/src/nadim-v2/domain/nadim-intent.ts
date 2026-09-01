@@ -22,8 +22,8 @@ export const NADIM_CLASSIFICATION_SOURCES = [
 
 export const STATE_FIELDS = [
   "locations", "projects", "developers", "propertyTypes", "bedrooms", "bathrooms",
-  "areaMin", "areaMax", "budgetMin", "budgetMax", "currency", "downPaymentMax",
-  "installmentMonths", "installmentPreference", "deliveryMaxYears", "purpose", "finishing", "queryObjective",
+  "areaMin", "areaMax", "budgetMin", "budgetMax", "currency", "downPaymentMax", "monthlyInstallmentMax",
+  "budgetStrictness", "installmentMonths", "installmentPreference", "deliveryMaxYears", "purpose", "finishing", "queryObjective",
 ] as const;
 export type StateField = (typeof STATE_FIELDS)[number];
 export type StateOperation = { operation: "SET" | "REMOVE" | "RESET" | "PRESERVE"; field?: StateField | "SEARCH"; value?: unknown };

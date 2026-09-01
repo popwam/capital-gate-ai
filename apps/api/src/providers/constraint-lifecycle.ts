@@ -63,6 +63,11 @@ export function inferConstraintOperations(source: string): ConstraintOperation[]
 export function queryObjective(source: string): StructuredIntent["queryObjective"] {
   const text = normalize(source);
   if (/(?:ارخص|اقل\s+سعر|cheapest|lowest\s+price)/iu.test(text)) return "CHEAPEST";
+  if (/(?:اقل\s+مقدم|lowest\s+down\s*payment)/iu.test(text)) return "LOWEST_DOWN_PAYMENT";
+  if (/(?:اقل\s+قسط|lowest\s+installment)/iu.test(text)) return "LOWEST_INSTALLMENT";
+  if (/(?:اقرب\s+استلام|earliest\s+delivery)/iu.test(text)) return "EARLIEST_DELIVERY";
+  if (/(?:اكبر\s+مساحه|largest\s+area)/iu.test(text)) return "LARGEST_AREA";
+  if (/(?:اغلي|أغلى|اعلي)\s+(?:سعر|حاجه)?\s*.{0,20}(?:ميزاني|حدود)|most\s+expensive\s+within|highest\s+within/iu.test(text)) return "HIGHEST_WITHIN_BUDGET";
   if (/(?:اغلي|أغلى|اعلي\s+سعر|most\s+expensive|highest\s+price)/iu.test(text)) return "MOST_EXPENSIVE";
   if (/(?:احسن\s+مطابق|افضل\s+مطابق|best\s+match)/iu.test(text)) return "BEST_MATCH";
   return undefined;

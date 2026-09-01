@@ -183,7 +183,8 @@ export const StructuredIntentSchema = z.object({
     operation: z.enum(["REMOVE", "RESET", "BROADEN", "PRESERVE"]),
     constraint: z.enum(["BUDGET", "PURPOSE", "PROPERTY_TYPE", "LOCATION", "BEDROOMS", "AREA", "PROJECT", "DEVELOPER", "PAYMENT", "DELIVERY", "PROXIMITY", "SEARCH"]),
   })).optional(),
-  queryObjective: z.enum(["CHEAPEST", "MOST_EXPENSIVE", "BEST_MATCH"]).optional(),
+  budgetStrictness: z.enum(["APPROXIMATE", "HARD"]).optional(),
+  queryObjective: z.enum(["BEST_MATCH", "HIGHEST_WITHIN_BUDGET", "CHEAPEST", "MOST_EXPENSIVE", "LOWEST_DOWN_PAYMENT", "LOWEST_INSTALLMENT", "EARLIEST_DELIVERY", "LARGEST_AREA"]).optional(),
 });
 
 // ============================================================================

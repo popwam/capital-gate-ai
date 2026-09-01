@@ -2,6 +2,18 @@ import type { NadimChannel } from "../dto/nadim-turn.dto";
 import { regionalVariantFromLocale, styleFromLocale, type NadimLanguageStyleState } from "../personality/language-style.types";
 import type { NadimIntentType, StateField, StateOperation } from "./nadim-intent";
 
+export type BudgetStrictness = "APPROXIMATE" | "HARD";
+export type BudgetConstraint = { amount: number; currency: string; strictness: BudgetStrictness };
+export type QueryObjective =
+  | "BEST_MATCH"
+  | "HIGHEST_WITHIN_BUDGET"
+  | "CHEAPEST"
+  | "MOST_EXPENSIVE"
+  | "LOWEST_DOWN_PAYMENT"
+  | "LOWEST_INSTALLMENT"
+  | "EARLIEST_DELIVERY"
+  | "LARGEST_AREA";
+
 export type NadimSearchState = {
   locations: string[];
   projects: string[];
@@ -14,6 +26,7 @@ export type NadimSearchState = {
   budgetMin?: number;
   budgetMax?: number;
   currency?: string;
+  budgetConstraint?: BudgetConstraint;
   budget?: {
     originalAmount: number;
     originalCurrency: string;
@@ -25,12 +38,13 @@ export type NadimSearchState = {
     fxStatus: "VERIFIED" | "UNAVAILABLE";
   };
   downPaymentMax?: number;
+  monthlyInstallmentMax?: number;
   installmentMonths?: number;
   installmentPreference?: "INSTALLMENTS" | "LONG_TERM";
   deliveryMaxYears?: number;
   purpose?: "LIVING" | "INVESTMENT";
   finishing?: string;
-  queryObjective?: "BEST_MATCH" | "CHEAPEST" | "MOST_EXPENSIVE";
+  queryObjective?: QueryObjective;
 };
 
 export type NadimReservationFields = {
@@ -73,6 +87,7 @@ export type NadimState = {
   pendingClarification?: { reason: string; field?: StateField };
   pendingAction?: NadimPendingAction;
   pendingFollowUp?: NadimPendingFollowUp;
+  requirementSearchContexts?: Record<string, { budgetConstraint?: BudgetConstraint; queryObjective?: QueryObjective }>;
   lastOperations: StateOperation[];
   recentAssistantWording?: string;
 };

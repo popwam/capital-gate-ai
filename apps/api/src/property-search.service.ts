@@ -4,7 +4,31 @@ import { PrismaService } from "./database/prisma.service";
 import { StructuredIntent } from "./providers/ai-provider";
 import { ApplicationCache } from "./cache/application-cache";
 import { closestGate, spatialScore } from "./spatial-ranking";
-import { chooseBestPaymentPlan } from "./payment-calculator";
+import { chooseBestPaymentPlan, quotePaymentPlan } from "./payment-calculator";
+import { resolveSearchableTotalPrice } from "./search/canonical-search-price";
+import { validatePropertyAgainstActiveRequirement } from "./search/property-match-validator";
+
+export type PropertySearchResult = {
+  totalExactMatches: number;
+  returnedCount: number;
+  hasMore: boolean;
+  properties: any[];
+};
+
+function effectiveObjective(intent: StructuredIntent): NonNullable<StructuredIntent["queryObjective"]> {
+  const hardBudget = intent.budgetStrictness !== "APPROXIMATE" && (intent.priceMax ?? intent.budgetMax) != null;
+  if (intent.queryObjective === "MOST_EXPENSIVE" && hardBudget) return "HIGHEST_WITHIN_BUDGET";
+  return intent.queryObjective ?? (hardBudget ? "HIGHEST_WITHIN_BUDGET" : "BEST_MATCH");
+}
+
+function stableId(unit: { id?: unknown }) { return String(unit.id ?? ""); }
+function finiteOr(value: unknown, fallback: number) {
+  const number = value == null || value === "" ? Number.NaN : Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+function lowestPlanValue(unit: any, field: "downPaymentAmount" | "monthlyEquivalent") {
+  return Math.min(...(Array.isArray(unit.paymentPlans) ? unit.paymentPlans : []).map((plan: any) => finiteOr(plan[field], Number.POSITIVE_INFINITY)));
+}
 
 const projectPublicInclude = {
   developer: {
@@ -107,16 +131,8 @@ export class PropertySearchService {
         keyed.set(key, plan); // unit-level plan is later and overrides equivalent project plan
       }
       const paymentPlans = [...keyed.values()].map(plan => {
-        const basePrice = unit.price == null ? null : Number(unit.price);
-        const explicit = plan.totalPriceOverride ?? plan.totalPrice;
-        const discountAmount = plan.discountAmount == null ? 0 : Number(plan.discountAmount);
-        const discountPercent = plan.discountPercent == null ? 0 : Number(plan.discountPercent);
-        const effectiveTotalPrice = explicit != null
-          ? Number(explicit)
-          : basePrice == null
-            ? null
-            : Math.max(0, basePrice - discountAmount - (basePrice * discountPercent / 100));
-        return { ...plan, effectiveTotalPrice };
+        const quote = quotePaymentPlan(plan, unit.price, unit.currency);
+        return { ...plan, ...quote, effectiveTotalPrice: quote.totalPrice };
       });
       const bestPaymentPlan = chooseBestPaymentPlan(paymentPlans, unit.price, unit.currency, {
         preferredPaymentDurationMonths: intent?.preferredPaymentDurationMonths,
@@ -188,11 +204,12 @@ export class PropertySearchService {
     if (intent.inventoryMarket) where.isResale = intent.inventoryMarket === "RESALE";
     if (intent.bathrooms != null) where.bathrooms = { gte: intent.bathrooms };
     const priceMin = intent.priceMin ?? intent.budgetMin;
-    const priceMax = intent.priceMax ?? intent.budgetMax;
-    if (priceMin != null || priceMax != null) where.price = { gte: priceMin, lte: priceMax };
+    const priceMax = intent.budgetStrictness === "APPROXIMATE" ? undefined : intent.priceMax ?? intent.budgetMax;
+    if (priceMin != null || priceMax != null) where.price = { ...(priceMin != null ? { gte: priceMin } : {}), ...(priceMax != null ? { lte: priceMax } : {}) };
     if (intent.explicitRejectedPriceMin != null || intent.explicitRejectedPriceMax != null)
       where.NOT = { ...(where.NOT as object || {}), price: { gte: intent.explicitRejectedPriceMin, lte: intent.explicitRejectedPriceMax } };
-    if (intent.maxDownPayment != null) where.downPayment = { lte: intent.maxDownPayment };
+    // Payment affordability is validated against inherited, phase, project,
+    // and unit-level plans after those plans are resolved.
     const areaMin = intent.builtUpAreaMin ?? intent.minimumArea;
     const areaMax = intent.builtUpAreaMax ?? intent.maximumArea;
     if (areaMin != null || areaMax != null) where.builtUpArea = { gte: areaMin, lte: areaMax };
@@ -259,6 +276,7 @@ export class PropertySearchService {
       builtUpAreaMax: intent.builtUpAreaMax ?? intent.maximumArea ?? null,
       priceMin: intent.priceMin ?? intent.budgetMin ?? null,
       priceMax: intent.priceMax ?? intent.budgetMax ?? null,
+      budgetStrictness: intent.budgetStrictness ?? "HARD",
       bedrooms: intent.bedrooms ?? null,
       locationIds,
       availability: [UnitStatus.AVAILABLE],
@@ -271,7 +289,7 @@ export class PropertySearchService {
       preferredPaymentDurationMonths: intent.preferredPaymentDurationMonths ?? null,
       maxDownPayment: intent.maxDownPayment ?? null,
       maxMonthlyInstallment: intent.maxMonthlyInstallment ?? null,
-      queryObjective: intent.queryObjective ?? "BEST_MATCH",
+      queryObjective: effectiveObjective(intent),
       proximityPreferences: intent.proximityPreferences ?? [],
     };
   }
@@ -310,11 +328,15 @@ export class PropertySearchService {
     const result = { dimension, count: unique.length, values: unique }; this.cache?.set("aggregation", cacheKey, result, 60_000); return result;
   }
 
-  async searchProperties(intent: StructuredIntent, limit = 8) {
+  async searchPropertiesWithMetadata(intent: StructuredIntent, limit = 8): Promise<PropertySearchResult> {
     const where = await this.normalizedWhere(intent);
-    if (!where) return [];
+    if (!where) return { totalExactMatches: 0, returnedCount: 0, hasMore: false, properties: [] };
     const locationIds = await this.resolveLocations(intent.locations);
-    const cacheKey = JSON.stringify({ filters: await this.normalizedSearchFilters(intent), pool: Math.max(limit * 4, 20) });
+    const objective = effectiveObjective(intent);
+    const needsResolvedPaymentPool = ["LOWEST_DOWN_PAYMENT", "LOWEST_INSTALLMENT"].includes(objective)
+      || intent.maxDownPayment != null || intent.maxMonthlyInstallment != null || intent.preferredPaymentDurationMonths != null;
+    const poolSize = objective === "BEST_MATCH" ? Math.max(limit * 4, 20) : limit;
+    const cacheKey = JSON.stringify({ filters: await this.normalizedSearchFilters(intent), pool: needsResolvedPaymentPool ? "ALL" : poolSize });
     const include: Prisma.UnitInclude = {
       developer: {
         select: {
@@ -364,26 +386,33 @@ export class PropertySearchService {
         orderBy: { sortOrder: "asc" },
       },
     }; 
-    const priceOrder: Prisma.UnitOrderByWithRelationInput[] | undefined = intent.queryObjective === "CHEAPEST"
-      ? [{ price: { sort: "asc", nulls: "last" } }, { availabilityUpdatedAt: "desc" }]
-      : intent.queryObjective === "MOST_EXPENSIVE"
-        ? [{ price: { sort: "desc", nulls: "last" } }, { availabilityUpdatedAt: "desc" }]
-        : undefined;
+    const orderBy: Prisma.UnitOrderByWithRelationInput[] = objective === "CHEAPEST"
+      ? [{ price: { sort: "asc", nulls: "last" } }, { id: "asc" }]
+      : ["HIGHEST_WITHIN_BUDGET", "MOST_EXPENSIVE"].includes(objective)
+        ? [{ price: { sort: "desc", nulls: "last" } }, { id: "asc" }]
+        : objective === "EARLIEST_DELIVERY"
+          ? [{ deliveryDate: { sort: "asc", nulls: "last" } }, { id: "asc" }]
+          : objective === "LARGEST_AREA"
+            ? [{ builtUpArea: { sort: "desc", nulls: "last" } }, { id: "asc" }]
+            : [{ availabilityUpdatedAt: "desc" }, { price: { sort: "asc", nulls: "last" } }, { id: "asc" }];
     const loader = () => this.prisma.unit.findMany({
       where,
-      take: Math.max(limit * 4, 20),
-      orderBy: priceOrder ?? [{ availabilityUpdatedAt: "desc" }, { price: "asc" }],
+      ...(needsResolvedPaymentPool ? {} : { take: poolSize }),
+      orderBy,
       include,
     });
     const raw = await (this.cache?.getOrLoad("property-search-v3", cacheKey, 20_000, loader) ?? loader());
     const withPlans = await this.attachEffectivePaymentPlans(raw as any[], intent);
     const units = await this.attachEffectiveMedia(withPlans);
-    const ranked = units.map(unit => {
+    const validated = units.filter((unit) => validatePropertyAgainstActiveRequirement(unit as any, intent, { locationIds }).valid);
+    const ranked = validated.map(unit => {
+      const canonicalPrice = resolveSearchableTotalPrice(unit);
       let score = 40;
       const reasons: string[] = ["currently available"];
       if (intent.bedrooms != null && unit.bedrooms === intent.bedrooms) { score += 14; reasons.push("bedroom match"); }
       if (intent.bathrooms != null && unit.bathrooms != null && unit.bathrooms >= intent.bathrooms) { score += 5; reasons.push("bathroom match"); }
-      if ((intent.priceMax ?? intent.budgetMax) != null && unit.price && Number(unit.price) <= (intent.priceMax ?? intent.budgetMax)!) { score += 14; reasons.push("within budget"); }
+      const budgetReference = intent.priceMax ?? intent.budgetMax ?? intent.priceTarget;
+      if (budgetReference != null && canonicalPrice && canonicalPrice.amount <= budgetReference) { score += 14; reasons.push("within budget"); }
       if (locationIds.length && unit.project.locationId && locationIds.includes(unit.project.locationId)) { score += 9; reasons.push("location match"); }
       if (intent.propertyTypes?.length && unit.unitType && intent.propertyTypes.some(x => this.normalize(x) === this.normalize(unit.unitType!))) { score += 9; reasons.push("property type match"); }
       if (intent.builtUpAreaMin != null && unit.builtUpArea && Number(unit.builtUpArea) >= intent.builtUpAreaMin) { score += 5; reasons.push("area match"); }
@@ -393,14 +422,36 @@ export class PropertySearchService {
         if (intent.maxDownPayment != null && unit.bestPaymentPlan.downPaymentAmount != null && unit.bestPaymentPlan.downPaymentAmount <= intent.maxDownPayment) { score += 7; reasons.push("down payment match"); }
         if (intent.maxMonthlyInstallment != null && unit.bestPaymentPlan.monthlyEquivalent != null && unit.bestPaymentPlan.monthlyEquivalent <= intent.maxMonthlyInstallment) { score += 7; reasons.push("monthly installment match"); }
       }
-      return { ...unit, closestGate: closestGate(unit as any), matchScore: Math.max(0, Math.min(100, score)), matchReasons: [...new Set(reasons)] };
+      return {
+        ...unit,
+        price: canonicalPrice?.amount ?? null,
+        currency: canonicalPrice?.currency ?? unit.currency,
+        canonicalPrice,
+        closestGate: closestGate(unit as any),
+        matchScore: Math.max(0, Math.min(100, score)),
+        matchReasons: [...new Set(reasons)],
+      };
     });
     ranked.sort((a, b) => {
-      if (intent.queryObjective === "CHEAPEST") return Number(a.price ?? Number.MAX_SAFE_INTEGER) - Number(b.price ?? Number.MAX_SAFE_INTEGER) || b.matchScore - a.matchScore;
-      if (intent.queryObjective === "MOST_EXPENSIVE") return Number(b.price ?? Number.MIN_SAFE_INTEGER) - Number(a.price ?? Number.MIN_SAFE_INTEGER) || b.matchScore - a.matchScore;
-      return b.matchScore - a.matchScore || Number(a.price ?? Number.MAX_SAFE_INTEGER) - Number(b.price ?? Number.MAX_SAFE_INTEGER);
+      if (objective === "CHEAPEST") return finiteOr(a.price, Number.POSITIVE_INFINITY) - finiteOr(b.price, Number.POSITIVE_INFINITY) || b.matchScore - a.matchScore || stableId(a).localeCompare(stableId(b));
+      if (["HIGHEST_WITHIN_BUDGET", "MOST_EXPENSIVE"].includes(objective)) return finiteOr(b.price, Number.NEGATIVE_INFINITY) - finiteOr(a.price, Number.NEGATIVE_INFINITY) || b.matchScore - a.matchScore || stableId(a).localeCompare(stableId(b));
+      if (objective === "LOWEST_DOWN_PAYMENT") return lowestPlanValue(a, "downPaymentAmount") - lowestPlanValue(b, "downPaymentAmount") || b.matchScore - a.matchScore || stableId(a).localeCompare(stableId(b));
+      if (objective === "LOWEST_INSTALLMENT") return lowestPlanValue(a, "monthlyEquivalent") - lowestPlanValue(b, "monthlyEquivalent") || b.matchScore - a.matchScore || stableId(a).localeCompare(stableId(b));
+      if (objective === "EARLIEST_DELIVERY") return finiteOr(a.deliveryDate == null ? null : new Date(a.deliveryDate).getTime(), Number.POSITIVE_INFINITY) - finiteOr(b.deliveryDate == null ? null : new Date(b.deliveryDate).getTime(), Number.POSITIVE_INFINITY) || stableId(a).localeCompare(stableId(b));
+      if (objective === "LARGEST_AREA") return finiteOr(b.builtUpArea, Number.NEGATIVE_INFINITY) - finiteOr(a.builtUpArea, Number.NEGATIVE_INFINITY) || stableId(a).localeCompare(stableId(b));
+      return b.matchScore - a.matchScore || stableId(a).localeCompare(stableId(b));
     });
-    return ranked.slice(0, limit);
+    const properties = ranked.slice(0, limit);
+    const count = needsResolvedPaymentPool
+      ? ranked.length
+      : typeof (this.prisma.unit as any).count === "function"
+        ? await (this.prisma.unit as any).count({ where })
+        : validated.length;
+    return { totalExactMatches: count, returnedCount: properties.length, hasMore: count > properties.length, properties };
+  }
+
+  async searchProperties(intent: StructuredIntent, limit = 8) {
+    return (await this.searchPropertiesWithMetadata(intent, limit)).properties;
   }
 
   async getProperty(id: string) { const unit = await this.prisma.unit.findFirst({ where: { id, status: UnitStatus.AVAILABLE, archivedAt: null }, include: { developer: true, project: { include: { location: true, developer: true, gates: { where: { isActive: true } } } }, phaseRef: true, projectZone: true, projectBuilding: true, proximities: { include: { gate: true, amenity: true, landmark: true } }, paymentPlans: { where: { isActive: true } }, offers: true, media: true, priceHistory: { orderBy: { effectiveAt: "desc" } } } }); if (!unit) throw new NotFoundException("Property not found"); const withPlans = await this.attachEffectivePaymentPlans([unit]); return (await this.attachEffectiveMedia(withPlans))[0]; }

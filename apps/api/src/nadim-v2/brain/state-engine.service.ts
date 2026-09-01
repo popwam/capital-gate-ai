@@ -3,7 +3,7 @@ import { NadimUnderstanding, StateOperation } from "../domain/nadim-intent";
 import { initialNadimState, NadimSearchState, NadimState } from "../domain/nadim-state";
 
 const ARRAY_FIELDS = new Set(["locations", "projects", "developers", "propertyTypes"]);
-const NUMBER_FIELDS = new Set(["bedrooms", "bathrooms", "areaMin", "areaMax", "budgetMin", "budgetMax", "downPaymentMax", "installmentMonths", "deliveryMaxYears"]);
+const NUMBER_FIELDS = new Set(["bedrooms", "bathrooms", "areaMin", "areaMax", "budgetMin", "budgetMax", "downPaymentMax", "monthlyInstallmentMax", "installmentMonths", "deliveryMaxYears"]);
 
 @Injectable()
 export class StateEngineService {
@@ -17,6 +17,7 @@ export class StateEngineService {
       : understanding.operations;
     const searchChanged = operations.some((operation) => operation.operation !== "PRESERVE");
     for (const operation of operations) state = this.applyOperation(state, operation);
+    state = this.syncBudgetConstraint(state, operations);
     if (searchChanged) {
       state.selectedUnitId = undefined;
       state.selectedProjectId = undefined;
@@ -89,7 +90,7 @@ export class StateEngineService {
       (search as Record<string, unknown>)[field] = operation.value;
     } else if (field === "purpose" && ["LIVING", "INVESTMENT"].includes(String(operation.value))) {
       search.purpose = operation.value as NadimSearchState["purpose"];
-    } else if (field === "queryObjective" && ["BEST_MATCH", "CHEAPEST", "MOST_EXPENSIVE"].includes(String(operation.value))) {
+    } else if (field === "queryObjective" && ["BEST_MATCH", "HIGHEST_WITHIN_BUDGET", "CHEAPEST", "MOST_EXPENSIVE", "LOWEST_DOWN_PAYMENT", "LOWEST_INSTALLMENT", "EARLIEST_DELIVERY", "LARGEST_AREA"].includes(String(operation.value))) {
       search.queryObjective = operation.value as NadimSearchState["queryObjective"];
     } else if (field === "installmentPreference" && ["INSTALLMENTS", "LONG_TERM"].includes(String(operation.value))) {
       search.installmentPreference = operation.value as NadimSearchState["installmentPreference"];
@@ -97,5 +98,24 @@ export class StateEngineService {
       (search as Record<string, unknown>)[field] = operation.value.trim().slice(0, 80);
     }
     return { ...state, search };
+  }
+
+  private syncBudgetConstraint(state: NadimState, operations: StateOperation[]) {
+    const touched = operations.some((operation) => ["budgetMax", "currency", "budgetStrictness"].includes(String(operation.field)) && operation.operation !== "PRESERVE");
+    if (!touched) return state;
+    if (state.search.budgetMax == null) return { ...state, search: { ...state.search, budgetConstraint: undefined, budget: undefined } };
+    const explicit = [...operations].reverse().find((operation) => operation.operation === "SET" && operation.field === "budgetStrictness")?.value;
+    const prior = state.search.budgetConstraint;
+    const sameConstraint = prior?.amount === state.search.budgetMax && prior.currency === String(state.search.currency ?? "EGP").toUpperCase();
+    const strictness = ["APPROXIMATE", "HARD"].includes(String(explicit))
+      ? explicit as "APPROXIMATE" | "HARD"
+      : sameConstraint ? prior!.strictness : "HARD";
+    return {
+      ...state,
+      search: {
+        ...state.search,
+        budgetConstraint: { amount: state.search.budgetMax, currency: String(state.search.currency ?? "EGP").toUpperCase(), strictness },
+      },
+    };
   }
 }
