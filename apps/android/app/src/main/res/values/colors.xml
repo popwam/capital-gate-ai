@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="cg_forest">#0E5E4F</color>
+    <color name="cg_surface">#FAFAF7</color>
+    <color name="cg_ink">#17211E</color>
+    <color name="white">#FFFFFF</color>
+</resources>

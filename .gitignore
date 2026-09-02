@@ -6,3 +6,10 @@ dist
 *.log
 packages/database/generated
 
+# Android
+apps/android/.gradle/
+apps/android/local.properties
+apps/android/app/build/
+apps/android/build/
+*.apk
+*.aab
