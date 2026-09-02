@@ -5,9 +5,17 @@ plugins {
 fun asBuildConfigString(value: String): String =
     "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
-val configuredChatUrl = providers.gradleProperty("CHAT_URL")
-    .orElse("http://10.0.2.2:3000")
-    .get()
+val configuredChatUrl = providers.gradleProperty("CHAT_URL").orNull?.trim()
+val debugChatUrl = configuredChatUrl?.takeIf(String::isNotEmpty) ?: "http://10.0.2.2:3000"
+val releaseChatUrl = configuredChatUrl?.takeIf(String::isNotEmpty) ?: ""
+
+val validateReleaseChatUrl by tasks.registering {
+    doLast {
+        require(releaseChatUrl.startsWith("https://")) {
+            "Release builds require -PCHAT_URL=https://your-production-chat.example"
+        }
+    }
+}
 
 android {
     namespace = "ai.capitalgate.chat"
@@ -20,7 +28,6 @@ android {
         versionCode = 1
         versionName = "1.0.0"
 
-        buildConfigField("String", "CHAT_URL", asBuildConfigString(configuredChatUrl))
     }
 
     buildFeatures {
@@ -28,7 +35,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("String", "CHAT_URL", asBuildConfigString(debugChatUrl))
+        }
         release {
+            buildConfigField("String", "CHAT_URL", asBuildConfigString(releaseChatUrl))
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -42,4 +53,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+
+tasks.configureEach {
+    if (name == "preReleaseBuild") dependsOn(validateReleaseChatUrl)
 }

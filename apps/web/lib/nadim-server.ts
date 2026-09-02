@@ -127,7 +127,7 @@ export function checkNadimWebRateLimit(deviceToken: string, now = Date.now(), li
 
 function apiBaseUrl(environment: ServerEnvironment) {
   const configured = environment.NADIM_API_URL?.trim() || environment.INTERNAL_API_URL?.trim();
-  const raw = configured || (environment.NODE_ENV === "production" ? "" : "http://localhost:4000");
+  const raw = configured || (environment.NODE_ENV === "production" ? "" : "http://localhost:8080");
   if (!raw) {
     throw new NadimWebAdapterError(503, "Nadim web gateway is not configured", "NADIM_WEB_NOT_CONFIGURED", undefined, "upstream_fetch");
   }

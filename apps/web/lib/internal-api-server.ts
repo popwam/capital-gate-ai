@@ -8,7 +8,7 @@ const CUSTOMER_ROUTES: ReadonlyArray<{ pattern: RegExp; methods: ReadonlySet<str
 
 export function internalApiBaseUrl(environment: ServerEnvironment = process.env) {
   const configured = environment.INTERNAL_API_URL?.trim() || environment.NADIM_API_URL?.trim();
-  const raw = configured || (environment.NODE_ENV === "production" ? "" : "http://localhost:4000");
+  const raw = configured || (environment.NODE_ENV === "production" ? "" : "http://localhost:8080");
   if (!raw) throw new Error("INTERNAL_API_URL is required in production");
   const url = new URL(raw);
   if (!/^https?:$/.test(url.protocol)) throw new Error("INTERNAL_API_URL must use HTTP or HTTPS");
