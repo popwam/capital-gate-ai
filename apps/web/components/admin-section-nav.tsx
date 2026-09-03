@@ -3,11 +3,14 @@
 import {
   Activity,
   BarChart3,
+  Building2,
   CalendarClock,
   ClipboardList,
   Cog,
   LayoutDashboard,
+  MapPinned,
   MessageSquareText,
+  PanelsTopLeft,
   UserRoundCog,
   UsersRound,
   Warehouse,
@@ -38,6 +41,14 @@ const groups: NavGroup[] = [
       { icon: UserRoundCog, label: "الفريق", href: "/admin/team" },
       { icon: BarChart3, label: "التحليلات", href: "/admin/analytics" },
       { icon: Cog, label: "الإعدادات", href: "/admin/settings" },
+    ],
+  },
+  {
+    label: "بيانات العقارات",
+    items: [
+      { icon: PanelsTopLeft, label: "المشروعات", href: "/admin/projects" },
+      { icon: Building2, label: "المطورون", href: "/admin/developers" },
+      { icon: MapPinned, label: "المناطق", href: "/admin/locations" },
     ],
   },
   {

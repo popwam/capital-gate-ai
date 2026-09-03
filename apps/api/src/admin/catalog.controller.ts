@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Delete,
   Get,
@@ -62,6 +63,9 @@ class UpdateProjectDto {
   @IsOptional() @IsString() locationId?: string;
   @IsOptional() @IsString() shortDescription?: string;
   @IsOptional() @IsString() description?: string;
+}
+class DeleteCatalogEntityDto {
+  @IsString() @MaxLength(200) confirmation!: string;
 }
 class CreateUnitDto {
   @IsOptional() @IsString() externalUnitId?: string;
@@ -274,6 +278,40 @@ export class CatalogController {
     this.cache.invalidateCustomerData();
     return item;
   }
+  @Delete("developers/:id") async deleteDeveloper(
+    @Param("id") id: string,
+    @Body() body: DeleteCatalogEntityDto,
+    @Req() req: any,
+  ) {
+    const item = await this.prisma.developer.findUniqueOrThrow({
+      where: { id },
+      select: {
+        name: true,
+        nameAr: true,
+        nameEn: true,
+        brandName: true,
+        _count: { select: { projects: true, units: true, media: true, documents: true, imports: true, importSheets: true } },
+      },
+    });
+    const validNames = [item.name, item.nameAr, item.nameEn, item.brandName]
+      .filter((value): value is string => Boolean(value?.trim()))
+      .map((value) => value.trim());
+    if (!validNames.includes(body.confirmation.trim())) {
+      throw new BadRequestException({ code: "DELETE_CONFIRMATION_MISMATCH", message: "اكتب اسم المطور كما هو ظاهر للتأكيد.", safe: true });
+    }
+    const linked = item._count;
+    if (linked.projects || linked.units || linked.media || linked.documents || linked.imports || linked.importSheets) {
+      throw new ConflictException({
+        code: "DEVELOPER_DELETE_BLOCKED",
+        message: `لا يمكن حذف المطور قبل إزالة الارتباطات: ${linked.projects} مشروع، ${linked.units} وحدة، ${linked.imports + linked.importSheets} سجل استيراد، ${linked.media} وسيط، ${linked.documents} مستند.`,
+        safe: true,
+      });
+    }
+    await this.prisma.developer.delete({ where: { id } });
+    await this.audit.record(req.admin.id, "DEVELOPER_DELETED", "Developer", id, { name: item.name });
+    this.cache.invalidateCustomerData();
+    return { deleted: true };
+  }
   @Get("projects") projects() {
     return this.prisma.project.findMany({
       include: {
@@ -335,6 +373,39 @@ export class CatalogController {
     );
     this.cache.invalidateCustomerData();
     return item;
+  }
+  @Delete("projects/:id") async deleteProject(
+    @Param("id") id: string,
+    @Body() body: DeleteCatalogEntityDto,
+    @Req() req: any,
+  ) {
+    const item = await this.prisma.project.findUniqueOrThrow({
+      where: { id },
+      select: {
+        name: true,
+        nameAr: true,
+        nameEn: true,
+        _count: { select: { units: true, media: true, documents: true, imports: true, importSheets: true } },
+      },
+    });
+    const validNames = [item.name, item.nameAr, item.nameEn]
+      .filter((value): value is string => Boolean(value?.trim()))
+      .map((value) => value.trim());
+    if (!validNames.includes(body.confirmation.trim())) {
+      throw new BadRequestException({ code: "DELETE_CONFIRMATION_MISMATCH", message: "اكتب اسم المشروع كما هو ظاهر للتأكيد.", safe: true });
+    }
+    const linked = item._count;
+    if (linked.units || linked.media || linked.documents || linked.imports || linked.importSheets) {
+      throw new ConflictException({
+        code: "PROJECT_DELETE_BLOCKED",
+        message: `لا يمكن حذف المشروع قبل إزالة الارتباطات: ${linked.units} وحدة، ${linked.imports + linked.importSheets} سجل استيراد، ${linked.media} وسيط، ${linked.documents} مستند.`,
+        safe: true,
+      });
+    }
+    await this.prisma.project.delete({ where: { id } });
+    await this.audit.record(req.admin.id, "PROJECT_DELETED", "Project", id, { name: item.name });
+    this.cache.invalidateCustomerData();
+    return { deleted: true };
   }
 
   @Post("units") async createUnit(@Body() body: CreateUnitDto, @Req() req: any) {
